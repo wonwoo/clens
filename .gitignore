@@ -1,0 +1,10 @@
+node_modules/
+.clens-install.lock/
+*.log
+.DS_Store
+.idea/
+test/fixtures/synth-corpus/
+test/fixtures/kiwi-model/
+coverage/
+.claude/
+.playwright-mcp/

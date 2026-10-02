@@ -1,0 +1,15 @@
+{
+  "name": "clens",
+  "owner": {
+    "name": "wonwoo",
+    "url": "https://github.com/wonwoo"
+  },
+  "description": "clens for Claude Code and Codex",
+  "plugins": [
+    {
+      "name": "clens",
+      "source": "./",
+      "description": "A memory of your past Claude Code and Codex sessions, searchable by the agent through MCP tools."
+    }
+  ]
+}

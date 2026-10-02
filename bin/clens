@@ -1,0 +1,4 @@
+#!/bin/sh
+# The clens CLI from the plugin (clens index, clens install ko, clens stats):
+# Claude Code puts a plugin's bin/ on the PATH of its Bash tool.
+exec node "$(dirname "$0")/../plugin/start.mjs" "$@"

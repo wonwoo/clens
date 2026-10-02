@@ -1,0 +1,71 @@
+{
+  "scope": { "mode": "session", "params": { "session_id": "test" } },
+  "corrections": {
+    "candidates": {
+      "must_contain_turns": [3, 4, 6],
+      "max_size": 16,
+      "comment": "Gate 6 (CLI-only): clens session test --format json must return excerpts.corrections.candidates[] whose .turn set is a SUPERSET of {3,4,6} and whose total size is ≤ 16 (the §10 selector cap)."
+    },
+    "confirmed": {
+      "exact_turns": [3, 4, 6],
+      "comment": "Gate 7 (Skill round-trip): after the calling Claude reduces candidates[] via slot-fill, excerpts.corrections.confirmed[].turn must equal exactly {3,4,6}. Requires a live Claude call; CI-degraded variant asserts confirmed[] is non-empty only."
+    },
+    "semantic_anchors": {
+      "3": "drop-FTS: '대화 검색은 아니야' — full-text conversation search removed from v1 scope",
+      "4": "OSS-pivot: '나혼자 쓸꺼는 아니야 소스를 배포할거야' — flipped from personal tool to OSS distribution",
+      "6": "Skill-caller-LLM: '잠만 일단 cli 로 만들걸때 스킬로 사용할거야 글머 OSS 사용자가 자기 API 키 이거필요 없지 않냐' — LLM responsibility moves to the Skill caller; CLI stays deterministic, no API key required"
+    }
+  },
+  "facts": {
+    "fixture": {
+      "source_session_id_original": "51ead4dc-3663-4e05-9b56-355b53ee9698",
+      "source_session_id_rewritten": "test",
+      "input_line_count": 961,
+      "uuid_map_size": 741,
+      "total_user_turns": 61
+    },
+    "selector_self_check_2026_06_21": {
+      "candidates_total": 19,
+      "candidates_capped": 16,
+      "first_3_candidates_turns": [3, 4, 6],
+      "comment": "Reference values from running the §10 selector manually against the committed fixture on 2026-06-21. The Phase D implementation must reproduce candidates_capped ≤ 16 and include {3,4,6} as a subset."
+    }
+  },
+  "notes": [
+    "Turn numbers were measured directly from the redacted fixture per §6.5 (pseudo-user tool_result events excluded).",
+    "ExecPlan §0/§6.5/§10/§14 gate 6,7/§17 Phase 0,D,E were updated from {8,12,16} → {3,4,6} on 2026-06-21 to match measured reality.",
+    "Gate 6 is a subset assertion (CLI selector is intentionally high-recall); gate 7 is the exact-set assertion downstream of Claude slot judgment."
+  ],
+  "phase_b_ground_truth": {
+    "comment": "Reference facts produced by `runAnalyzer({mode:'session', params:{session_id:'test'}})` against the indexed fixture on 2026-06-21. ExecPlan §0's $13.74 / 23.8min were sandbox-time eyeball estimates and DO NOT match these measured values. Tests in test/session_facts.spec.ts assert ≤5% (or ≤1pp for cache rate) against the values below — this is now the binding ground truth for Phase B's exit.",
+    "captured_at": "2026-06-21",
+    "cost": {
+      "total_usd": 94.0213,
+      "per_turn_usd": 1.5413,
+      "tolerance_pct": 5,
+      "primary_model": "claude-opus-4-7"
+    },
+    "cache": {
+      "hit_rate_overall_pct": 98.07,
+      "tolerance_percentage_points": 1
+    },
+    "timeline": {
+      "wall_min": 99.36,
+      "think_min": 86.96,
+      "idle_min": 6.94,
+      "longest_pause_s": 417,
+      "tolerance_pct": 5
+    },
+    "tokens": {
+      "in": 644,
+      "out": 227541,
+      "cache_r": 41262182,
+      "cache_w": 802818
+    },
+    "tools_min_counts": {
+      "Edit": 70,
+      "mcp__plugin_context-mode_context-mode__ctx_execute": 5,
+      "Agent": 5
+    }
+  }
+}

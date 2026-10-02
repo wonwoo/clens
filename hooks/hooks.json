@@ -1,0 +1,17 @@
+{
+  "description": "Right after Claude Code compacts a conversation, put that session's clens work record back into it.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/compact.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "clens continue"
+  short_description: "Pick up the latest other session's work"
+  default_prompt: "Use $clens:continue to pick up where my latest other session in this project stopped."
+policy:
+  allow_implicit_invocation: false
