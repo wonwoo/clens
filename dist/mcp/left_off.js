@@ -31,6 +31,13 @@ const TOP = `WITH RECURSIVE top(id, root) AS (
 /** A conversation message worth reading. */
 const REAL_MESSAGE = (alias) => `${alias}.type IN ('user_message', 'assistant_message') AND ${notNoise(alias)} AND NOT ${BARE_COMMAND(alias)}`;
 export function leftOff(db, params, opts = {}) {
+    return leftOffWithMore(db, params, opts).sessions;
+}
+/** leftOff plus how many sessions it left out that were active in the span
+ *  it lists: a recap of the latest three otherwise missed one running beside
+ *  them, with nothing to say it was there. Counted for a project's or every
+ *  project's list, not for a file's. */
+export function leftOffWithMore(db, params, opts = {}) {
     const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
     // Only sessions the user worked in: not judge transcripts, subagent
     // threads or one-shot exec and SDK runs (automated summaries among them),
@@ -51,6 +58,11 @@ export function leftOff(db, params, opts = {}) {
     // active inside it and shows its last request, reply and edits there.
     const windowArgs = [params.since, params.until].filter((v) => Boolean(v));
     const inWindow = (col) => (params.since ? ` AND ${col} >= ?` : "") + (params.until ? ` AND ${col} <= ?` : "");
+    const bySession = `
+      SELECT s.id AS session_id, max(ut.ts) AS last_ts
+      FROM session s JOIN user_text ut ON ut.session_id = s.id
+      WHERE ${REAL_MESSAGE("ut")}${inWindow("ut.ts")} AND ${conditions.join(" AND ")}
+      GROUP BY s.id`;
     let sessions;
     if (params.file) {
         const tail = params.file.replace(/^\.\//, "");
@@ -66,11 +78,7 @@ export function leftOff(db, params, opts = {}) {
       LIMIT ?`).all(params.file, like, ...windowArgs, ...bindings, limit);
     }
     else {
-        sessions = db.prepare(`
-      SELECT s.id AS session_id, max(ut.ts) AS last_ts
-      FROM session s JOIN user_text ut ON ut.session_id = s.id
-      WHERE ${REAL_MESSAGE("ut")}${inWindow("ut.ts")} AND ${conditions.join(" AND ")}
-      GROUP BY s.id
+        sessions = db.prepare(`${bySession}
       ORDER BY last_ts DESC
       LIMIT ?`).all(...windowArgs, ...bindings, limit);
     }
@@ -87,7 +95,7 @@ export function leftOff(db, params, opts = {}) {
     SELECT path, max(ts) AS at FROM file_op
     WHERE session_id IN tree AND tool IN ${EDIT_TOOLS}${inWindow("ts")}
     GROUP BY path ORDER BY at DESC`);
-    return sessions.map(({ session_id }) => {
+    const listed = sessions.map(({ session_id }) => {
         const s = info.get(session_id);
         const request = last.get(session_id, "user", ...windowArgs);
         const reply = last.get(session_id, "assistant", ...windowArgs);
@@ -104,6 +112,17 @@ export function leftOff(db, params, opts = {}) {
             files: files.all(session_id, ...windowArgs).map((r) => r.path),
         };
     });
+    // Every session left out ended no later than the oldest listed one, so it
+    // shares the listed span when its last message is at or after the earliest
+    // listed start. The listed sessions are counted too, and subtracted.
+    const more = { count: 0, since: "" };
+    if (!params.file && listed.length === limit) {
+        more.since = listed.map((s) => s.started_at).sort()[0];
+        const { n } = db.prepare(`SELECT count(*) AS n FROM (${bySession}) WHERE last_ts >= ?`)
+            .get(...windowArgs, ...bindings, more.since);
+        more.count = n - listed.length;
+    }
+    return { sessions: listed, more };
 }
 /** A path under the session's working directory is shown relative to it. */
 function shortPath(path, cwd) {
@@ -112,9 +131,12 @@ function shortPath(path, cwd) {
     const base = cwd.replace(/\/+$/, "") + "/";
     return path.startsWith(base) ? path.slice(base.length) : path;
 }
-export function formatLeftOff(sessions) {
+export function formatLeftOff(sessions, more) {
     if (sessions.length === 0)
         return "No sessions found.";
+    const footer = more && more.count > 0
+        ? `\n\n(+${more.count} more session${more.count === 1 ? "" : "s"} active since ${more.since} ${more.count === 1 ? "is" : "are"} not listed; raise limit (max 10) or narrow since/until to see ${more.count === 1 ? "it" : "them"})`
+        : "";
     return sessions
         .map((s, i) => {
         const lines = [
@@ -135,7 +157,7 @@ export function formatLeftOff(sessions) {
         }
         return lines.join("\n");
     })
-        .join("\n\n");
+        .join("\n\n") + footer;
 }
 const RECORD_LIST_CAP = 10;
 const RECORD_LINE_CHARS = 120;
@@ -145,6 +167,21 @@ const FAILED_INPUT_CHARS = 100;
 const RECORD_EDITS_DETAILED = 5;
 const RECORD_MORE_EDITS_CHARS = 1200;
 const RECORD_REPLY_CHARS = 500;
+/** A pause longer than this starts a new segment, as a compaction does. */
+const SEGMENT_PAUSE_MS = 2 * 60 * 60 * 1000;
+const RECORD_SEGMENTS_CAP = 20;
+const SEGMENT_REPLY_CHARS = 240;
+/** A reply this short ("네.", "알겠습니다. 기다리겠습니다.") says nothing of
+ *  the work: in the index, nearly every segment that ended on one did. */
+const SHORT_REPLY_CHARS = 20;
+/** A notice Claude Code writes as a reply of its own (model "<synthetic>"),
+ *  which says nothing of the work either. Other "<synthetic>" replies hold
+ *  real text, so the model alone does not decide. */
+const CLAUDE_CODE_NOTICE = /^(?:API Error|Prompt is too long|You've hit your |Please run \/login)/;
+/** /compact with instructions after it is stored as a message; bare
+ *  /compact is left out as BARE_COMMAND already. Claude Code also stores the
+ *  instructions alone, as a command message whose slash_command is compact. */
+const COMPACT_COMMAND = /^\/compact(?:\s|$)/;
 /** The command of a shell input: a Claude Code Bash input's `command` or a
  *  Codex exec_command input's `cmd`. The parser keeps a shell input up to
  *  64 KB and cuts a longer one, which leaves it invalid JSON, so the command
@@ -286,6 +323,66 @@ function joinedLines(text) {
 function latest(rows) {
     return rows.slice(0, RECORD_LIST_CAP).reverse();
 }
+/** A session's messages, oldest first, cut into segments: before and after
+ *  each compaction, and across each pause over SEGMENT_PAUSE_MS. The reply
+ *  before a break is most often where the work stood, which the latest
+ *  requests alone do not show for a session that ran for days. */
+function segmentsOf(db, sessionId) {
+    // A /compact is not a request: one typed after a long pause made a segment
+    // of its own, with no reply. IN, not a correlated EXISTS: slash_command has
+    // no event_uuid index, so EXISTS scanned every compact row per message.
+    const messages = db.prepare(`
+    SELECT ut.ts, ut.role, ut.text, e.model,
+      ut.event_uuid IN (SELECT event_uuid FROM slash_command WHERE name = 'compact') AS compact
+    FROM user_text ut LEFT JOIN event e ON e.uuid = ut.event_uuid
+    WHERE ut.session_id = ? AND ${REAL_MESSAGE("ut")}
+    ORDER BY ut.ts`).all(sessionId)
+        .filter((m) => !(m.role === "user" && (m.compact === 1 || COMPACT_COMMAND.test(m.text))));
+    // A compaction row, or for a session indexed before those were written
+    // and whose transcript is gone since, the summary the conversation starts
+    // again with. A session with both has the two a moment apart, with no
+    // message between them to make a segment of.
+    const breaks = db.prepare(`
+    SELECT ts FROM system_reminder WHERE session_id = ? AND category = 'compaction'
+    UNION SELECT ts FROM user_text WHERE session_id = ? AND type = 'continuation_summary'
+    ORDER BY ts`).all(sessionId, sessionId).map((b) => Date.parse(b.ts));
+    const segments = [];
+    let next = 0;
+    let previous = -Infinity;
+    // Whether the segment's last_reply so far is a short reply or a notice.
+    let lastIsFiller = false;
+    for (const m of messages) {
+        const at = Date.parse(m.ts);
+        let cut = segments.length === 0 || at - previous > SEGMENT_PAUSE_MS;
+        while (next < breaks.length && breaks[next] <= at) {
+            next += 1;
+            cut = true;
+        }
+        if (cut)
+            segments.push({ started_at: m.ts, ended_at: m.ts, requests: 0, first_request: null, last_reply: null, closing: null });
+        const segment = segments.at(-1);
+        segment.ended_at = m.ts;
+        if (m.role === "user") {
+            segment.requests += 1;
+            segment.first_request ??= joinedLines(m.text);
+        }
+        else {
+            const text = joinedLines(m.text);
+            const filler = Array.from(text).length <= SHORT_REPLY_CHARS
+                || (m.model === "<synthetic>" && CLAUDE_CODE_NOTICE.test(text));
+            if (!filler || segment.last_reply === null || lastIsFiller) {
+                segment.last_reply = text;
+                segment.closing = null;
+                lastIsFiller = filler;
+            }
+            else {
+                segment.closing = text;
+            }
+        }
+        previous = at;
+    }
+    return segments;
+}
 /** One session's work record: its requests, and the edits, state-changing
  *  git commands, failed tool calls and hook blocks of it and every subagent
  *  under it. Null when the session is not in the index. */
@@ -301,6 +398,7 @@ export function sessionRecord(db, sessionId) {
     SELECT ts, text FROM user_text ut
     WHERE ut.session_id = ? AND ut.role = 'user' AND ${REAL_MESSAGE("ut")}
     ORDER BY ts DESC`).all(sessionId);
+    const segments = s.kind === "subagent" ? [] : segmentsOf(db, sessionId);
     const reply = db.prepare(`
     SELECT ts, text FROM user_text ut
     WHERE ut.session_id = ? AND ut.role = 'assistant' AND ${REAL_MESSAGE("ut")}
@@ -365,6 +463,8 @@ export function sessionRecord(db, sessionId) {
         ended_at: span.ended_at,
         requests: latest(requests).map((r) => ({ ts: r.ts, text: joinedLines(r.text) })),
         requests_total: requests.length,
+        segments: segments.slice(-RECORD_SEGMENTS_CAP),
+        segments_total: segments.length,
         last_reply: reply === undefined ? null : { ts: reply.ts, text: joinedLines(reply.text) },
         edits: kept.slice(0, RECORD_EDITS_DETAILED),
         more_edits: kept.slice(RECORD_EDITS_DETAILED).map((e) => e.path),
@@ -441,6 +541,17 @@ export function formatSessionRecord(r) {
     section("Git", `Git (last ${r.git.length} of ${r.git_total}):`, r.git_total, r.git, (g) => `${g.ts}  ${shownGitLine(g.command)}`);
     section("Failed tool calls", `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`, r.failures_total, r.failures, (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}`);
     section("Hook blocks", `Hook blocks (last ${r.hook_blocks.length} of ${r.hook_blocks_total}):`, r.hook_blocks_total, r.hook_blocks, (b) => `${b.ts}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`);
+    // Last, because hooks/compact.mjs cuts the record from its end to fit, and
+    // the sections above are what a compaction summary tends to drop. One
+    // segment is the whole session, which those sections already show.
+    if (r.segments_total > 1) {
+        const shown = r.segments.length === r.segments_total ? `${r.segments_total}` : `last ${r.segments.length} of ${r.segments_total}`;
+        lines.push(`Segments (${shown}, split at compactions and pauses over 2 hours):`);
+        for (const g of r.segments) {
+            lines.push(`  ${g.started_at} – ${g.ended_at}  ${g.requests} requests`, `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`, `    Last reply: ${g.last_reply === null ? "(none)" : cutChars(g.last_reply, SEGMENT_REPLY_CHARS)}`
+                + (g.closing === null ? "" : ` (then: "${cutChars(g.closing, RECORD_LINE_CHARS)}")`));
+        }
+    }
     return lines.join("\n");
 }
 //# sourceMappingURL=left_off.js.map

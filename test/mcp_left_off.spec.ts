@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { applySchema } from "../src/indexer/schema.js";
-import { commandOf, formatLeftOff, formatSessionRecord, leftOff, sessionRecord } from "../src/mcp/left_off.js";
+import { commandOf, formatLeftOff, formatSessionRecord, leftOff, leftOffWithMore, sessionRecord } from "../src/mcp/left_off.js";
 
 let db: Database.Database;
 
@@ -141,6 +141,23 @@ describe("clens_left_off", () => {
       "Edited: src/cache.ts, src/login.ts",
     ]);
     expect(formatLeftOff([])).toBe("No sessions found.");
+  });
+
+  it("counts the sessions active in the listed span that the limit left out", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('par', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("p1", "par", "2026-09-02T09:00:00Z", "user", "update the docs");
+    msg("p2", "par", "2026-09-02T10:01:00Z", "assistant", "Docs updated.");
+    const two = leftOffWithMore(db, { project_id: "-w-app", limit: 2 });
+    expect(two.sessions.map((s) => s.session_id)).toEqual(["new", "mid"]);
+    // old ended before mid started, and judge is not the user's session.
+    expect(two.more).toEqual({ count: 1, since: "2026-09-02T10:00:00Z" });
+    expect(formatLeftOff(two.sessions, two.more).split("\n").at(-1)).toBe(
+      "(+1 more session active since 2026-09-02T10:00:00Z is not listed; raise limit (max 10) or narrow since/until to see it)",
+    );
+    expect(leftOffWithMore(db, { project_id: "-w-app", limit: 3 }).more.count).toBe(0);
+    // The asking conversation is not counted either.
+    expect(leftOffWithMore(db, { project_id: "-w-app", limit: 1 }, { currentSessionId: "new" }).more.count).toBe(1);
+    expect(formatLeftOff(leftOff(db, { project_id: "-w-app", limit: 3 }), { count: 0, since: "" })).not.toContain("more session");
   });
 
   it("lists the project's own files before files outside it", () => {
@@ -376,6 +393,126 @@ describe("clens_left_off session record", () => {
     call("k1", "mid", "2026-09-02T10:04:58Z", "Bash", JSON.stringify({ command: line }));
     expect(formatSessionRecord(sessionRecord(db, "mid")!).split("\n"))
       .toContain(`  2026-09-02T10:04:58Z  ${line.slice(0, 120)}… …git push origin main`);
+  });
+
+  it("splits the session into segments at compactions and at pauses over two hours", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('long', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("l1", "long", "2026-09-10T09:00:00.000Z", "user", "add the cache");
+    msg("l2", "long", "2026-09-10T09:05:00.000Z", "assistant", "Cache added.\nTests pass.");
+    db.exec(`INSERT INTO system_reminder (event_uuid, session_id, ts, category) VALUES ('lc', 'long', '2026-09-10T09:10:00.000Z', 'compaction')`);
+    msg("l3", "long", "2026-09-10T09:20:00.000Z", "user", "now the login bug");
+    msg("l4", "long", "2026-09-10T09:25:00.000Z", "user", "[Request interrupted by user]");
+    msg("l5", "long", "2026-09-10T09:26:00.000Z", "user", "and its test");
+    msg("l6", "long", "2026-09-10T09:30:00.000Z", "assistant", "Login fixed; committed.");
+    // A pause of exactly two hours does not split; one over it does.
+    msg("l7", "long", "2026-09-10T11:30:01.000Z", "user", "push it");
+    msg("l8", "long", "2026-09-10T13:30:01.000Z", "assistant", "Pushed to main.");
+    const r = sessionRecord(db, "long")!;
+    expect(r.segments).toEqual([
+      { started_at: "2026-09-10T09:00:00.000Z", ended_at: "2026-09-10T09:05:00.000Z", requests: 1, first_request: "add the cache", last_reply: "Cache added. ⏎ Tests pass.", closing: null },
+      { started_at: "2026-09-10T09:20:00.000Z", ended_at: "2026-09-10T09:30:00.000Z", requests: 2, first_request: "now the login bug", last_reply: "Login fixed; committed.", closing: null },
+      { started_at: "2026-09-10T11:30:01.000Z", ended_at: "2026-09-10T13:30:01.000Z", requests: 1, first_request: "push it", last_reply: "Pushed to main.", closing: null },
+    ]);
+    expect(r.segments_total).toBe(3);
+    const lines = formatSessionRecord(r).split("\n");
+    const at = lines.indexOf("Segments (3, split at compactions and pauses over 2 hours):");
+    expect(lines.slice(at, at + 4)).toEqual([
+      "Segments (3, split at compactions and pauses over 2 hours):",
+      "  2026-09-10T09:00:00.000Z – 2026-09-10T09:05:00.000Z  1 requests",
+      "    First request: add the cache",
+      "    Last reply: Cache added. ⏎ Tests pass.",
+    ]);
+    // After every other section, so the compaction hook's cut drops it first.
+    expect(lines.indexOf("Hook blocks: (none)")).toBe(at - 1);
+  });
+
+  it("also splits at a compaction summary, and keeps a segment with no request", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('sum', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("u1", "sum", "2026-09-10T09:00:00.000Z", "user", "refactor the parser");
+    db.exec(`INSERT INTO user_text (event_uuid, session_id, ts, text, role, type) VALUES
+      ('u2', 'sum', '2026-09-10T09:10:00.000Z', 'This session is being continued from a previous conversation', 'user', 'continuation_summary')`);
+    msg("u3", "sum", "2026-09-10T09:11:00.000Z", "assistant", "Continuing the refactor: done.");
+    const r = sessionRecord(db, "sum")!;
+    expect(r.segments.map((s) => [s.requests, s.first_request, s.last_reply])).toEqual([
+      [1, "refactor the parser", null],
+      [0, null, "Continuing the refactor: done."],
+    ]);
+    const lines = formatSessionRecord(r).split("\n");
+    expect(lines).toContain("    First request: (none)");
+    expect(lines).toContain("    Last reply: (none)");
+  });
+
+  it("shows a segment's last reply of over 20 characters, with a shorter one after it as how it closed", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('ack', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("k1", "ack", "2026-09-10T09:00:00.000Z", "user", "commit it");
+    msg("k2", "ack", "2026-09-10T09:01:00.000Z", "assistant", "Committed as abc1234; nothing pushed.");
+    msg("k3", "ack", "2026-09-10T09:02:00.000Z", "user", "wait for me");
+    msg("k4", "ack", "2026-09-10T09:03:00.000Z", "assistant", "알겠습니다.");
+    msg("k5", "ack", "2026-09-10T09:04:00.000Z", "assistant", "알겠습니다. 기다리겠습니다.");
+    // Only short replies: the last one is shown as it is.
+    msg("k6", "ack", "2026-09-10T12:00:00.000Z", "user", "done?");
+    msg("k7", "ack", "2026-09-10T12:01:00.000Z", "assistant", "네.");
+    msg("k8", "ack", "2026-09-10T12:02:00.000Z", "assistant", "완료.");
+    const r = sessionRecord(db, "ack")!;
+    expect(r.segments.map((s) => [s.last_reply, s.closing])).toEqual([
+      ["Committed as abc1234; nothing pushed.", "알겠습니다. 기다리겠습니다."],
+      ["완료.", null],
+    ]);
+    expect(formatSessionRecord(r).split("\n")).toContain('    Last reply: Committed as abc1234; nothing pushed. (then: "알겠습니다. 기다리겠습니다.")');
+  });
+
+  it("does not count /compact with instructions as a request or a segment", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('cmp', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("c1", "cmp", "2026-09-10T09:00:00.000Z", "user", "tag the keywords");
+    msg("c2", "cmp", "2026-09-10T09:05:00.000Z", "assistant", "Tagged them; tests pass.");
+    msg("c3", "cmp", "2026-09-10T12:10:00.000Z", "user", "/compact keep the tag notes");
+    // Claude Code also stores the instructions alone, as the command's message.
+    db.exec(`INSERT INTO event (uuid, session_id, ts, role) VALUES ('c4', 'cmp', '2026-09-10T12:10:00.001Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text, is_command, role, type)
+        VALUES ('c4', 'cmp', '2026-09-10T12:10:00.001Z', 'keep the tag notes', 1, 'user', 'user_message');
+      INSERT INTO slash_command (event_uuid, session_id, ts, name) VALUES ('c4', 'cmp', '2026-09-10T12:10:00.001Z', 'compact')`);
+    msg("c7", "cmp", "2026-09-10T12:10:30.000Z", "user", "/compact\nkeep the tag notes");
+    db.exec(`INSERT INTO system_reminder (event_uuid, session_id, ts, category) VALUES ('cc', 'cmp', '2026-09-10T12:11:00.000Z', 'compaction')`);
+    msg("c5", "cmp", "2026-09-10T12:20:00.000Z", "user", "go on with the tags");
+    msg("c6", "cmp", "2026-09-10T12:30:00.000Z", "assistant", "All tags are judged now.");
+    const r = sessionRecord(db, "cmp")!;
+    expect(r.segments.map((s) => [s.requests, s.first_request, s.last_reply])).toEqual([
+      [1, "tag the keywords", "Tagged them; tests pass."],
+      [1, "go on with the tags", "All tags are judged now."],
+    ]);
+  });
+
+  it("shows the reply before a Claude Code notice such as a session limit, with the notice as how it closed", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('lim', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("lm1", "lim", "2026-09-10T09:00:00.000Z", "user", "write the docs");
+    msg("lm2", "lim", "2026-09-10T09:05:00.000Z", "assistant", "Docs written for all nine pages.");
+    msg("lm3", "lim", "2026-09-10T09:06:00.000Z", "assistant", "You've hit your session limit · resets 5:10am (Asia/Seoul)");
+    msg("lm4", "lim", "2026-09-10T12:00:00.000Z", "user", "why did it fail");
+    msg("lm5", "lim", "2026-09-10T12:01:00.000Z", "assistant", "Short answer first.");
+    msg("lm6", "lim", "2026-09-10T12:02:00.000Z", "assistant", "API Error: 500 came from the proxy, not from our code; retrying fixed it.");
+    db.prepare("UPDATE event SET model = '<synthetic>' WHERE uuid IN ('lm3')").run();
+    const r = sessionRecord(db, "lim")!;
+    expect(r.segments.map((s) => [s.last_reply, s.closing])).toEqual([
+      ["Docs written for all nine pages.", "You've hit your session limit · resets 5:10am (Asia/Seoul)"],
+      // A reply the model wrote is a reply, whatever it starts with.
+      ["API Error: 500 came from the proxy, not from our code; retrying fixed it.", null],
+    ]);
+  });
+
+  it("shows the latest twenty segments, oldest first, and no section for a single segment or a subagent", () => {
+    db.exec(`INSERT INTO session (id, project_id, kind, parent_id, cwd, source) VALUES
+      ('many', '-w-app', 'interactive', NULL, '/w/app', 'claude'),
+      ('agent-m', '-w-app', 'subagent', 'many', '/w/app', 'claude')`);
+    for (let d = 1; d <= 22; d++) {
+      msg(`d${d}`, "many", `2026-09-${String(d).padStart(2, "0")}T09:00:00.000Z`, "user", `day ${d}`);
+      msg(`a${d}`, "agent-m", `2026-09-${String(d).padStart(2, "0")}T09:00:01.000Z`, "user", `task ${d}`);
+    }
+    const r = sessionRecord(db, "many")!;
+    expect(r.segments_total).toBe(22);
+    expect(r.segments.map((s) => s.first_request)).toEqual(Array.from({ length: 20 }, (_, k) => `day ${k + 3}`));
+    expect(formatSessionRecord(r).split("\n")).toContain("Segments (last 20 of 22, split at compactions and pauses over 2 hours):");
+    expect(sessionRecord(db, "agent-m")!.segments_total).toBe(0);
+    expect(formatSessionRecord(sessionRecord(db, "mid")!)).not.toContain("Segments");
   });
 
   it("formats a record with its section headers", () => {

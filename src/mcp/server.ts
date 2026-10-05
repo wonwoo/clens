@@ -39,7 +39,7 @@ import { ensureLanguageAdaptersLoaded } from "../indexer/lang/init.js";
 import { searchText, searchManyText, DEFAULT_SEARCH_MAX_BYTES } from "./search.js";
 import { recentUserText, formatResults, DEFAULT_RECENT_MAX_BYTES } from "./recent.js";
 import { sessionContext } from "./session.js";
-import { leftOff, formatLeftOff, sessionRecord, formatSessionRecord } from "./left_off.js";
+import { leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord } from "./left_off.js";
 import { SEARCH_DESCRIPTION, SERVER_INSTRUCTIONS, STATS_DESCRIPTION } from "./instructions.js";
 import { formatStats, projectStats, STATS_SECTIONS } from "./stats.js";
 import { codexSessionFromMeta, detectCurrentSessionId, resolveSessionId } from "./current_session.js";
@@ -70,6 +70,7 @@ const SearchParamsSchema = z
     since: z.string().optional(),
     until: z.string().optional(),
     role: z.enum(["user", "assistant"]).optional(),
+    session_id: z.string().min(1).optional(),
     limit: z.number().int().min(1).max(100).optional(),
     maxBytes: z.number().int().min(256).max(1_000_000).optional(),
     context: z.number().int().min(0).max(5).optional(),
@@ -146,6 +147,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             enum: ["user", "assistant"],
             description:
               "Restrict to one author: \"user\" (the human's own messages) or \"assistant\" (Claude's replies). Omit to search both. Use \"user\" to find what the user themselves said without assistant replies drowning it out.",
+          },
+          session_id: {
+            type: "string",
+            description:
+              "Only this session's messages: a session_id from another clens result, or \"current\" for this conversation (Claude Code and Codex). The subagents it started are not included; search one by its own session_id. A session named here is searched whatever its kind.",
           },
           limit: {
             type: "number",
@@ -246,6 +252,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first. " +
         "Each comes with when its conversation started and ended, the user's last request, the assistant's last reply (often a status or summary) and the files it edited. " +
         "Use it for \"where did I leave off\", \"what was I doing on this\", \"who last changed this file and why\"; then clens_session to read more of one. " +
+        "When the limit leaves out a session that was active in the span the list covers, the list ends with how many. " +
         "In Claude Code and Codex the current conversation is left out of the list; pass session_id \"current\" for its own record, for example after the conversation was compacted. A subagent's edits count as the session that started it. Files a shell command wrote are read off its text (redirects, tee, sed -i, heredoc and -c/-e scripts); a path set only when it ran ($VAR, $(…)) is missed.",
       inputSchema: {
         type: "object",
@@ -273,7 +280,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           session_id: {
             type: "string",
             description:
-              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its latest requests, its last reply, edited files, git commands, failed tool calls and hook blocks. project_id, file, since, until and limit are then ignored.",
+              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls and hook blocks. project_id, file, since, until and limit are then ignored.",
           },
         },
       },
@@ -325,13 +332,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: "text", text: `Invalid params: ${parsed.error.message}` }], isError: true };
     }
     try {
+      if (parsed.data.session_id !== undefined) {
+        const resolved = resolveSessionId(parsed.data.session_id, currentSessionId);
+        if (!resolved.ok) return { content: [{ type: "text", text: resolved.error }], isError: true };
+        parsed.data.session_id = resolved.id;
+      }
       // Without a known session (a client that names none), the current
       // turn simply isn't excluded.
       const opts = { currentSessionId };
       const out = {
         maxBytes: parsed.data.maxBytes ?? DEFAULT_SEARCH_MAX_BYTES,
         context: parsed.data.context ?? 0,
-        allProjects: parsed.data.project_id === undefined,
+        allProjects: parsed.data.project_id === undefined && parsed.data.session_id === undefined,
       };
       // The refine above does not narrow the type: query is still optional.
       const { query, queries, ...rest } = parsed.data;
@@ -398,8 +410,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           : `No session found: ${resolved.id}. A session only just started may not be indexed yet; try again in a few seconds.`;
         return { content: [{ type: "text", text }] };
       }
-      const sessions = leftOff(getDb(), parsed.data, { currentSessionId });
-      return { content: [{ type: "text", text: formatLeftOff(sessions) }] };
+      const { sessions, more } = leftOffWithMore(getDb(), parsed.data, { currentSessionId });
+      return { content: [{ type: "text", text: formatLeftOff(sessions, more) }] };
     } catch (e) {
       const err = e as { message?: string };
       return { content: [{ type: "text", text: `Left-off error: ${err.message ?? String(e)}` }], isError: true };

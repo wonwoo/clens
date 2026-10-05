@@ -234,7 +234,7 @@ function currentTurnOf(db, sessionId) {
         .get(sessionId);
     return row?.ts ? { session_id: sessionId, ts: row.ts } : undefined;
 }
-function buildWhere(ftsTable, matchExpr, likeTerms, role, project_id, since, until, currentTurn, humanOnly = false) {
+function buildWhere(ftsTable, matchExpr, likeTerms, role, project_id, since, until, currentTurn, humanOnly = false, session_id) {
     const conditions = [];
     const bindings = [];
     const hasMatch = matchExpr.length > 0;
@@ -249,18 +249,27 @@ function buildWhere(ftsTable, matchExpr, likeTerms, role, project_id, since, unt
     conditions.push("ut.role = ?");
     bindings.push(role);
     conditions.push("ut.type != 'continuation_summary'");
-    // Transcripts of clens's former background judge hold packed copies of
-    // real conversations, twice their size, and outranked them. One-shot
-    // programmatic runs (mostly benchmarks and tests started with `claude -p`
-    // or `codex exec`) and the subagents they started are not the user's
-    // conversations either.
-    conditions.push(workKindClause("s"));
+    if (session_id) {
+        // A session named explicitly is searched whatever its kind, as
+        // clens_stats shows one, and whole: a line copied into it from the
+        // session it resumed is one of its own, with no other copy to hide here.
+        conditions.push("ut.session_id = ?");
+        bindings.push(session_id);
+    }
+    else {
+        // Transcripts of clens's former background judge hold packed copies of
+        // real conversations, twice their size, and outranked them. One-shot
+        // programmatic runs (mostly benchmarks and tests started with `claude -p`
+        // or `codex exec`) and the subagents they started are not the user's
+        // conversations either.
+        conditions.push(workKindClause("s"));
+        // A message copied into a resumed session is found once.
+        conditions.push(notCopiedClause("ut.event_uuid", "ut.session_id"));
+    }
     // role "user" asks for what the user said. In a subagent's thread the
     // "user" is the agent that started it.
     if (humanOnly)
         conditions.push("s.kind IS NOT 'subagent'");
-    // A message copied into a resumed session is found once.
-    conditions.push(notCopiedClause("ut.event_uuid", "ut.session_id"));
     conditions.push(notNoise("ut"));
     if (project_id) {
         conditions.push("s.project_id = ?");
@@ -309,7 +318,7 @@ const RRF_K_ASSISTANT = 80;
 function runLayer(db, ftsTable, query, role, params, fetchLimit, currentTurn) {
     if (!query.matchExpr && query.likeTerms.length === 0)
         return [];
-    const { where, bindings, hasMatch } = buildWhere(ftsTable, query.matchExpr, query.likeTerms, role, params.project_id, params.since, params.until, currentTurn, params.role === "user");
+    const { where, bindings, hasMatch } = buildWhere(ftsTable, query.matchExpr, query.likeTerms, role, params.project_id, params.since, params.until, currentTurn, params.role === "user", params.session_id);
     // fts.rank is only meaningful when a MATCH constraint ran against the
     // table this query; a LIKE-only query (all words <3 codepoints) has no
     // rank to sort by, so fall back to recency.

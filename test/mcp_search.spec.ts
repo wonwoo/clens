@@ -61,6 +61,33 @@ describe("mcp/search.ts", () => {
     expect(results2.every((r) => r.project_id === "proj-a")).toBe(true);
   });
 
+  it("filters by session_id, the named session only", () => {
+    const results = searchUserText(db, { query: "인증", session_id: "s1" });
+    expect(results.map((r) => r.session_id)).toEqual(["s1", "s1"]);
+    db.exec(`
+      INSERT INTO session (id, project_id, kind, parent_id) VALUES ('agent-x', 'proj-a', 'subagent', 's1');
+      INSERT INTO event (uuid, session_id, ts, role) VALUES ('e9', 'agent-x', '2026-06-01T10:30:00Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES ('e9', 'agent-x', '2026-06-01T10:30:00Z', '인증 코드 검토');
+    `);
+    expect(searchUserText(db, { query: "인증", session_id: "s1" })).toHaveLength(2);
+    expect(searchUserText(db, { query: "인증", session_id: "s1", project_id: "proj-b" })).toHaveLength(0);
+  });
+
+  it("searches a named session whatever its kind, copied lines included", () => {
+    db.exec(`
+      INSERT INTO session (id, project_id, kind) VALUES ('run', 'proj-a', 'exec'), ('resumed', 'proj-a', 'interactive');
+      INSERT INTO event (uuid, session_id, ts, role) VALUES ('x1', 'run', '2026-06-02T10:00:00Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES
+        ('x1', 'run', '2026-06-02T10:00:00Z', '벤치마크 실행'),
+        ('e1', 'resumed', '2026-06-01T10:00:00Z', '인증 미들웨어 리팩토링해줘');
+    `);
+    expect(searchUserText(db, { query: "벤치마크" })).toHaveLength(0);
+    expect(searchUserText(db, { query: "벤치마크", session_id: "run" }).map((r) => r.session_id)).toEqual(["run"]);
+    // e1's event row belongs to s1, so the copy in "resumed" is found only there.
+    expect(searchUserText(db, { query: "미들웨어" }).map((r) => r.session_id)).toEqual(["s1"]);
+    expect(searchUserText(db, { query: "미들웨어", session_id: "resumed" }).map((r) => r.session_id)).toEqual(["resumed"]);
+  });
+
   it("filters by since", () => {
     const results = searchUserText(db, { query: "인증", since: "2026-06-10T00:00:00Z" });
     expect(results.length).toBe(1);
