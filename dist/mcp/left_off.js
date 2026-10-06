@@ -94,7 +94,7 @@ export function leftOffWithMore(db, params, opts = {}) {
     ${TREE}
     SELECT path, max(ts) AS at FROM file_op
     WHERE session_id IN tree AND tool IN ${EDIT_TOOLS}${inWindow("ts")}
-    GROUP BY path ORDER BY at DESC`);
+    GROUP BY path ORDER BY at DESC, path`);
     const listed = sessions.map(({ session_id }) => {
         const s = info.get(session_id);
         const request = last.get(session_id, "user", ...windowArgs);
@@ -414,7 +414,7 @@ export function sessionRecord(db, sessionId) {
     ${TREE}
     SELECT path, count(*) AS count, max(ts) AS last_ts FROM file_op
     WHERE session_id IN tree AND tool IN ${EDIT_TOOLS}
-    GROUP BY path ORDER BY last_ts DESC`).all(sessionId);
+    GROUP BY path ORDER BY last_ts DESC, path`).all(sessionId);
     // Never json_extract: a cut input is not valid JSON and stops the query.
     const git = db.prepare(`
     ${TREE}

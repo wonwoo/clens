@@ -102,6 +102,17 @@ describe("clens_left_off", () => {
     expect(sessionRecord(db, "new")!.edits.map((e) => e.path)).toEqual(["/w/app/src/shell.ts"]);
   });
 
+  it("orders files last edited at the same time by path, in the list and the record", () => {
+    // One patch or command writes several files at one timestamp; without a
+    // tie-breaker their order followed the query plan.
+    for (const [i, name] of ["z", "b", "y", "a"].entries()) {
+      edit(`t${i}`, "new", "2026-09-03T10:00:20Z", i % 2 ? "Bash" : "apply_patch", `/w/app/src/${name}.ts`);
+    }
+    const paths = ["a", "b", "y", "z"].map((name) => `/w/app/src/${name}.ts`);
+    expect(leftOff(db, { project_id: "-w-app" }).find((s) => s.session_id === "new")!.files).toEqual(paths);
+    expect(sessionRecord(db, "new")!.edits.map((e) => e.path)).toEqual(paths);
+  });
+
   it("finds the sessions that edited a file by its tail or full path, not ones that only read it", () => {
     expect(leftOff(db, { file: "src/cache.ts" }).map((s) => s.session_id)).toEqual(["mid", "old"]);
     expect(leftOff(db, { file: "/w/app/src/login.ts" }).map((s) => s.session_id)).toEqual(["mid"]);
