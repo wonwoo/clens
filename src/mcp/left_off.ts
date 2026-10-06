@@ -248,6 +248,9 @@ const COMPACT_COMMAND = /^\/compact(?:\s|$)/;
  *  EXISTS: slash_command has no event_uuid index, so EXISTS scanned every
  *  compact row per message. */
 const COMPACT_ROW = (alias: string) => `${alias}.event_uuid IN (SELECT event_uuid FROM slash_command WHERE name = 'compact')`;
+/** A git command that changes what others see: with an edit, what makes a
+ *  request one that changed something. */
+const CHANGE_GIT = /\bgit\s+(?:-C\s+\S+\s+)?(?:commit|merge|push)\b/;
 
 /** A /compact is not a request: one typed after a long pause made a segment
  *  of its own, with no reply. */
@@ -272,6 +275,12 @@ export interface SessionSegment {
    *  answers was about, which its first request and last reply often do not
    *  say (docs/segment-eval.md). */
   topics: string[];
+  /** The reply that closed its latest request in which a file outside a
+   *  temporary folder was edited or a commit, merge or push ran, and that
+   *  request's place among its requests; null when there is none or it is
+   *  the last request, whose reply last_reply is. Where the work stood when
+   *  the segment ended on a side question (docs/segment-eval.md). */
+  last_change: { request: number; reply: string } | null;
 }
 
 export interface SessionRecord {
@@ -451,8 +460,9 @@ function latest<T>(rows: T[]): T[] {
 /** A session's messages, oldest first, cut into segments: before and after
  *  each compaction, and across each pause over SEGMENT_PAUSE_MS. The reply
  *  before a break is most often where the work stood, which the latest
- *  requests alone do not show for a session that ran for days. */
-function segmentsOf(db: Database.Database, sessionId: string): SessionSegment[] {
+ *  requests alone do not show for a session that ran for days. changes are
+ *  the times something changed, in milliseconds, in order. */
+function segmentsOf(db: Database.Database, sessionId: string, changes: number[]): SessionSegment[] {
   const messages = (db.prepare(`
     SELECT ut.ts, ut.role, ut.text, e.model, ${COMPACT_ROW("ut")} AS compact
     FROM user_text ut LEFT JOIN event e ON e.uuid = ut.event_uuid
@@ -471,6 +481,9 @@ function segmentsOf(db: Database.Database, sessionId: string): SessionSegment[] 
   // Per segment, how many of its replies mention each code term, in the
   // order the terms first came.
   const terms: Map<string, number>[] = [];
+  // Per segment, its requests: when each came and the reply that closed it,
+  // chosen as last_reply is.
+  const turns: Turn[][] = [];
   let next = 0;
   let previous = -Infinity;
   // Whether the segment's last_reply so far is a short reply or a notice.
@@ -483,14 +496,18 @@ function segmentsOf(db: Database.Database, sessionId: string): SessionSegment[] 
       cut = true;
     }
     if (cut) {
-      segments.push({ started_at: m.ts, ended_at: m.ts, requests: 0, first_request: null, last_reply: null, closing: null, topics: [] });
+      segments.push({
+        started_at: m.ts, ended_at: m.ts, requests: 0, first_request: null, last_reply: null, closing: null, topics: [], last_change: null,
+      });
       terms.push(new Map());
+      turns.push([]);
     }
     const segment = segments.at(-1)!;
     segment.ended_at = m.ts;
     if (m.role === "user") {
       segment.requests += 1;
       segment.first_request ??= joinedLines(m.text);
+      turns.at(-1)!.push({ at, reply: null, filler: false });
     } else {
       const text = joinedLines(m.text);
       const filler = Array.from(text).length <= SHORT_REPLY_CHARS
@@ -501,6 +518,11 @@ function segmentsOf(db: Database.Database, sessionId: string): SessionSegment[] 
         lastIsFiller = filler;
       } else {
         segment.closing = text;
+      }
+      const turn = turns.at(-1)!.at(-1);
+      if (turn !== undefined && (!filler || turn.reply === null || turn.filler)) {
+        turn.reply = text;
+        turn.filler = filler;
       }
       const counts = terms.at(-1)!;
       for (const term of new Set(Array.from(m.text.matchAll(CODE_TERM), (t) => t[1]!.trim()))) {
@@ -513,8 +535,38 @@ function segmentsOf(db: Database.Database, sessionId: string): SessionSegment[] 
     // A stable sort, so a tie keeps the term that came first.
     g.topics = [...terms[i]!].filter(([, n]) => n >= SEGMENT_TOPIC_REPLIES)
       .sort((a, b) => b[1] - a[1]).slice(0, SEGMENT_TOPICS_SHOWN).map(([term]) => term);
+    g.last_change = lastChange(turns[i]!, Date.parse(g.ended_at), changes);
   });
   return segments;
+}
+
+/** A request of a segment: when it came, and the reply that closed it. */
+interface Turn {
+  at: number;
+  reply: string | null;
+  filler: boolean;
+}
+
+/** A segment's last_change, from its requests and the segment's last
+ *  message time. A request's work runs up to the next request, and the last
+ *  request's up to that last message. */
+function lastChange(turns: Turn[], end: number, changes: number[]): SessionSegment["last_change"] {
+  for (let k = turns.length - 1; k >= 0; k--) {
+    const from = turns[k]!.at;
+    const to = turns[k + 1]?.at ?? end + 1;
+    // The first change at or after from.
+    let lo = 0;
+    let hi = changes.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (changes[mid]! < from) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo === changes.length || changes[lo]! >= to) continue;
+    const reply = turns[k]!.reply;
+    return k === turns.length - 1 || reply === null ? null : { request: k + 1, reply };
+  }
+  return null;
 }
 
 /** One session's work record: its requests, and the edits, state-changing
@@ -536,7 +588,6 @@ export function sessionRecord(db: Database.Database, sessionId: string): Session
     WHERE ut.session_id = ? AND ut.role = 'user' AND ${REAL_MESSAGE("ut")}
     ORDER BY ut.ts DESC`).all(sessionId) as { ts: string; role: string; text: string; compact: number }[])
     .filter((r) => !isCompact(r));
-  const segments = s.kind === "subagent" ? [] : segmentsOf(db, sessionId);
   const reply = db.prepare(`
     SELECT ts, text FROM user_text ut
     WHERE ut.session_id = ? AND ut.role = 'assistant' AND ${REAL_MESSAGE("ut")}
@@ -591,6 +642,17 @@ export function sessionRecord(db: Database.Database, sessionId: string): Session
   for (const e of edits) {
     const root = tempRoot(e.path);
     if (root !== undefined) temp.set(root, (temp.get(root) ?? 0) + 1);
+  }
+  let segments: SessionSegment[] = [];
+  if (s.kind !== "subagent") {
+    const editTimes = (db.prepare(`
+      ${TREE}
+      SELECT ts, path FROM file_op
+      WHERE session_id IN tree AND tool IN ${EDIT_TOOLS}`).all(sessionId) as { ts: string; path: string }[])
+      .filter((e) => tempRoot(e.path) === undefined).map((e) => e.ts);
+    const changes = [...editTimes, ...git.filter((g) => CHANGE_GIT.test(g.command)).map((g) => g.ts)]
+      .map((ts) => Date.parse(ts)).sort((a, b) => a - b);
+    segments = segmentsOf(db, sessionId, changes);
   }
 
   return {
@@ -695,6 +757,9 @@ export function formatSessionRecord(r: SessionRecord): string {
         `  ${g.started_at} – ${g.ended_at}  ${g.requests} requests`,
         `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`,
         ...(g.topics.length === 0 ? [] : [`    Topics: ${cutChars(g.topics.join(", "), SEGMENT_REPLY_CHARS)}`]),
+        ...(g.last_change === null ? [] : [
+          `    Last change (request ${g.last_change.request} of ${g.requests}): ${cutChars(g.last_change.reply, SEGMENT_REPLY_CHARS)}`,
+        ]),
         `    Last reply: ${g.last_reply === null ? "(none)" : cutChars(g.last_reply, SEGMENT_REPLY_CHARS)}`
           + (g.closing === null ? "" : ` (then: "${cutChars(g.closing, RECORD_LINE_CHARS)}")`),
       );

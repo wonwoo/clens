@@ -422,9 +422,9 @@ describe("clens_left_off session record", () => {
     msg("l8", "long", "2026-09-10T13:30:01.000Z", "assistant", "Pushed to main.");
     const r = sessionRecord(db, "long")!;
     expect(r.segments).toEqual([
-      { started_at: "2026-09-10T09:00:00.000Z", ended_at: "2026-09-10T09:05:00.000Z", requests: 1, first_request: "add the cache", last_reply: "Cache added. ⏎ Tests pass.", closing: null, topics: [] },
-      { started_at: "2026-09-10T09:20:00.000Z", ended_at: "2026-09-10T09:30:00.000Z", requests: 2, first_request: "now the login bug", last_reply: "Login fixed; committed.", closing: null, topics: [] },
-      { started_at: "2026-09-10T11:30:01.000Z", ended_at: "2026-09-10T13:30:01.000Z", requests: 1, first_request: "push it", last_reply: "Pushed to main.", closing: null, topics: [] },
+      { started_at: "2026-09-10T09:00:00.000Z", ended_at: "2026-09-10T09:05:00.000Z", requests: 1, first_request: "add the cache", last_reply: "Cache added. ⏎ Tests pass.", closing: null, topics: [], last_change: null },
+      { started_at: "2026-09-10T09:20:00.000Z", ended_at: "2026-09-10T09:30:00.000Z", requests: 2, first_request: "now the login bug", last_reply: "Login fixed; committed.", closing: null, topics: [], last_change: null },
+      { started_at: "2026-09-10T11:30:01.000Z", ended_at: "2026-09-10T13:30:01.000Z", requests: 1, first_request: "push it", last_reply: "Pushed to main.", closing: null, topics: [], last_change: null },
     ]);
     expect(r.segments_total).toBe(3);
     const lines = formatSessionRecord(r).split("\n");
@@ -460,6 +460,43 @@ describe("clens_left_off session record", () => {
       "    Last reply: `search` calls `SearchCache` once, and `cacheKey` twice: `cacheKey`. `42` ms.",
     ]);
     expect(lines.filter((l) => l.startsWith("    Topics:"))).toHaveLength(1);
+  });
+
+  it("shows the reply after a segment's latest edit or commit when a later request followed", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('chg', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("c1", "chg", "2026-09-10T09:00:00.000Z", "user", "fix the login bug");
+    edit("c1e", "chg", "2026-09-10T09:00:30.000Z", "Edit", "/w/app/src/login.ts");
+    msg("c2", "chg", "2026-09-10T09:01:00.000Z", "assistant", "Fixed the expiry check in src/login.ts; tests pass.");
+    msg("c3", "chg", "2026-09-10T09:01:10.000Z", "assistant", "Done.");
+    msg("c4", "chg", "2026-09-10T09:02:00.000Z", "user", "what does the expiry do?");
+    // A scratch file is not a change.
+    edit("c4e", "chg", "2026-09-10T09:02:30.000Z", "Write", "/tmp/probe.js");
+    msg("c5", "chg", "2026-09-10T09:03:00.000Z", "assistant", "It logs a user out after an hour without requests.");
+    // A commit is one; a checkout is not.
+    msg("d1", "chg", "2026-09-10T12:00:00.000Z", "user", "commit it");
+    call("d1g", "chg", "2026-09-10T12:00:30.000Z", "Bash", JSON.stringify({ command: "git add -A && git commit -m 'fix expiry'" }));
+    msg("d2", "chg", "2026-09-10T12:01:00.000Z", "assistant", "Committed as abc1234; nothing pushed.");
+    msg("d3", "chg", "2026-09-10T12:02:00.000Z", "user", "switch to main");
+    call("d3g", "chg", "2026-09-10T12:02:30.000Z", "Bash", JSON.stringify({ command: "git checkout main" }));
+    msg("d4", "chg", "2026-09-10T12:03:00.000Z", "assistant", "On main now, and the tree is clean.");
+    // A change in the last request: the last reply already tells it.
+    msg("e1", "chg", "2026-09-10T15:00:00.000Z", "user", "add a test");
+    edit("e1e", "chg", "2026-09-10T15:00:30.000Z", "Write", "/w/app/test/login.spec.ts");
+    msg("e2", "chg", "2026-09-10T15:01:00.000Z", "assistant", "Added test/login.spec.ts; it passes.");
+    const r = sessionRecord(db, "chg")!;
+    expect(r.segments.map((g) => g.last_change)).toEqual([
+      { request: 1, reply: "Fixed the expiry check in src/login.ts; tests pass." },
+      { request: 1, reply: "Committed as abc1234; nothing pushed." },
+      null,
+    ]);
+    const lines = formatSessionRecord(r).split("\n");
+    const at = lines.indexOf("    First request: fix the login bug");
+    expect(lines.slice(at, at + 3)).toEqual([
+      "    First request: fix the login bug",
+      "    Last change (request 1 of 2): Fixed the expiry check in src/login.ts; tests pass.",
+      "    Last reply: It logs a user out after an hour without requests.",
+    ]);
+    expect(lines.filter((l) => l.startsWith("    Last change"))).toHaveLength(2);
   });
 
   it("also splits at a compaction summary, and keeps a segment with no request", () => {
