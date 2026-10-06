@@ -31,6 +31,7 @@ const EXPECTED_INDEXES = [
   "event_ts_idx",
   "tool_session_idx",
   "tool_name_idx",
+  "tool_session_name_idx",
   "tool_call_id_idx",
   "file_op_path_idx",
   "skill_name_idx",
@@ -69,6 +70,27 @@ describe("schema.ts", () => {
     for (const idx of EXPECTED_INDEXES) {
       expect(names).toContain(idx);
     }
+    db.close();
+  });
+
+  it("finds a session's calls of some tools by session and name, not by name across every session", () => {
+    // The session record's git-command query: on tool_name_idx it read every
+    // shell call in the index, about a second when they were not cached.
+    const db = openMem();
+    const plan = db.prepare(`EXPLAIN QUERY PLAN
+      WITH RECURSIVE tree(id) AS (SELECT 'a' UNION SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id)
+      SELECT ts FROM tool_call WHERE session_id IN tree AND name IN ('Bash', 'exec_command', 'exec')`)
+      .all() as { detail: string }[];
+    expect(plan.map((p) => p.detail).join("\n")).toContain("USING INDEX tool_session_name_idx (session_id=? AND name=?)");
+    db.close();
+  });
+
+  it("adds an index to an existing index.db without a schema version change", () => {
+    const db = openMem();
+    db.exec("DROP INDEX tool_session_name_idx");
+    applySchema(db);
+    expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'tool_session_name_idx'").get()).toBeDefined();
+    expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
     db.close();
   });
 

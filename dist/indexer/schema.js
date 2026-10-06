@@ -173,6 +173,10 @@ const SCHEMA_STATEMENTS = [
    )`,
     `CREATE INDEX IF NOT EXISTS tool_session_idx ON tool_call(session_id)`,
     `CREATE INDEX IF NOT EXISTS tool_name_idx ON tool_call(name)`,
+    // A session's calls of some tools (the session record's git commands):
+    // without it SQLite took tool_name_idx and read every shell call in the
+    // index. Only an index, so no SCHEMA_VERSION bump: the next open adds it.
+    `CREATE INDEX IF NOT EXISTS tool_session_name_idx ON tool_call(session_id, name)`,
     `CREATE INDEX IF NOT EXISTS tool_call_id_idx ON tool_call(call_id)`,
     // ----- File operations -----
     `CREATE TABLE IF NOT EXISTS file_op (
