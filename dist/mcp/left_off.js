@@ -182,6 +182,15 @@ const CLAUDE_CODE_NOTICE = /^(?:API Error|Prompt is too long|You've hit your |Pl
  *  /compact is left out as BARE_COMMAND already. Claude Code also stores the
  *  instructions alone, as a command message whose slash_command is compact. */
 const COMPACT_COMMAND = /^\/compact(?:\s|$)/;
+/** 1 when the message is a compact command's message. IN, not a correlated
+ *  EXISTS: slash_command has no event_uuid index, so EXISTS scanned every
+ *  compact row per message. */
+const COMPACT_ROW = (alias) => `${alias}.event_uuid IN (SELECT event_uuid FROM slash_command WHERE name = 'compact')`;
+/** A /compact is not a request: one typed after a long pause made a segment
+ *  of its own, with no reply. */
+function isCompact(m) {
+    return m.role === "user" && (m.compact === 1 || COMPACT_COMMAND.test(m.text));
+}
 /** The command of a shell input: a Claude Code Bash input's `command` or a
  *  Codex exec_command input's `cmd`. The parser keeps a shell input up to
  *  64 KB and cuts a longer one, which leaves it invalid JSON, so the command
@@ -328,16 +337,12 @@ function latest(rows) {
  *  before a break is most often where the work stood, which the latest
  *  requests alone do not show for a session that ran for days. */
 function segmentsOf(db, sessionId) {
-    // A /compact is not a request: one typed after a long pause made a segment
-    // of its own, with no reply. IN, not a correlated EXISTS: slash_command has
-    // no event_uuid index, so EXISTS scanned every compact row per message.
     const messages = db.prepare(`
-    SELECT ut.ts, ut.role, ut.text, e.model,
-      ut.event_uuid IN (SELECT event_uuid FROM slash_command WHERE name = 'compact') AS compact
+    SELECT ut.ts, ut.role, ut.text, e.model, ${COMPACT_ROW("ut")} AS compact
     FROM user_text ut LEFT JOIN event e ON e.uuid = ut.event_uuid
     WHERE ut.session_id = ? AND ${REAL_MESSAGE("ut")}
     ORDER BY ut.ts`).all(sessionId)
-        .filter((m) => !(m.role === "user" && (m.compact === 1 || COMPACT_COMMAND.test(m.text))));
+        .filter((m) => !isCompact(m));
     // A compaction row, or for a session indexed before those were written
     // and whose transcript is gone since, the summary the conversation starts
     // again with. A session with both has the two a moment apart, with no
@@ -393,11 +398,13 @@ export function sessionRecord(db, sessionId) {
     const span = db.prepare(`
     SELECT min(ut.ts) AS started_at, max(ut.ts) AS ended_at FROM user_text ut
     WHERE ut.session_id = ? AND ${REAL_MESSAGE("ut")}`).get(sessionId);
-    // A subagent's "user" is the agent that started it, not the user.
+    // A subagent's "user" is the agent that started it, not the user. A
+    // /compact is left out as in the segments, so their counts add up.
     const requests = s.kind === "subagent" ? [] : db.prepare(`
-    SELECT ts, text FROM user_text ut
+    SELECT ut.ts, ut.role, ut.text, ${COMPACT_ROW("ut")} AS compact FROM user_text ut
     WHERE ut.session_id = ? AND ut.role = 'user' AND ${REAL_MESSAGE("ut")}
-    ORDER BY ts DESC`).all(sessionId);
+    ORDER BY ut.ts DESC`).all(sessionId)
+        .filter((r) => !isCompact(r));
     const segments = s.kind === "subagent" ? [] : segmentsOf(db, sessionId);
     const reply = db.prepare(`
     SELECT ts, text FROM user_text ut
@@ -541,9 +548,10 @@ export function formatSessionRecord(r) {
     section("Git", `Git (last ${r.git.length} of ${r.git_total}):`, r.git_total, r.git, (g) => `${g.ts}  ${shownGitLine(g.command)}`);
     section("Failed tool calls", `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`, r.failures_total, r.failures, (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}`);
     section("Hook blocks", `Hook blocks (last ${r.hook_blocks.length} of ${r.hook_blocks_total}):`, r.hook_blocks_total, r.hook_blocks, (b) => `${b.ts}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`);
-    // Last, because hooks/compact.mjs cuts the record from its end to fit, and
-    // the sections above are what a compaction summary tends to drop. One
-    // segment is the whole session, which those sections already show.
+    // Last, because hooks/compact.mjs leaves out segments and then cuts the
+    // record from its end to fit, and the sections above are what a compaction
+    // summary tends to drop. One segment is the whole session, which those
+    // sections already show.
     if (r.segments_total > 1) {
         const shown = r.segments.length === r.segments_total ? `${r.segments_total}` : `last ${r.segments.length} of ${r.segments_total}`;
         lines.push(`Segments (${shown}, split at compactions and pauses over 2 hours):`);
@@ -553,5 +561,15 @@ export function formatSessionRecord(r) {
         }
     }
     return lines.join("\n");
+}
+/** The record in at most chars characters, if leaving out its oldest
+ *  segments, down to the latest one, does it; the caller cuts what is still
+ *  over. A plain cut from the end would drop the latest segments first. */
+export function formatSessionRecordWithin(r, chars) {
+    let text = formatSessionRecord(r);
+    for (let drop = 1; text.length > chars && drop < r.segments.length; drop++) {
+        text = formatSessionRecord({ ...r, segments: r.segments.slice(drop) });
+    }
+    return text;
 }
 //# sourceMappingURL=left_off.js.map

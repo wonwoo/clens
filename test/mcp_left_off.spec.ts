@@ -2,7 +2,9 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { applySchema } from "../src/indexer/schema.js";
-import { commandOf, formatLeftOff, formatSessionRecord, leftOff, leftOffWithMore, sessionRecord } from "../src/mcp/left_off.js";
+import {
+  commandOf, formatLeftOff, formatSessionRecord, formatSessionRecordWithin, leftOff, leftOffWithMore, sessionRecord,
+} from "../src/mcp/left_off.js";
 
 let db: Database.Database;
 
@@ -480,6 +482,9 @@ describe("clens_left_off session record", () => {
       [1, "tag the keywords", "Tagged them; tests pass."],
       [1, "go on with the tags", "All tags are judged now."],
     ]);
+    // Nor in the requests, so the segments' counts add up to their total.
+    expect(r.requests.map((q) => q.text)).toEqual(["tag the keywords", "go on with the tags"]);
+    expect(r.requests_total).toBe(2);
   });
 
   it("shows the reply before a Claude Code notice such as a session limit, with the notice as how it closed", () => {
@@ -513,6 +518,25 @@ describe("clens_left_off session record", () => {
     expect(formatSessionRecord(r).split("\n")).toContain("Segments (last 20 of 22, split at compactions and pauses over 2 hours):");
     expect(sessionRecord(db, "agent-m")!.segments_total).toBe(0);
     expect(formatSessionRecord(sessionRecord(db, "mid")!)).not.toContain("Segments");
+  });
+
+  it("leaves out the oldest segments first to fit a record in a length, down to the latest one", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('many', '-w-app', 'interactive', '/w/app', 'claude')");
+    for (let d = 1; d <= 22; d++) msg(`d${d}`, "many", `2026-09-${String(d).padStart(2, "0")}T09:00:00.000Z`, "user", `day ${d}`);
+    const r = sessionRecord(db, "many")!;
+    const whole = formatSessionRecord(r);
+    expect(formatSessionRecordWithin(r, whole.length)).toBe(whole);
+    const fit = formatSessionRecordWithin(r, whole.length - 1);
+    expect(fit.length).toBeLessThan(whole.length);
+    const lines = fit.split("\n");
+    expect(lines).toContain("Segments (last 19 of 22, split at compactions and pauses over 2 hours):");
+    expect(lines).not.toContain("    First request: day 3");
+    expect(lines).toContain("    First request: day 22");
+    // What still does not fit is the caller's to cut.
+    const tight = formatSessionRecordWithin(r, 10).split("\n");
+    expect(tight).toContain("Segments (last 1 of 22, split at compactions and pauses over 2 hours):");
+    expect(tight).toContain("    First request: day 22");
+    expect(r.segments).toHaveLength(20);
   });
 
   it("formats a record with its section headers", () => {

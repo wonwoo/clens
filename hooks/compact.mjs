@@ -7,11 +7,11 @@
 // In the plugin, the MCP server's first run installs better-sqlite3
 // (plugin/start.mjs). Until it has, or while there is no index yet, the hook
 // adds nothing rather than failing.
-let Database, indexDbPath, formatSessionRecord, sessionRecord;
+let Database, indexDbPath, formatSessionRecordWithin, sessionRecord;
 try {
   ({ default: Database } = await import("better-sqlite3"));
   ({ indexDbPath } = await import("../dist/util/paths.js"));
-  ({ formatSessionRecord, sessionRecord } = await import("../dist/mcp/left_off.js"));
+  ({ formatSessionRecordWithin, sessionRecord } = await import("../dist/mcp/left_off.js"));
 } catch {
   process.exit(0);
 }
@@ -40,8 +40,8 @@ if (!record) process.exit(0);
 const head =
   "clens work record of this session, from its transcript (the conversation was just compacted). " +
   "Read more of it with clens_session.\n";
-let body = formatSessionRecord(record);
 const room = MAX_CHARS - head.length - END.length - 80;
+let body = formatSessionRecordWithin(record, room);
 if (body.length > room) body = body.slice(0, room) + `\n… cut; clens_left_off session_id "current" gives it whole.`;
 
 process.stdout.write(
