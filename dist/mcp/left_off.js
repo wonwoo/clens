@@ -423,6 +423,9 @@ function segmentsOf(db, sessionId, changes) {
         g.topics = [...terms[i]].filter(([, n]) => n >= SEGMENT_TOPIC_REPLIES)
             .sort((a, b) => b[1] - a[1]).slice(0, SEGMENT_TOPICS_SHOWN).map(([term]) => term);
         g.last_change = lastChange(turns[i], Date.parse(g.ended_at), changes);
+        // The requests after it got no reply yet, or only short ones.
+        if (g.last_change?.reply === g.last_reply)
+            g.last_change = null;
     });
     return segments;
 }

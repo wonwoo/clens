@@ -277,8 +277,8 @@ export interface SessionSegment {
   topics: string[];
   /** The reply that closed its latest request in which a file outside a
    *  temporary folder was edited or a commit, merge or push ran, and that
-   *  request's place among its requests; null when there is none or it is
-   *  the last request, whose reply last_reply is. Where the work stood when
+   *  request's place among its requests; null when there is none or its
+   *  reply is last_reply, as the last request's is. Where the work stood when
    *  the segment ended on a side question (docs/segment-eval.md). */
   last_change: { request: number; reply: string } | null;
 }
@@ -536,6 +536,8 @@ function segmentsOf(db: Database.Database, sessionId: string, changes: number[])
     g.topics = [...terms[i]!].filter(([, n]) => n >= SEGMENT_TOPIC_REPLIES)
       .sort((a, b) => b[1] - a[1]).slice(0, SEGMENT_TOPICS_SHOWN).map(([term]) => term);
     g.last_change = lastChange(turns[i]!, Date.parse(g.ended_at), changes);
+    // The requests after it got no reply yet, or only short ones.
+    if (g.last_change?.reply === g.last_reply) g.last_change = null;
   });
   return segments;
 }

@@ -499,6 +499,25 @@ describe("clens_left_off session record", () => {
     expect(lines.filter((l) => l.startsWith("    Last change"))).toHaveLength(2);
   });
 
+  it("shows no last change that is the last reply: the requests after it got no reply or only short ones", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('rep', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("r1", "rep", "2026-09-10T09:00:00.000Z", "user", "fix the login bug");
+    edit("r1e", "rep", "2026-09-10T09:00:30.000Z", "Edit", "/w/app/src/login.ts");
+    msg("r2", "rep", "2026-09-10T09:01:00.000Z", "assistant", "Fixed the expiry check in src/login.ts; tests pass.");
+    // Asked while the reply is still being written, or interrupted.
+    msg("r3", "rep", "2026-09-10T09:02:00.000Z", "user", "restarted, check it");
+    msg("s1", "rep", "2026-09-10T12:00:00.000Z", "user", "commit it");
+    call("s1g", "rep", "2026-09-10T12:00:30.000Z", "Bash", JSON.stringify({ command: "git commit -m 'fix expiry'" }));
+    msg("s2", "rep", "2026-09-10T12:01:00.000Z", "assistant", "Committed as abc1234; nothing pushed.");
+    msg("s3", "rep", "2026-09-10T12:02:00.000Z", "user", "wait");
+    msg("s4", "rep", "2026-09-10T12:03:00.000Z", "assistant", "알겠습니다.");
+    const r = sessionRecord(db, "rep")!;
+    expect(r.segments.map((g) => [g.last_reply, g.last_change])).toEqual([
+      ["Fixed the expiry check in src/login.ts; tests pass.", null],
+      ["Committed as abc1234; nothing pushed.", null],
+    ]);
+  });
+
   it("also splits at a compaction summary, and keeps a segment with no request", () => {
     db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('sum', '-w-app', 'interactive', '/w/app', 'claude')");
     msg("u1", "sum", "2026-09-10T09:00:00.000Z", "user", "refactor the parser");
