@@ -171,6 +171,12 @@ const RECORD_REPLY_CHARS = 500;
 const SEGMENT_PAUSE_MS = 2 * 60 * 60 * 1000;
 const RECORD_SEGMENTS_CAP = 20;
 const SEGMENT_REPLY_CHARS = 240;
+const SEGMENT_TOPICS_SHOWN = 6;
+const SEGMENT_TOPIC_REPLIES = 2;
+/** A term in backticks: a name, a path, a command. */
+const CODE_TERM = /`([^`\n]{2,40})`/g;
+/** Terms that do not say what was worked on: a commit hash, a number. */
+const NOT_A_TOPIC = /^(?:[0-9a-f]{7,40}|[\d.,%:\s-]+)$/;
 /** A reply this short ("네.", "알겠습니다. 기다리겠습니다.") says nothing of
  *  the work: in the index, nearly every segment that ended on one did. */
 const SHORT_REPLY_CHARS = 20;
@@ -352,6 +358,9 @@ function segmentsOf(db, sessionId) {
     UNION SELECT ts FROM user_text WHERE session_id = ? AND type = 'continuation_summary'
     ORDER BY ts`).all(sessionId, sessionId).map((b) => Date.parse(b.ts));
     const segments = [];
+    // Per segment, how many of its replies mention each code term, in the
+    // order the terms first came.
+    const terms = [];
     let next = 0;
     let previous = -Infinity;
     // Whether the segment's last_reply so far is a short reply or a notice.
@@ -363,8 +372,10 @@ function segmentsOf(db, sessionId) {
             next += 1;
             cut = true;
         }
-        if (cut)
-            segments.push({ started_at: m.ts, ended_at: m.ts, requests: 0, first_request: null, last_reply: null, closing: null });
+        if (cut) {
+            segments.push({ started_at: m.ts, ended_at: m.ts, requests: 0, first_request: null, last_reply: null, closing: null, topics: [] });
+            terms.push(new Map());
+        }
         const segment = segments.at(-1);
         segment.ended_at = m.ts;
         if (m.role === "user") {
@@ -383,9 +394,19 @@ function segmentsOf(db, sessionId) {
             else {
                 segment.closing = text;
             }
+            const counts = terms.at(-1);
+            for (const term of new Set(Array.from(m.text.matchAll(CODE_TERM), (t) => t[1].trim()))) {
+                if (term !== "" && !NOT_A_TOPIC.test(term))
+                    counts.set(term, (counts.get(term) ?? 0) + 1);
+            }
         }
         previous = at;
     }
+    segments.forEach((g, i) => {
+        // A stable sort, so a tie keeps the term that came first.
+        g.topics = [...terms[i]].filter(([, n]) => n >= SEGMENT_TOPIC_REPLIES)
+            .sort((a, b) => b[1] - a[1]).slice(0, SEGMENT_TOPICS_SHOWN).map(([term]) => term);
+    });
     return segments;
 }
 /** One session's work record: its requests, and the edits, state-changing
@@ -556,7 +577,7 @@ export function formatSessionRecord(r) {
         const shown = r.segments.length === r.segments_total ? `${r.segments_total}` : `last ${r.segments.length} of ${r.segments_total}`;
         lines.push(`Segments (${shown}, split at compactions and pauses over 2 hours):`);
         for (const g of r.segments) {
-            lines.push(`  ${g.started_at} – ${g.ended_at}  ${g.requests} requests`, `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`, `    Last reply: ${g.last_reply === null ? "(none)" : cutChars(g.last_reply, SEGMENT_REPLY_CHARS)}`
+            lines.push(`  ${g.started_at} – ${g.ended_at}  ${g.requests} requests`, `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`, ...(g.topics.length === 0 ? [] : [`    Topics: ${cutChars(g.topics.join(", "), SEGMENT_REPLY_CHARS)}`]), `    Last reply: ${g.last_reply === null ? "(none)" : cutChars(g.last_reply, SEGMENT_REPLY_CHARS)}`
                 + (g.closing === null ? "" : ` (then: "${cutChars(g.closing, RECORD_LINE_CHARS)}")`));
         }
     }

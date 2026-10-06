@@ -422,9 +422,9 @@ describe("clens_left_off session record", () => {
     msg("l8", "long", "2026-09-10T13:30:01.000Z", "assistant", "Pushed to main.");
     const r = sessionRecord(db, "long")!;
     expect(r.segments).toEqual([
-      { started_at: "2026-09-10T09:00:00.000Z", ended_at: "2026-09-10T09:05:00.000Z", requests: 1, first_request: "add the cache", last_reply: "Cache added. ⏎ Tests pass.", closing: null },
-      { started_at: "2026-09-10T09:20:00.000Z", ended_at: "2026-09-10T09:30:00.000Z", requests: 2, first_request: "now the login bug", last_reply: "Login fixed; committed.", closing: null },
-      { started_at: "2026-09-10T11:30:01.000Z", ended_at: "2026-09-10T13:30:01.000Z", requests: 1, first_request: "push it", last_reply: "Pushed to main.", closing: null },
+      { started_at: "2026-09-10T09:00:00.000Z", ended_at: "2026-09-10T09:05:00.000Z", requests: 1, first_request: "add the cache", last_reply: "Cache added. ⏎ Tests pass.", closing: null, topics: [] },
+      { started_at: "2026-09-10T09:20:00.000Z", ended_at: "2026-09-10T09:30:00.000Z", requests: 2, first_request: "now the login bug", last_reply: "Login fixed; committed.", closing: null, topics: [] },
+      { started_at: "2026-09-10T11:30:01.000Z", ended_at: "2026-09-10T13:30:01.000Z", requests: 1, first_request: "push it", last_reply: "Pushed to main.", closing: null, topics: [] },
     ]);
     expect(r.segments_total).toBe(3);
     const lines = formatSessionRecord(r).split("\n");
@@ -437,6 +437,29 @@ describe("clens_left_off session record", () => {
     ]);
     // After every other section, so the compaction hook's cut drops it first.
     expect(lines.indexOf("Hook blocks: (none)")).toBe(at - 1);
+  });
+
+  it("shows the code terms two or more of a segment's replies mention, most mentioned first", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('top', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("p1", "top", "2026-09-10T09:00:00.000Z", "user", "why is `search` slow");
+    msg("p2", "top", "2026-09-10T09:01:00.000Z", "assistant", "`locale` is dropped: `SearchCache` misses because `cacheKey` ignores it; see `a1b2c3d`.");
+    msg("p3", "top", "2026-09-10T09:02:00.000Z", "assistant", "Fixed `cacheKey` to keep `locale`; `SearchCache` hits now in `42` ms, commit `a1b2c3d`.");
+    msg("p4", "top", "2026-09-10T09:03:00.000Z", "user", "and `search` itself?");
+    msg("p5", "top", "2026-09-10T09:04:00.000Z", "assistant", "`search` calls `SearchCache` once, and `cacheKey` twice: `cacheKey`. `42` ms.");
+    // Over two hours later: a segment whose replies share no term.
+    msg("p6", "top", "2026-09-10T12:00:00.000Z", "user", "thanks");
+    msg("p7", "top", "2026-09-10T12:01:00.000Z", "assistant", "You are welcome; `once` is enough.");
+    const r = sessionRecord(db, "top")!;
+    // Counted once per reply; not a user's terms, a commit hash or a number.
+    expect(r.segments.map((g) => g.topics)).toEqual([["SearchCache", "cacheKey", "locale"], []]);
+    const lines = formatSessionRecord(r).split("\n");
+    const at = lines.indexOf("    First request: why is `search` slow");
+    expect(lines.slice(at, at + 3)).toEqual([
+      "    First request: why is `search` slow",
+      "    Topics: SearchCache, cacheKey, locale",
+      "    Last reply: `search` calls `SearchCache` once, and `cacheKey` twice: `cacheKey`. `42` ms.",
+    ]);
+    expect(lines.filter((l) => l.startsWith("    Topics:"))).toHaveLength(1);
   });
 
   it("also splits at a compaction summary, and keeps a segment with no request", () => {
