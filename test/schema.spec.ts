@@ -34,6 +34,7 @@ const EXPECTED_INDEXES = [
   "tool_session_name_idx",
   "tool_call_id_idx",
   "file_op_path_idx",
+  "file_op_session_tool_idx",
   "skill_name_idx",
   "agent_type_idx",
   "slash_name_idx",
@@ -85,11 +86,26 @@ describe("schema.ts", () => {
     db.close();
   });
 
+  it("finds a session's edits by session and tool, not by reading every file_op row", () => {
+    // The session record's and the list's edited files: file_op had no
+    // session index, so each read the whole table.
+    const db = openMem();
+    const plan = db.prepare(`EXPLAIN QUERY PLAN
+      WITH RECURSIVE tree(id) AS (SELECT 'a' UNION SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id)
+      SELECT path FROM file_op WHERE session_id IN tree AND tool IN ('Edit', 'Write', 'Bash')`)
+      .all() as { detail: string }[];
+    expect(plan.map((p) => p.detail).join("\n")).toContain("USING INDEX file_op_session_tool_idx (session_id=? AND tool=?)");
+    db.close();
+  });
+
   it("adds an index to an existing index.db without a schema version change", () => {
     const db = openMem();
-    db.exec("DROP INDEX tool_session_name_idx");
+    const added = ["tool_session_name_idx", "file_op_session_tool_idx"];
+    for (const name of added) db.exec(`DROP INDEX ${name}`);
     applySchema(db);
-    expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'tool_session_name_idx'").get()).toBeDefined();
+    for (const name of added) {
+      expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(name)).toBeDefined();
+    }
     expect(getSchemaVersion(db)).toBe(SCHEMA_VERSION);
     db.close();
   });

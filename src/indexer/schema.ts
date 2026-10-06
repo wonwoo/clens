@@ -202,6 +202,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      FOREIGN KEY (event_uuid) REFERENCES event(uuid)
    )`,
   `CREATE INDEX IF NOT EXISTS file_op_path_idx ON file_op(path)`,
+  // A session's edits (clens_left_off) and the indexer's per-session wipe
+  // read the whole table without it. No SCHEMA_VERSION bump, as above.
+  `CREATE INDEX IF NOT EXISTS file_op_session_tool_idx ON file_op(session_id, tool)`,
 
   // ----- User and assistant text -----
   `CREATE TABLE IF NOT EXISTS user_text (
