@@ -30,6 +30,13 @@ export function getLanguageAdapter(code: string): LanguageAdapter | undefined {
   return registry.get(code);
 }
 
+/** The registered adapters, in listKnownLanguageCodes() order. */
+export function registeredLanguageAdapters(): LanguageAdapter[] {
+  return listKnownLanguageCodes()
+    .map((code) => registry.get(code))
+    .filter((a): a is LanguageAdapter => a !== undefined);
+}
+
 /** Derives the per-language FTS5 table name from its code. Single source of
  *  truth so schema.ts, writer.ts, and search.ts never hand-type the name. */
 export function languageFtsTable(code: string): string {

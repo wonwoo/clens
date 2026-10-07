@@ -13,7 +13,7 @@
  * Results from all active layers are merged via Reciprocal Rank Fusion
  * (K=60), so partial matches like "리뷰" finding "리뷰해바" work naturally.
  */
-import { getLanguageAdapter, languageFtsTable, listKnownLanguageCodes } from "../indexer/lang/registry.js";
+import { languageFtsTable, registeredLanguageAdapters } from "../indexer/lang/registry.js";
 import { neighborsOf } from "./session.js";
 import { notCopiedClause, workKindClause } from "../analyzer/scope.js";
 const DEFAULT_LIMIT = 20;
@@ -176,6 +176,11 @@ function tokenizeQuery(raw) {
         pendingNot = false;
     }
     return { groups: groups.filter((g) => g.terms.length > 0), negatedTerms };
+}
+/** The words of `query` that its morpheme layers split: every term it
+ *  searches for, not the ones it leaves out with NOT. */
+export function queryTerms(query) {
+    return tokenizeQuery(query).groups.flatMap((g) => g.terms.map((t) => t.text));
 }
 /** Render OR-of-AND-groups into a unicode61 MATCH expression. Bare words get
  *  a trailing prefix wildcard (partial-word matches like 리뷰->리뷰해바);
@@ -346,7 +351,7 @@ function runLayer(db, ftsTable, query, role, params, fetchLimit, currentTurn) {
  *  below the true corpus total — but it is always ≥ the returned count and >
  *  limit whenever more genuinely exist, which is exactly the "is anything
  *  hidden?" signal the footer needs. */
-function searchGroups(db, params, groups, negatedTerms, currentTurn) {
+function searchGroups(db, params, groups, negatedTerms, currentTurn, adapters) {
     const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
     const fetchLimit = Math.max(limit * 3, 30);
     const porterQuery = { matchExpr: renderPorterMatch(groups), likeTerms: [] };
@@ -355,13 +360,12 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn) {
         { table: "user_text_fts", query: porterQuery },
         { table: "user_text_fts_trigram", query: trigramQuery },
     ];
-    for (const code of listKnownLanguageCodes()) {
-        const adapter = getLanguageAdapter(code);
-        if (!adapter)
-            continue; // not installed — no layer, same as before language support existed
+    // A language not installed has no adapter and no layer, as before language
+    // support existed.
+    for (const adapter of adapters) {
         const matchExpr = renderLanguageMatch(groups, adapter);
         if (matchExpr)
-            layers.push({ table: languageFtsTable(code), query: { matchExpr, likeTerms: [] } });
+            layers.push({ table: languageFtsTable(adapter.code), query: { matchExpr, likeTerms: [] } });
     }
     // RRF fusion: user K=60 (higher weight), assistant K=80 (lower weight).
     // Every layer runs for both roles so no layer is weighted differently
@@ -402,13 +406,10 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn) {
     // to be rejected here for not containing "리팩토링을" literally, silently
     // undoing the entire point of that layer.
     const langIndexedTextLookups = new Map();
-    for (const code of listKnownLanguageCodes()) {
-        const adapter = getLanguageAdapter(code);
-        if (!adapter)
-            continue;
+    for (const adapter of adapters) {
         let stmt;
         try {
-            stmt = db.prepare(`SELECT text FROM ${languageFtsTable(code)} WHERE rowid = ?`);
+            stmt = db.prepare(`SELECT text FROM ${languageFtsTable(adapter.code)} WHERE rowid = ?`);
         }
         catch {
             // Schema lag: the adapter registered (e.g. ja/zh's embedded dictionary
@@ -419,7 +420,7 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn) {
             continue;
         }
         const cache = new Map();
-        langIndexedTextLookups.set(code, (rowid) => {
+        langIndexedTextLookups.set(adapter, (rowid) => {
             if (cache.has(rowid))
                 return cache.get(rowid);
             const row = stmt.get(rowid);
@@ -438,8 +439,7 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn) {
         // language layers existed.
         if (term.phrase)
             return false;
-        for (const [code, lookup] of langIndexedTextLookups) {
-            const adapter = getLanguageAdapter(code);
+        for (const [adapter, lookup] of langIndexedTextLookups) {
             if (!adapter.detect(term.text))
                 continue;
             const queryTokens = adapter.tokenize(term.text);
@@ -481,9 +481,8 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn) {
             if (t.raw !== t.text)
                 snippetProbes.push(t.raw);
             snippetProbes.push(t.text);
-            for (const code of listKnownLanguageCodes()) {
-                const adapter = getLanguageAdapter(code);
-                if (adapter && adapter.detect(t.text))
+            for (const adapter of adapters) {
+                if (adapter.detect(t.text))
                     snippetProbes.push(...adapter.tokenize(t.text));
             }
         }
@@ -506,11 +505,12 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn) {
  *  the caller can say the hits hold only some of the words. */
 export function searchWithTotal(db, params, opts = {}) {
     const currentTurn = currentTurnOf(db, opts.currentSessionId);
+    const adapters = opts.languages ?? registeredLanguageAdapters();
     const { groups, negatedTerms } = tokenizeQuery(params.query);
-    const every = searchGroups(db, params, groups, negatedTerms, currentTurn);
+    const every = searchGroups(db, params, groups, negatedTerms, currentTurn, adapters);
     const terms = groups.length === 1 ? groups[0].terms : [];
     if (every.results.length === 0 && terms.length >= 2) {
-        const some = searchGroups(db, params, terms.map((t) => ({ terms: [t] })), negatedTerms, currentTurn);
+        const some = searchGroups(db, params, terms.map((t) => ({ terms: [t] })), negatedTerms, currentTurn, adapters);
         if (some.results.length > 0)
             return { ...some, partial: true };
     }

@@ -30,7 +30,8 @@ import { indexDbPath, watchLockPath } from "../util/paths.js";
 import { startWatch } from "../indexer/watch.js";
 import { acquireLock } from "../indexer/driver.js";
 import { ensureLanguageAdaptersLoaded } from "../indexer/lang/init.js";
-import { searchText, searchManyText, DEFAULT_SEARCH_MAX_BYTES } from "./search.js";
+import { searchText, searchManyText, queryTerms, DEFAULT_SEARCH_MAX_BYTES } from "./search.js";
+import { searchAnalyzers, serveAnalyzers } from "./analyzers.js";
 import { recentUserText, formatResults, DEFAULT_RECENT_MAX_BYTES } from "./recent.js";
 import { sessionContext } from "./session.js";
 import { leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord } from "./left_off.js";
@@ -304,16 +305,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
                     return { content: [{ type: "text", text: resolved.error }], isError: true };
                 parsed.data.session_id = resolved.id;
             }
+            // The refine above does not narrow the type: query is still optional.
+            const { query, queries, ...rest } = parsed.data;
+            const terms = (queries ?? (query === undefined ? [] : [query])).flatMap(queryTerms);
             // Without a known session (a client that names none), the current
             // turn simply isn't excluded.
-            const opts = { currentSessionId };
+            const opts = { currentSessionId, languages: await searchAnalyzers(terms) };
             const out = {
                 maxBytes: parsed.data.maxBytes ?? DEFAULT_SEARCH_MAX_BYTES,
                 context: parsed.data.context ?? 0,
                 allProjects: parsed.data.project_id === undefined && parsed.data.session_id === undefined,
             };
-            // The refine above does not narrow the type: query is still optional.
-            const { query, queries, ...rest } = parsed.data;
             if (queries !== undefined) {
                 return { content: [{ type: "text", text: searchManyText(getDb(), rest, queries, opts, out) }] };
             }
@@ -430,11 +432,23 @@ async function tryBecomeWatcher() {
         const release = await acquireLock(watchLockPath(), 0, (err) => {
             // Another process took the watch lock because this one looked
             // abandoned (see acquireLock). It watches now; this one goes back to
-            // serving reads and retrying, instead of dying.
+            // serving reads and retrying, instead of dying. Its analyzer socket
+            // stays open: closing it would remove the socket file, which is the
+            // new watcher's by then.
             console.error("clens watch: lost the watch lock, stopped watching:", err.message);
             watching?.stop();
             retryWatching();
         });
+        // The watcher holds the language analyzers for every server: it needs
+        // them to index, and the others ask it to split their search terms
+        // (see analyzers.ts).
+        await ensureLanguageAdaptersLoaded();
+        try {
+            await serveAnalyzers();
+        }
+        catch (e) {
+            console.error("clens watch: cannot serve the language analyzers to other servers:", e.message);
+        }
         watching = startWatch(() => {
             db?.close();
             db = null;
@@ -451,11 +465,6 @@ async function tryBecomeWatcher() {
         return false;
     }
 }
-// Search (searchUserText) checks getLanguageAdapter() independently of
-// whether this process ever indexes anything — a freshly started server
-// with no file changes would otherwise never register an installed
-// language's adapter until the next reindex happens to run.
-await ensureLanguageAdaptersLoaded();
 // Another process currently owns the watch lock. Keep retrying so that if
 // it exits later, this already-running process can take over — otherwise
 // only a freshly spawned process would ever notice the lock freed up.

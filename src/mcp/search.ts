@@ -16,7 +16,7 @@
 
 import type Database from "better-sqlite3";
 
-import { getLanguageAdapter, languageFtsTable, listKnownLanguageCodes } from "../indexer/lang/registry.js";
+import { languageFtsTable, registeredLanguageAdapters } from "../indexer/lang/registry.js";
 import type { LanguageAdapter } from "../indexer/lang/types.js";
 import { neighborsOf, type SessionMessage } from "./session.js";
 import { notCopiedClause, workKindClause } from "../analyzer/scope.js";
@@ -220,6 +220,12 @@ function tokenizeQuery(raw: string): TokenizedQuery {
   return { groups: groups.filter((g) => g.terms.length > 0), negatedTerms };
 }
 
+/** The words of `query` that its morpheme layers split: every term it
+ *  searches for, not the ones it leaves out with NOT. */
+export function queryTerms(query: string): string[] {
+  return tokenizeQuery(query).groups.flatMap((g) => g.terms.map((t) => t.text));
+}
+
 /** Render OR-of-AND-groups into a unicode61 MATCH expression. Bare words get
  *  a trailing prefix wildcard (partial-word matches like 리뷰->리뷰해바);
  *  phrases are passed through as literal FTS5 phrase queries (adjacency
@@ -305,6 +311,10 @@ export interface SearchOptions {
    *  and whatever followed it) is left out of results: that question matches
    *  its own keywords and used to come back as the top hit. */
   currentSessionId?: string;
+  /** The analyzers for the query's morpheme layers. Defaults to the ones
+   *  registered in this process; a server that is not the watcher has none
+   *  and passes the watcher's (see analyzers.ts). */
+  languages?: LanguageAdapter[];
 }
 
 function currentTurnOf(db: Database.Database, sessionId: string | undefined): CurrentTurn | undefined {
@@ -455,6 +465,7 @@ function searchGroups(
   groups: TermGroup[],
   negatedTerms: string[],
   currentTurn: CurrentTurn | undefined,
+  adapters: LanguageAdapter[],
 ): { results: SearchResult[]; totalMatched: number } {
   const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
   const fetchLimit = Math.max(limit * 3, 30);
@@ -465,11 +476,11 @@ function searchGroups(
     { table: "user_text_fts", query: porterQuery },
     { table: "user_text_fts_trigram", query: trigramQuery },
   ];
-  for (const code of listKnownLanguageCodes()) {
-    const adapter = getLanguageAdapter(code);
-    if (!adapter) continue; // not installed — no layer, same as before language support existed
+  // A language not installed has no adapter and no layer, as before language
+  // support existed.
+  for (const adapter of adapters) {
     const matchExpr = renderLanguageMatch(groups, adapter);
-    if (matchExpr) layers.push({ table: languageFtsTable(code), query: { matchExpr, likeTerms: [] } });
+    if (matchExpr) layers.push({ table: languageFtsTable(adapter.code), query: { matchExpr, likeTerms: [] } });
   }
 
   // RRF fusion: user K=60 (higher weight), assistant K=80 (lower weight).
@@ -512,13 +523,11 @@ function searchGroups(
   // pass the MATCH clause (the layer correctly stripped the particle) only
   // to be rejected here for not containing "리팩토링을" literally, silently
   // undoing the entire point of that layer.
-  const langIndexedTextLookups = new Map<string, (rowid: number) => string | undefined>();
-  for (const code of listKnownLanguageCodes()) {
-    const adapter = getLanguageAdapter(code);
-    if (!adapter) continue;
+  const langIndexedTextLookups = new Map<LanguageAdapter, (rowid: number) => string | undefined>();
+  for (const adapter of adapters) {
     let stmt: Database.Statement;
     try {
-      stmt = db.prepare(`SELECT text FROM ${languageFtsTable(code)} WHERE rowid = ?`);
+      stmt = db.prepare(`SELECT text FROM ${languageFtsTable(adapter.code)} WHERE rowid = ?`);
     } catch {
       // Schema lag: the adapter registered (e.g. ja/zh's embedded dictionary
       // loads unconditionally once the package is installed) but this
@@ -528,7 +537,7 @@ function searchGroups(
       continue;
     }
     const cache = new Map<number, string | undefined>();
-    langIndexedTextLookups.set(code, (rowid: number) => {
+    langIndexedTextLookups.set(adapter, (rowid: number) => {
       if (cache.has(rowid)) return cache.get(rowid);
       const row = stmt.get(rowid) as { text: string } | undefined;
       cache.set(rowid, row?.text);
@@ -544,8 +553,7 @@ function searchGroups(
     // fall back to substring-only enforcement for phrases, same as before
     // language layers existed.
     if (term.phrase) return false;
-    for (const [code, lookup] of langIndexedTextLookups) {
-      const adapter = getLanguageAdapter(code)!;
+    for (const [adapter, lookup] of langIndexedTextLookups) {
       if (!adapter.detect(term.text)) continue;
       const queryTokens = adapter.tokenize(term.text);
       if (queryTokens.length === 0) continue;
@@ -585,9 +593,8 @@ function searchGroups(
     for (const t of g.terms) {
       if (t.raw !== t.text) snippetProbes.push(t.raw);
       snippetProbes.push(t.text);
-      for (const code of listKnownLanguageCodes()) {
-        const adapter = getLanguageAdapter(code);
-        if (adapter && adapter.detect(t.text)) snippetProbes.push(...adapter.tokenize(t.text));
+      for (const adapter of adapters) {
+        if (adapter.detect(t.text)) snippetProbes.push(...adapter.tokenize(t.text));
       }
     }
   }
@@ -615,11 +622,12 @@ export function searchWithTotal(
   opts: SearchOptions = {},
 ): { results: SearchResult[]; totalMatched: number; partial: boolean } {
   const currentTurn = currentTurnOf(db, opts.currentSessionId);
+  const adapters = opts.languages ?? registeredLanguageAdapters();
   const { groups, negatedTerms } = tokenizeQuery(params.query);
-  const every = searchGroups(db, params, groups, negatedTerms, currentTurn);
+  const every = searchGroups(db, params, groups, negatedTerms, currentTurn, adapters);
   const terms = groups.length === 1 ? groups[0]!.terms : [];
   if (every.results.length === 0 && terms.length >= 2) {
-    const some = searchGroups(db, params, terms.map((t) => ({ terms: [t] })), negatedTerms, currentTurn);
+    const some = searchGroups(db, params, terms.map((t) => ({ terms: [t] })), negatedTerms, currentTurn, adapters);
     if (some.results.length > 0) return { ...some, partial: true };
   }
   return { ...every, partial: false };

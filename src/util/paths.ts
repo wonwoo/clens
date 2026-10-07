@@ -12,6 +12,7 @@
  *   CLENS_INDEX_DIR  — overrides ~/.clens/   (index + reports output dir)
  */
 
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -61,6 +62,16 @@ export function indexLockPath(): string {
 
 export function watchLockPath(): string {
   return join(clensHome(), "watch.lock");
+}
+
+/** Where the watching MCP server splits other servers' search terms into
+ *  morphemes (see src/mcp/analyzers.ts): a socket next to the index, or a
+ *  named pipe on Windows, which has no socket files. */
+export function analyzerSocketPath(): string {
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\clens-analyzer-${createHash("sha1").update(clensHome()).digest("hex").slice(0, 16)}`;
+  }
+  return join(clensHome(), "analyzer.sock");
 }
 
 /** Root of downloaded optional-language morphological analysis models
