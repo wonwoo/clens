@@ -64,19 +64,35 @@ export interface WriterStatements {
    *  at write time — the statement exists for every known code regardless,
    *  since the table itself always exists. */
   insertLanguageFts: Map<string, Database.Statement>;
+  /** Per known language code: each message of a session with the tokens
+   *  stored for it in that language's table. */
+  selectLanguageTokens: Map<string, Database.Statement>;
 }
+
+/** Tokens already stored, per language code and message text, joined by
+ *  spaces as the language table holds them. */
+export type KnownTokens = Map<string, Map<string, string>>;
 
 export function prepareStatements(db: Database.Database): WriterStatements {
   const insertLanguageFts = new Map<string, Database.Statement>();
+  const selectLanguageTokens = new Map<string, Database.Statement>();
   for (const code of listKnownLanguageCodes()) {
     const table = languageFtsTable(code);
     insertLanguageFts.set(
       code,
       db.prepare(`INSERT INTO ${table} (rowid, text, session_id, ts) VALUES (?, ?, ?, ?)`),
     );
+    selectLanguageTokens.set(
+      code,
+      db.prepare(
+        `SELECT ut.text AS text, l.text AS tokens FROM user_text ut
+         JOIN ${table} l ON l.rowid = ut.rowid WHERE ut.session_id = ?`,
+      ),
+    );
   }
   return {
     insertLanguageFts,
+    selectLanguageTokens,
     insertEvent: db.prepare(
       `INSERT OR REPLACE INTO event
        (uuid, session_id, parent_uuid, prompt_id, agent_id, is_sidechain, ts, role, model,
@@ -198,14 +214,33 @@ export function wipeSessions(stmts: WriterStatements, sessionIds: Iterable<strin
   }
 }
 
+/** The tokens stored for the messages of these sessions, read before they are
+ *  wiped and re-derived. An analyzer gives the same tokens for the same text,
+ *  so a message seen before needs no second run, which took most of the time
+ *  a long session took to re-index. A text that gave no tokens has no row and
+ *  is analyzed again. */
+export function knownTokens(stmts: WriterStatements, sessionIds: Iterable<string>): KnownTokens {
+  const known: KnownTokens = new Map();
+  for (const code of listKnownLanguageCodes()) {
+    if (!getLanguageAdapter(code)) continue;
+    const byText = new Map<string, string>();
+    const select = stmts.selectLanguageTokens.get(code)!;
+    for (const sid of sessionIds) {
+      for (const r of select.all(sid) as { text: string; tokens: string }[]) byText.set(r.text, r.tokens);
+    }
+    known.set(code, byText);
+  }
+  return known;
+}
+
 /** Insert one ParsedEvent and its child rows. */
-export function writeParsedEvent(stmts: WriterStatements, p: ParsedEvent): void {
+export function writeParsedEvent(stmts: WriterStatements, p: ParsedEvent, known?: KnownTokens): void {
   stmts.insertEvent.run(toSqlBindable(p.event));
   for (const r of p.tool_calls) stmts.insertToolCall.run(toSqlBindable(r));
   for (const r of p.file_ops) stmts.insertFileOp.run(toSqlBindable(r));
   for (const r of p.user_texts) {
     const info = stmts.insertUserText.run(toSqlBindable(r));
-    insertLanguageLayers(stmts, info.lastInsertRowid, r);
+    insertLanguageLayers(stmts, info.lastInsertRowid, r, known);
   }
   for (const r of p.skill_calls) stmts.insertSkillCall.run(toSqlBindable(r));
   for (const r of p.agent_calls) stmts.insertAgentCall.run(toSqlBindable(r));
@@ -225,11 +260,12 @@ function insertLanguageLayers(
   stmts: WriterStatements,
   rowid: number | bigint,
   r: UserTextRow,
+  known?: KnownTokens,
 ): void {
   for (const code of listKnownLanguageCodes()) {
     const adapter = getLanguageAdapter(code);
     if (!adapter || !adapter.detect(r.text)) continue;
-    const tokens = adapter.tokenize(r.text).join(" ");
+    const tokens = known?.get(code)?.get(r.text) ?? adapter.tokenize(r.text).join(" ");
     if (!tokens) continue;
     stmts.insertLanguageFts.get(code)!.run(rowid, tokens, r.session_id, r.ts);
   }

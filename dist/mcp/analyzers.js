@@ -16,7 +16,8 @@ import { connect, createServer } from "node:net";
 import { listKnownLanguageCodes, registeredLanguageAdapters } from "../indexer/lang/registry.js";
 import { analyzerSocketPath } from "../util/paths.js";
 /** How long a search waits for the watcher. The watcher answers between
- *  files, and indexing one of the largest transcripts takes about 5 seconds. */
+ *  files: re-indexing one of the largest transcripts takes about a second,
+ *  indexing it for the first time about 5. */
 const ANSWER_TIMEOUT_MS = 10_000;
 /** A request holds a query's words; one this long is not a request. */
 const MAX_REQUEST_CHARS = 1_000_000;

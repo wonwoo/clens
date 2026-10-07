@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -411,5 +411,77 @@ describe("indexer driver — language layer respects Gate 2 (incremental == rebu
     await runIndex({});
 
     expect(snapshotLangTable()).toEqual(before);
+  });
+});
+
+/**
+ * Re-deriving a changed transcript re-inserts every row of its sessions, but
+ * a message already indexed takes its morphemes from the language table
+ * instead of going through the analyzer again: the analyzer took most of the
+ * time a long session took to re-index (3.6 of 4.4 s for a 52 MB transcript).
+ */
+describe("indexer driver — re-deriving a file reuses the morphemes already indexed", () => {
+  let env: ReturnType<typeof setupFakeHome>;
+  const analyzed: string[] = [];
+
+  function langRows(): string[] {
+    const db = new Database(join(env.clens, "index.db"));
+    const rows = db
+      .prepare(
+        `SELECT ut.event_uuid, ut.type, l.text FROM user_text ut
+         JOIN user_text_fts_lang_ko l ON l.rowid = ut.rowid ORDER BY 1, 2, 3`,
+      )
+      .all() as { event_uuid: string; type: string; text: string }[];
+    db.close();
+    return rows.map((r) => `${r.event_uuid}|${r.type}|${r.text}`);
+  }
+
+  beforeAll(async () => {
+    registerLanguage({
+      code: "ko",
+      detect: (t) => t.trim().length > 0,
+      tokenize: (t) => {
+        analyzed.push(t);
+        return t.trim().split(/\s+/).slice(0, 3);
+      },
+    });
+    env = setupFakeHome();
+    await runIndex({ rebuild: true });
+  });
+
+  afterAll(() => {
+    resetLanguageRegistry();
+    rmSync(env.tmpRoot, { recursive: true, force: true });
+    delete process.env.CLENS_HOME;
+    delete process.env.CLENS_INDEX_DIR;
+  });
+
+  it("only the new message goes through the analyzer, and the rows match a rebuild", async () => {
+    expect(analyzed.length).toBeGreaterThan(1);
+    analyzed.length = 0;
+
+    const filePath = join(env.claude, "projects", "fixture-project", "test.jsonl");
+    appendFileSync(
+      filePath,
+      JSON.stringify({
+        parentUuid: "evt-960",
+        isSidechain: false,
+        type: "user",
+        message: { role: "user", content: "새로 들어온 메시지입니다" },
+        uuid: "evt-appended",
+        timestamp: "2026-06-21T09:20:00.000Z",
+        userType: "external",
+        entrypoint: "cli",
+        cwd: "/fixture/cwd",
+        sessionId: "test",
+      }) + "\n",
+    );
+    await runIndex({});
+    expect(analyzed).toEqual(["새로 들어온 메시지입니다"]);
+
+    const incremental = langRows();
+    expect(incremental.some((r) => r.startsWith("evt-appended|"))).toBe(true);
+    await runIndex({ rebuild: true });
+    expect(langRows()).toEqual(incremental);
   });
 });

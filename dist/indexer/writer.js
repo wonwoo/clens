@@ -16,12 +16,16 @@
 import { getLanguageAdapter, languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 export function prepareStatements(db) {
     const insertLanguageFts = new Map();
+    const selectLanguageTokens = new Map();
     for (const code of listKnownLanguageCodes()) {
         const table = languageFtsTable(code);
         insertLanguageFts.set(code, db.prepare(`INSERT INTO ${table} (rowid, text, session_id, ts) VALUES (?, ?, ?, ?)`));
+        selectLanguageTokens.set(code, db.prepare(`SELECT ut.text AS text, l.text AS tokens FROM user_text ut
+         JOIN ${table} l ON l.rowid = ut.rowid WHERE ut.session_id = ?`));
     }
     return {
         insertLanguageFts,
+        selectLanguageTokens,
         insertEvent: db.prepare(`INSERT OR REPLACE INTO event
        (uuid, session_id, parent_uuid, prompt_id, agent_id, is_sidechain, ts, role, model,
         in_tok, out_tok, cache_r, cache_w, text_len,
@@ -109,8 +113,28 @@ export function wipeSessions(stmts, sessionIds) {
         stmts.wipeEventsForSession.run(sid);
     }
 }
+/** The tokens stored for the messages of these sessions, read before they are
+ *  wiped and re-derived. An analyzer gives the same tokens for the same text,
+ *  so a message seen before needs no second run, which took most of the time
+ *  a long session took to re-index. A text that gave no tokens has no row and
+ *  is analyzed again. */
+export function knownTokens(stmts, sessionIds) {
+    const known = new Map();
+    for (const code of listKnownLanguageCodes()) {
+        if (!getLanguageAdapter(code))
+            continue;
+        const byText = new Map();
+        const select = stmts.selectLanguageTokens.get(code);
+        for (const sid of sessionIds) {
+            for (const r of select.all(sid))
+                byText.set(r.text, r.tokens);
+        }
+        known.set(code, byText);
+    }
+    return known;
+}
 /** Insert one ParsedEvent and its child rows. */
-export function writeParsedEvent(stmts, p) {
+export function writeParsedEvent(stmts, p, known) {
     stmts.insertEvent.run(toSqlBindable(p.event));
     for (const r of p.tool_calls)
         stmts.insertToolCall.run(toSqlBindable(r));
@@ -118,7 +142,7 @@ export function writeParsedEvent(stmts, p) {
         stmts.insertFileOp.run(toSqlBindable(r));
     for (const r of p.user_texts) {
         const info = stmts.insertUserText.run(toSqlBindable(r));
-        insertLanguageLayers(stmts, info.lastInsertRowid, r);
+        insertLanguageLayers(stmts, info.lastInsertRowid, r, known);
     }
     for (const r of p.skill_calls)
         stmts.insertSkillCall.run(toSqlBindable(r));
@@ -139,12 +163,12 @@ export function writeParsedEvent(stmts, p) {
  *  the same rowid as the user_text row. Codes with no registered adapter,
  *  or text that doesn't match the adapter's script, are silently skipped —
  *  the table just stays empty for that row, same as "not installed". */
-function insertLanguageLayers(stmts, rowid, r) {
+function insertLanguageLayers(stmts, rowid, r, known) {
     for (const code of listKnownLanguageCodes()) {
         const adapter = getLanguageAdapter(code);
         if (!adapter || !adapter.detect(r.text))
             continue;
-        const tokens = adapter.tokenize(r.text).join(" ");
+        const tokens = known?.get(code)?.get(r.text) ?? adapter.tokenize(r.text).join(" ");
         if (!tokens)
             continue;
         stmts.insertLanguageFts.get(code).run(rowid, tokens, r.session_id, r.ts);

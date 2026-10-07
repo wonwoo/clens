@@ -26,6 +26,7 @@ import { getSourceAdapter } from "./sources.js";
 import {
   applyToolResults,
   flushAnomalyBatch,
+  knownTokens,
   prepareStatements,
   wipeSessions,
   writeParsedEvent,
@@ -294,7 +295,9 @@ function commitFile(args: {
 
     // 3) Wipe derived rows for affected sessions (so a single newly-arrived
     //    event in session S triggers full re-derivation of S — deterministic
-    //    regardless of incremental-vs-rebuild path).
+    //    regardless of incremental-vs-rebuild path). Their messages' tokens
+    //    are kept first, so re-inserting them does not run the analyzer again.
+    const known = knownTokens(stmts, summary.affected_sessions);
     wipeSessions(stmts, summary.affected_sessions);
     // A session only this file held rows for, which the file no longer
     // yields (its lines are now skipped, e.g. a Codex subagent's copy of its
@@ -318,7 +321,7 @@ function commitFile(args: {
     }
     for (const [, list] of bySession) {
       assignTurnNumbers(list);
-      for (const p of list) writeParsedEvent(stmts, p);
+      for (const p of list) writeParsedEvent(stmts, p, known);
     }
 
     // 5) Cross-event tool_result → tool_call.duration_ms.
