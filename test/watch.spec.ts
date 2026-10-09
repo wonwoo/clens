@@ -186,6 +186,23 @@ describe("startWatch", () => {
     expect(onIndexed).toHaveBeenCalledTimes(1);
   });
 
+  it("watches a sessions dir made after it started, and indexes what the dir already holds", async () => {
+    const parent = makeTmpDir();
+    dirs.push(parent);
+    currentTestDir = join(parent, "projects");
+
+    const onIndexed = vi.fn();
+    const handle = startWatch(onIndexed, 50, 100);
+    mkdirSync(currentTestDir);
+    // Written before the dir is watched: no event will come for it.
+    writeFileSync(join(currentTestDir, "first.jsonl"), '{"x":1}\n');
+    await vi.waitFor(() => expect(onIndexed).toHaveBeenCalledTimes(1), REACT_TIMEOUT);
+
+    mockedRunIndex.mockClear();
+    await writeUntilIndexed(join(currentTestDir, "second.jsonl"));
+    handle.stop();
+  });
+
   it("returns noop handle when projectsDir does not exist", () => {
     currentTestDir = join(tmpdir(), "clens-nonexistent-dir-that-does-not-exist");
     // Do NOT create the dir

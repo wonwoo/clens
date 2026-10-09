@@ -7,7 +7,7 @@
  * The DB handle is replaced after each successful index so callers
  * always get a fresh view via the getDb() accessor passed in.
  */
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { runIndex } from "./driver.js";
 import { SOURCE_ADAPTERS } from "./sources.js";
 /**
@@ -15,10 +15,13 @@ import { SOURCE_ADAPTERS } from "./sources.js";
  *
  * @param onIndexed  called after each successful incremental index
  * @param debounceMs debounce window in ms (default 500)
+ * @param retryMs    how often to look again for a sessions dir that does not
+ *                   exist yet (default 30 s)
  */
-export function startWatch(onIndexed, debounceMs = 500) {
+export function startWatch(onIndexed, debounceMs = 500, retryMs = 30_000) {
     let timer;
     const watchers = [];
+    const retries = [];
     function schedule() {
         if (timer !== undefined)
             clearTimeout(timer);
@@ -31,7 +34,7 @@ export function startWatch(onIndexed, debounceMs = 500) {
             });
         }, debounceMs);
     }
-    for (const root of SOURCE_ADAPTERS.map((a) => a.sessionsDir())) {
+    function watchRoot(root) {
         try {
             const watcher = watch(root, { recursive: true }, (_, filename) => {
                 if (typeof filename === "string" && filename.endsWith(".jsonl")) {
@@ -46,10 +49,26 @@ export function startWatch(onIndexed, debounceMs = 500) {
                 watcher.close();
             });
             watchers.push(watcher);
+            return true;
         }
         catch {
             // root doesn't exist yet or platform doesn't support recursive watch
+            return false;
         }
+    }
+    for (const root of SOURCE_ADAPTERS.map((a) => a.sessionsDir())) {
+        if (watchRoot(root) || existsSync(root))
+            continue;
+        // A tool not used on this machine yet has no sessions dir. Watch it once
+        // it appears, and index what it holds by then, which made no event.
+        const retry = setInterval(() => {
+            if (!watchRoot(root))
+                return;
+            clearInterval(retry);
+            schedule();
+        }, retryMs);
+        retry.unref();
+        retries.push(retry);
     }
     return {
         stop() {
@@ -57,6 +76,9 @@ export function startWatch(onIndexed, debounceMs = 500) {
                 clearTimeout(timer);
                 timer = undefined;
             }
+            for (const r of retries)
+                clearInterval(r);
+            retries.length = 0;
             for (const w of watchers) {
                 try {
                     w.close();
