@@ -197,6 +197,32 @@ describe("indexer — a session spread over several transcripts", () => {
   });
 });
 
+describe("indexer — a transcript that loses lines", () => {
+  // Codex rewrites old rollout files, and a line it drops is gone from the
+  // file. The session's span must follow the file, as a rebuild's does.
+  it("gate 2: the session keeps no start or end time of a dropped line", async () => {
+    const file = join(env.proj, `${A}.jsonl`);
+    writeFileSync(
+      file,
+      line("d0", A, "user", "day zero", "2026-09-30T00:00:00Z") +
+        line("d1", A, "user", "day one", "2026-10-01T00:00:00Z") +
+        line("d2", A, "user", "day two", "2026-10-02T00:00:00Z"),
+    );
+    bump(file);
+    await runIndex();
+    writeFileSync(file, line("d1", A, "user", "day one", "2026-10-01T00:00:00Z"));
+    bump(file);
+    await runIndex();
+    const db = new Database(join(env.clens, "index.db"), { readonly: true });
+    const span = db.prepare("SELECT started_at, ended_at FROM session WHERE id = ?").get(A);
+    db.close();
+    expect(span).toEqual({ started_at: "2026-10-01T00:00:00Z", ended_at: "2026-10-01T00:00:00Z" });
+    const incremental = digest();
+    await runIndex({ rebuild: true });
+    expect(digest()).toBe(incremental);
+  });
+});
+
 describe("indexer — a rebuild keeps sessions whose transcripts are gone", () => {
   // Claude Code deletes old transcripts, so the index is the only copy of
   // those sessions. A rebuild used to empty every table and re-read only the

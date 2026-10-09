@@ -153,6 +153,9 @@ export function prepareStatements(db: Database.Database): WriterStatements {
            result_chars = @result_chars
        WHERE call_id = @call_id AND duration_ms IS NULL`,
     ),
+    // A file writes only the sessions it holds in full (writableEvents in
+    // driver.ts), so its span replaces the stored one, as in a rebuild, which
+    // deletes the row first; kept with MIN/MAX, a line the file lost stayed.
     upsertSession: db.prepare(
       `INSERT INTO session (id, project_id, kind, parent_id, started_at, ended_at, cwd, git_branch, model_primary, version, source)
        VALUES (@id, @project_id, @kind, @parent_id, @started_at, @ended_at, @cwd, @git_branch, @model_primary, @version, @source)
@@ -160,8 +163,8 @@ export function prepareStatements(db: Database.Database): WriterStatements {
          project_id    = excluded.project_id,
          kind          = excluded.kind,
          parent_id     = excluded.parent_id,
-         started_at    = MIN(session.started_at, excluded.started_at),
-         ended_at      = MAX(COALESCE(session.ended_at, ''), excluded.ended_at),
+         started_at    = excluded.started_at,
+         ended_at      = excluded.ended_at,
          cwd           = COALESCE(excluded.cwd, session.cwd),
          git_branch    = COALESCE(excluded.git_branch, session.git_branch),
          model_primary = COALESCE(excluded.model_primary, session.model_primary),
