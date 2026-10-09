@@ -633,7 +633,12 @@ export function formatSessionRecord(r) {
         for (const g of r.segments) {
             lines.push(`  ${g.started_at} – ${g.ended_at}  ${g.requests} requests`, `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`, ...(g.topics.length === 0 ? [] : [`    Topics: ${cutChars(g.topics.join(", "), SEGMENT_REPLY_CHARS)}`]), ...(g.last_change === null ? [] : [
                 `    Last change (request ${g.last_change.request} of ${g.requests}): ${cutChars(g.last_change.reply, SEGMENT_REPLY_CHARS)}`,
-            ]), `    Last reply: ${g.last_reply === null ? "(none)" : cutChars(g.last_reply, SEGMENT_REPLY_CHARS)}`
+            ]), 
+            // The latest segment's last reply is most often the session's, which
+            // the record shows above, and longer.
+            `    Last reply: ${g.last_reply === null ? "(none)"
+                : g.last_reply === r.last_reply?.text ? "(the Last reply above)"
+                    : cutChars(g.last_reply, SEGMENT_REPLY_CHARS)}`
                 + (g.closing === null ? "" : ` (then: "${cutChars(g.closing, RECORD_LINE_CHARS)}")`));
         }
     }

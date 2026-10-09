@@ -553,6 +553,24 @@ describe("clens_left_off session record", () => {
     expect(formatSessionRecord(r).split("\n")).toContain('    Last reply: Committed as abc1234; nothing pushed. (then: "알겠습니다. 기다리겠습니다.")');
   });
 
+  it("points a segment whose last reply is the session's to the Last reply above", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('end', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("end1", "end", "2026-09-10T09:00:00.000Z", "user", "add the cache");
+    msg("end2", "end", "2026-09-10T09:05:00.000Z", "assistant", "Cache added; tests pass.");
+    msg("end3", "end", "2026-09-10T12:00:00.000Z", "user", "push it");
+    msg("end4", "end", "2026-09-10T12:05:00.000Z", "assistant", "Pushed to main; origin/main is at abc1234.");
+    // Over two hours later and not answered yet: the session's last reply
+    // ended the segment before.
+    msg("end5", "end", "2026-09-10T15:00:00.000Z", "user", "anything left?");
+    const lines = formatSessionRecord(sessionRecord(db, "end")!).split("\n");
+    expect(lines).toContain("Last reply: 2026-09-10T12:05:00.000Z  Pushed to main; origin/main is at abc1234.");
+    expect(lines.filter((l) => l.startsWith("    Last reply:"))).toEqual([
+      "    Last reply: Cache added; tests pass.",
+      "    Last reply: (the Last reply above)",
+      "    Last reply: (none)",
+    ]);
+  });
+
   it("does not count /compact with instructions as a request or a segment", () => {
     db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('cmp', '-w-app', 'interactive', '/w/app', 'claude')");
     msg("c1", "cmp", "2026-09-10T09:00:00.000Z", "user", "tag the keywords");
