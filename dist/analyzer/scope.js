@@ -50,6 +50,20 @@ export function notCopiedClause(eventUuidColumn, sessionIdColumn) {
     return (`(IFNULL((SELECT owner.session_id FROM event owner WHERE owner.uuid = ${eventUuidColumn}),` +
         ` ${sessionIdColumn}) = ${sessionIdColumn})`);
 }
+/** Parenthesized SQL that is false for the event of an `Agent` call a fork
+ *  subagent's transcript copied from the session that started it. The copy
+ *  has a new uuid, so notCopiedClause misses it, but the same call id. Of
+ *  the events that share a call id, the one with the smallest uuid counts:
+ *  the copy and the original say the same, and which one counts must not
+ *  depend on which session resumed which (notCopiedClause picks among rows
+ *  that share a uuid). Only `Agent` calls: no other tool's call is copied
+ *  this way, and comparing every call id took 0.6 s against 22 ms on a
+ *  real index of 89,572 calls. */
+export function notForkCopyClause(eventUuidColumn) {
+    return (`(${eventUuidColumn} NOT IN (SELECT copy.event_uuid FROM tool_call copy` +
+        ` JOIN tool_call kept ON kept.call_id = copy.call_id AND kept.event_uuid < copy.event_uuid` +
+        ` WHERE copy.name = 'Agent'))`);
+}
 const WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
 /** Returns a SQL fragment (without the WHERE keyword) and bind values. */
 export function eventWhere(scope, eventAlias = "e") {
@@ -78,9 +92,10 @@ export function eventWhere(scope, eventAlias = "e") {
 }
 /** Same as eventWhere but for tool_call / file_op / etc with their own alias.
  *  Scopes over more than one session count a row copied into a resumed
- *  session once (notCopiedClause); session scope keeps the session whole. */
+ *  session or a fork subagent once (notCopiedClause, notForkCopyClause);
+ *  session scope keeps the session whole. */
 export function sessionScopedWhere(scope, sessionIdColumn, tsColumn, eventUuidColumn) {
-    const notCopied = notCopiedClause(eventUuidColumn, sessionIdColumn);
+    const notCopied = `${notCopiedClause(eventUuidColumn, sessionIdColumn)} AND ${notForkCopyClause(eventUuidColumn)}`;
     switch (scope.mode) {
         case "global":
             return { sql: `${sessionIdColumn} IN (${WORK_SESSIONS}) AND ${notCopied}`, binds: [] };
