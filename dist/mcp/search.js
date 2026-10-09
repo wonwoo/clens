@@ -195,19 +195,28 @@ function renderPorterMatch(groups) {
         .filter((e) => !!e);
     return groupExprs.join(" OR ");
 }
-/** Render positive terms into a trigram query. The trigram layer doesn't
- *  understand OR grouping or phrase adjacency (it's a fuzzy substring-assist
- *  layer, not the precise one) — every word from every group is still
- *  required (implicit AND), same as before this fix. Negated terms are
- *  excluded from the caller before this runs (see tokenizeQuery). */
+/** Render positive terms into a trigram query: the OR of the groups, each
+ *  requiring every word it has of 3 or more codepoints. Requiring every word
+ *  of every group, as before, lost under OR what each word alone finds only
+ *  inside a longer word ("authentication" in "preauthentication"). Shorter
+ *  words cannot be in a MATCH expression and go to LIKE, which cannot be
+ *  OR'd with a MATCH; under OR they are left to the other layers (the
+ *  post-filter in searchUserText still requires them), since a LIKE per group
+ *  scanned the table once per group (a 3-group Korean query took 1.1 s,
+ *  against 0.2 s at most before). Phrase
+ *  adjacency is not checked here either. Negated terms are excluded from the
+ *  caller before this runs (see tokenizeQuery). */
 function renderTrigram(groups) {
-    const words = groups.flatMap((g) => g.terms.flatMap((t) => t.text.split(/\s+/).filter(Boolean)));
-    const longWords = words.filter((w) => [...w].length >= 3);
-    const shortWords = words.filter((w) => [...w].length < 3);
-    return {
-        matchExpr: longWords.length > 0 ? longWords.map((w) => `"${w}"`).join(" ") : "",
-        likeTerms: shortWords,
-    };
+    const split = groups.map((g) => {
+        const words = g.terms.flatMap((t) => t.text.split(/\s+/).filter(Boolean));
+        return { long: words.filter((w) => [...w].length >= 3), short: words.filter((w) => [...w].length < 3) };
+    });
+    if (split.length === 1) {
+        const { long, short } = split[0];
+        return { matchExpr: long.length > 0 ? long.map((w) => `"${w}"`).join(" ") : "", likeTerms: short };
+    }
+    const exprs = split.filter((s) => s.long.length > 0).map((s) => `(${s.long.map((w) => `"${w}"`).join(" AND ")})`);
+    return { matchExpr: exprs.join(" OR "), likeTerms: [] };
 }
 /** Render positive terms into a language-layer MATCH expression: each
  *  term's content-word tokens (particles/endings stripped via the adapter)
@@ -355,10 +364,9 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn, adapters) {
     const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
     const fetchLimit = Math.max(limit * 3, 30);
     const porterQuery = { matchExpr: renderPorterMatch(groups), likeTerms: [] };
-    const trigramQuery = renderTrigram(groups);
     const layers = [
         { table: "user_text_fts", query: porterQuery },
-        { table: "user_text_fts_trigram", query: trigramQuery },
+        { table: "user_text_fts_trigram", query: renderTrigram(groups) },
     ];
     // A language not installed has no adapter and no layer, as before language
     // support existed.
@@ -389,7 +397,7 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn, adapters) {
     // Neither layer's MATCH clause can fully enforce NOT (exclusion) or exact
     // phrase adjacency on its own: searchUserText unions results across every
     // layer, and the trigram layer doesn't understand negation or phrase
-    // boundaries (renderTrigram flattens everything to individually-required
+    // boundaries (renderTrigram splits each group into individually-required
     // words). A row the porter layer would correctly exclude/reject can still
     // surface via the trigram layer. The only place all layers' results are
     // already merged into one set is here, after scoring — so both guarantees

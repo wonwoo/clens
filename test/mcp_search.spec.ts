@@ -222,6 +222,26 @@ describe("mcp/search.ts — NOT / OR / phrase FTS5 operators", () => {
     expect(texts).toEqual(["결제 버그 있음", "로그인 성공 케이스 테스트"].sort());
   });
 
+  it("OR keeps what each word alone finds as part of a longer word", () => {
+    db.exec(`
+      INSERT INTO event (uuid, session_id, ts, role) VALUES
+        ('e5', 's1', '2026-06-01T10:04:00Z', 'user'),
+        ('e6', 's1', '2026-06-01T10:05:00Z', 'user'),
+        ('e7', 's1', '2026-06-01T10:06:00Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES
+        ('e5', 's1', '2026-06-01T10:04:00Z', 'we need preauthentication here'),
+        ('e6', 's1', '2026-06-01T10:05:00Z', 'run the postmigration step'),
+        ('e7', 's1', '2026-06-01T10:06:00Z', 'mydb is down');
+    `);
+    const found = (query: string) => searchUserText(db, { query }).map((r) => r.snippet).sort();
+    expect(found("authentication")).toEqual(["we need preauthentication here"]);
+    expect(found("authentication OR migration")).toEqual(["run the postmigration step", "we need preauthentication here"]);
+    // A word under three characters is found inside a longer word on its own
+    // (LIKE), but not under OR: a LIKE per group scanned the table each time.
+    expect(found("db")).toEqual(["mydb is down"]);
+    expect(found("db OR migration")).toEqual(["run the postmigration step"]);
+  });
+
   it("exact phrase requires adjacency, not just both words present anywhere", () => {
     const results = searchUserText(db, { query: '"로그인 버그"' });
     expect(results.map((r) => r.snippet)).toEqual(["로그인 버그 재현됨"]);
