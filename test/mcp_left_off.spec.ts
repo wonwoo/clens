@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { applySchema } from "../src/indexer/schema.js";
 import {
-  commandOf, formatLeftOff, formatSessionRecord, formatSessionRecordWithin, leftOff, leftOffWithMore, sessionRecord,
+  commandOf, commitSessions, formatCommitSessions, formatLeftOff, formatSessionRecord, formatSessionRecordWithin, leftOff,
+  leftOffWithMore, sessionRecord,
 } from "../src/mcp/left_off.js";
 
 let db: Database.Database;
@@ -670,5 +671,67 @@ describe("clens_left_off session record", () => {
     expect(old).toContain("Git: (none)");
     expect(old).toContain("Failed tool calls: (none)");
     expect(old).toContain("Hook blocks: (none)");
+  });
+});
+
+describe("clens_left_off commits", () => {
+  function call(uuid: string, session: string, ts: string, name: string, command: string): void {
+    const input = name === "exec" ? command : JSON.stringify(name === "Bash" ? { command } : { cmd: command });
+    db.prepare("INSERT INTO tool_call (event_uuid, session_id, ts, name, input_json) VALUES (?, ?, ?, ?, ?)").run(uuid, session, ts, name, input);
+  }
+  const sessionsOf = (subjects: string[], params = {}) =>
+    commitSessions(db, subjects, params).map((c) => [c.subject, c.sessions.map((s) => s.session_id)]);
+
+  it("finds the sessions that ran git commit with each subject, newest first, once each", () => {
+    call("c1", "old", "2026-09-01T10:04:30Z", "Bash", 'git add -A && git commit -m "fix login"');
+    call("c2", "mid", "2026-09-02T10:04:50Z", "exec_command", 'git commit -m "fix login"');
+    call("c3", "mid", "2026-09-02T10:04:55Z", "exec_command", 'git commit --amend -m "fix login"');
+    call("c4", "new", "2026-09-03T10:00:20Z", "Bash", "git commit -q -F - <<'EOF'\nfeat: cache keys\n\nCo-Authored-By: x\nEOF");
+    expect(sessionsOf(["fix login", "feat: cache keys", "never made"])).toEqual([
+      ["fix login", ["mid", "old"]],
+      ["feat: cache keys", ["new"]],
+      ["never made", []],
+    ]);
+    expect(commitSessions(db, ["fix login"], {})[0]!.sessions[0]).toEqual({
+      session_id: "mid", project_id: "-w-app", source: "codex", ts: "2026-09-02T10:04:55Z",
+    });
+  });
+
+  it("matches the whole subject of a git commit, not a longer one or text that is not a commit", () => {
+    call("x1", "old", "2026-09-01T10:04:30Z", "Bash", 'git log --grep "fix login"');
+    call("x2", "old", "2026-09-01T10:04:31Z", "Bash", 'git commit -m "fix login page"');
+    call("x3", "old", "2026-09-01T10:04:32Z", "Bash", "cat > t.sh <<'EOF'\ngit commit -m \"fix login\"\nEOF");
+    call("x4", "old", "2026-09-01T10:04:33Z", "Bash", "node -e 'run(\"git commit -m fix login\")'");
+    expect(sessionsOf(["fix login"])).toEqual([["fix login", []]]);
+  });
+
+  it("counts a subagent's commit as its parent's, and reads exec code", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, parent_id, cwd, source) VALUES ('sub', '-w-app', 'subagent', 'old', '/w/app', 'claude')");
+    call("s1", "sub", "2026-09-01T10:04:40Z", "Bash", 'git commit -m "from the subagent"');
+    call("s2", "mid", "2026-09-02T10:04:50Z", "exec", 'await tools.exec_command({cmd:"git commit -m \\"from exec code\\""});');
+    expect(sessionsOf(["from the subagent", "from exec code"])).toEqual([
+      ["from the subagent", ["old"]],
+      ["from exec code", ["mid"]],
+    ]);
+  });
+
+  it("keeps to the project and the time window", () => {
+    call("p1", "old", "2026-09-01T10:04:30Z", "Bash", 'git commit -m "wip"');
+    call("p2", "mid", "2026-09-02T10:04:50Z", "Bash", 'git commit -m "wip"');
+    call("p3", "web", "2026-09-05T10:00:10Z", "Bash", 'git commit -m "wip"');
+    expect(sessionsOf(["wip"])).toEqual([["wip", ["web", "mid", "old"]]]);
+    expect(sessionsOf(["wip"], { project_id: "-w-app" })).toEqual([["wip", ["mid", "old"]]]);
+    expect(sessionsOf(["wip"], { project_id: "-w-app", since: "2026-09-02T00:00:00Z", until: "2026-09-02T23:59:59Z" }))
+      .toEqual([["wip", ["mid"]]]);
+  });
+
+  it("formats each subject with its sessions", () => {
+    call("f1", "mid", "2026-09-02T10:04:50Z", "Bash", 'git commit -m "fix login"');
+    expect(formatCommitSessions(commitSessions(db, ["fix login", "never made"], {})).split("\n")).toEqual([
+      '"fix login"',
+      "  2026-09-02T10:04:50Z  session:mid  project:-w-app  codex",
+      '"never made"',
+      "  (no session ran git commit with this subject)",
+    ]);
   });
 });

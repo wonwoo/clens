@@ -65,7 +65,12 @@ when_to_use: |
    - `git status --short` and `git stash list --date=iso`.
 5. Attach each commit to a session: the one whose span holds the commit's
    time. When the spans of several sessions hold it (sessions run in
-   parallel), take the one that edited the commit's files. The edited-file
+   parallel), call `clens_left_off` once with the `project_id` and `commits`
+   set to the subjects of all such commits. For each subject it returns the
+   sessions that ran `git commit` with it: take the one whose span holds the
+   commit. When it finds none of them (a commit made with `--no-edit`,
+   `revert`, `rebase` or `-F` with a file has no subject in its command) or
+   more than one, take the one that edited the commit's files. The edited-file
    list misses shell edits whose path was set only when the command ran
    (`$VAR`, `$(…)`), and every shell edit of a session whose transcript was
    gone before the index reached v7 (v8 for Codex), so when no candidate

@@ -34,7 +34,7 @@ import { searchText, searchManyText, queryTerms, DEFAULT_SEARCH_MAX_BYTES } from
 import { searchAnalyzers, serveAnalyzers } from "./analyzers.js";
 import { recentUserText, formatResults, DEFAULT_RECENT_MAX_BYTES } from "./recent.js";
 import { sessionContext } from "./session.js";
-import { leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord } from "./left_off.js";
+import { leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord, commitSessions, formatCommitSessions, } from "./left_off.js";
 import { SEARCH_DESCRIPTION, SERVER_INSTRUCTIONS, STATS_DESCRIPTION } from "./instructions.js";
 import { formatStats, projectStats, STATS_SECTIONS } from "./stats.js";
 import { codexSessionFromMeta, detectCurrentSessionId, resolveSessionId } from "./current_session.js";
@@ -74,6 +74,7 @@ const LeftOffParamsSchema = z.object({
     until: z.string().optional(),
     limit: z.number().int().min(1).max(10).optional(),
     session_id: z.string().min(1).optional(),
+    commits: z.array(z.string().min(1)).min(1).max(50).optional(),
 });
 const StatsParamsSchema = z.object({
     // min(1): an empty string would otherwise fall through to a wider scope.
@@ -249,7 +250,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     },
                     session_id: {
                         type: "string",
-                        description: "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls and hook blocks. project_id, file, since, until and limit are then ignored.",
+                        description: "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls and hook blocks. project_id, file, since, until, limit and commits are then ignored.",
+                    },
+                    commits: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Commit subjects (git log's %s), 1-50. Returns, for each, the sessions that ran git commit with it, newest first, instead of a list: which of the sessions open at a commit's time made it. project_id, since and until narrow it; file and limit are then ignored. Not found: a commit whose command holds no subject (--no-edit, revert, rebase, -F with a file).",
                     },
                 },
             },
@@ -381,6 +387,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
                     ? formatSessionRecord(record)
                     : `No session found: ${resolved.id}. A session only just started may not be indexed yet; try again in a few seconds.`;
                 return { content: [{ type: "text", text }] };
+            }
+            if (parsed.data.commits !== undefined) {
+                return { content: [{ type: "text", text: formatCommitSessions(commitSessions(getDb(), parsed.data.commits, parsed.data)) }] };
             }
             const { sessions, more } = leftOffWithMore(getDb(), parsed.data, { currentSessionId });
             return { content: [{ type: "text", text: formatLeftOff(sessions, more) }] };

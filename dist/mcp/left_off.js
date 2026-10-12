@@ -227,6 +227,13 @@ export function commandOf(inputJson) {
         }
     }
 }
+/** The shell commands one call ran: a Bash or exec_command input's command,
+ *  or the commands Codex exec code runs through tools.exec_command. */
+function shellCommands(name, inputJson) {
+    return name === "exec"
+        ? execCodeCommands(inputJson ?? "").map((c) => c.cmd)
+        : [commandOf(inputJson)].filter((c) => c !== null);
+}
 /** git followed by a subcommand that changes state, at the start of a line
  *  or after &&, || or ;. Used only through matchAll, which copies it. */
 const STATE_CHANGING_GIT = /(?:^|&&|\|\||;)\s*git\s+(?:-C\s+\S+\s+)?(?:commit|checkout|switch|merge|rebase|reset|stash|push|branch)\b/g;
@@ -489,12 +496,7 @@ export function sessionRecord(db, sessionId) {
         // come back in their own order when latest() puts the list oldest first.
         // Codex exec code runs its commands through tools.exec_command; a command
         // past the stored input's 64 KB cut is not seen.
-        .flatMap(({ ts, name, input_json }) => {
-        const commands = name === "exec"
-            ? execCodeCommands(input_json ?? "").map((c) => c.cmd)
-            : [commandOf(input_json)].filter((c) => c !== null);
-        return commands.flatMap(stateChangingGitLines).reverse().map((line) => ({ ts, command: line }));
-    });
+        .flatMap(({ ts, name, input_json }) => shellCommands(name, input_json).flatMap(stateChangingGitLines).reverse().map((line) => ({ ts, command: line })));
     // A call a hook blocked is listed under hook blocks, with its reason.
     const failures = db.prepare(`
     ${TREE}
@@ -653,5 +655,61 @@ export function formatSessionRecordWithin(r, chars) {
         text = formatSessionRecord({ ...r, segments: r.segments.slice(drop) });
     }
     return text;
+}
+/** A git commit line, as stateChangingGitLines returns it. */
+const GIT_COMMIT = /(?:^|&&|\|\||;)\s*git\s+(?:-C\s+\S+\s+)?commit\b/;
+/** For each commit subject (git log's %s), the sessions that ran git commit
+ *  with it. Sessions run side by side, so a commit's time often falls in the
+ *  span of more than one; its subject tells which made it. The subject is
+ *  matched whole: quoted (-m "…" or -m '…', the end of the line when the
+ *  message goes on) or as the first line of a heredoc message. A subagent's
+ *  commit is its parent's. A commit whose command holds no subject (--no-edit,
+ *  revert, rebase, -F with a file) is not found. */
+export function commitSessions(db, subjects, params) {
+    const conditions = [];
+    const bindings = [];
+    if (params.project_id) {
+        conditions.push("s.project_id = ?");
+        bindings.push(params.project_id);
+    }
+    if (params.since) {
+        conditions.push("t.ts >= ?");
+        bindings.push(params.since);
+    }
+    if (params.until) {
+        conditions.push("t.ts <= ?");
+        bindings.push(params.until);
+    }
+    // Never json_extract: a cut input is not valid JSON and stops the query.
+    const rows = db.prepare(`
+    ${TOP}
+    SELECT top.root AS session_id, s.project_id, s.source, t.ts, t.name, t.input_json
+    FROM tool_call t JOIN top ON top.id = t.session_id JOIN session s ON s.id = top.root
+    WHERE t.name IN ('Bash', 'exec_command', 'exec') AND t.input_json LIKE '%commit%'
+      ${conditions.map((c) => `AND ${c}`).join(" ")}
+    ORDER BY t.ts DESC`).all(...bindings);
+    const commits = rows.flatMap(({ name, input_json, ...call }) => shellCommands(name, input_json).flatMap(stateChangingGitLines)
+        .filter((line) => GIT_COMMIT.test(line))
+        .map((line) => ({ call, line })));
+    return subjects.map((subject) => {
+        const whole = new RegExp(`(?:(["'])${escapeRegExp(subject)}(?:\\1|$)| ⏎ ${escapeRegExp(subject)}$)`);
+        const sessions = [];
+        for (const { call, line } of commits) {
+            if (whole.test(line) && !sessions.some((s) => s.session_id === call.session_id))
+                sessions.push(call);
+        }
+        return { subject, sessions };
+    });
+}
+function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+export function formatCommitSessions(commits) {
+    return commits.flatMap(({ subject, sessions }) => [
+        JSON.stringify(subject),
+        ...(sessions.length === 0
+            ? ["  (no session ran git commit with this subject)"]
+            : sessions.map((s) => `  ${s.ts}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}`)),
+    ]).join("\n");
 }
 //# sourceMappingURL=left_off.js.map
