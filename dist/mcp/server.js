@@ -38,13 +38,16 @@ import { leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord, com
 import { SEARCH_DESCRIPTION, SERVER_INSTRUCTIONS, STATS_DESCRIPTION } from "./instructions.js";
 import { formatStats, projectStats, STATS_SECTIONS } from "./stats.js";
 import { codexSessionFromMeta, detectCurrentSessionId, resolveSessionId } from "./current_session.js";
-const SessionParamsSchema = z.object({
+// Strict: a key a tool does not take is an error, not dropped without a word.
+// Agents passed `ts` for around_ts and `project` for project_id; the dropped
+// `project` turned a one-project clens_left_off into a list of every project.
+const SessionParamsSchema = z.strictObject({
     session_id: z.string(),
     around_ts: z.string(),
     limit: z.number().int().min(1).max(40).optional(),
     full: z.boolean().optional(),
 });
-const RecentParamsSchema = z.object({
+const RecentParamsSchema = z.strictObject({
     project_id: z.string(),
     since: z.string().optional(),
     until: z.string().optional(),
@@ -54,7 +57,7 @@ const RecentParamsSchema = z.object({
 });
 const ONE_OF_QUERY = "Pass exactly one of query or queries.";
 const SearchParamsSchema = z
-    .object({
+    .strictObject({
     query: z.string().min(1).optional(),
     queries: z.array(z.string().min(1)).min(2).max(5).optional(),
     project_id: z.string().optional(),
@@ -67,7 +70,7 @@ const SearchParamsSchema = z
     context: z.number().int().min(0).max(5).optional(),
 })
     .refine((p) => (p.query === undefined) !== (p.queries === undefined), { message: ONE_OF_QUERY });
-const LeftOffParamsSchema = z.object({
+const LeftOffParamsSchema = z.strictObject({
     project_id: z.string().optional(),
     file: z.string().min(1).optional(),
     since: z.string().optional(),
@@ -76,7 +79,7 @@ const LeftOffParamsSchema = z.object({
     session_id: z.string().min(1).optional(),
     commits: z.array(z.string().min(1)).min(1).max(50).optional(),
 });
-const StatsParamsSchema = z.object({
+const StatsParamsSchema = z.strictObject({
     // min(1): an empty string would otherwise fall through to a wider scope.
     project_id: z.string().min(1).optional(),
     session_id: z.string().min(1).optional(),
@@ -194,7 +197,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             name: "clens_session",
             description: "Fetch conversation context around a specific message in a session. " +
                 "Use this after clens_search to get the full conversation around a matching result. " +
-                "Pass the session_id and ts from a clens_search result.",
+                "Pass a clens_search result's session_id, and its ts as around_ts.",
             inputSchema: {
                 type: "object",
                 properties: {
