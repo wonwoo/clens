@@ -90,6 +90,24 @@ describe("mcp/recent.ts — optional query filter", () => {
     expect(ts).toEqual(["2026-06-02T10:00:00Z"]);
   });
 
+  it("lists only what the user wrote: no subagent prompt, exec run or task notification", () => {
+    db.exec(`
+      INSERT INTO session (id, project_id, started_at, kind, parent_id) VALUES
+        ('agent-x', 'proj-a', '2026-06-16T10:00:00Z', 'subagent', 's2'),
+        ('x1', 'proj-a', '2026-06-16T11:00:00Z', 'exec', NULL);
+      INSERT INTO event (uuid, session_id, ts, role) VALUES
+        ('a1', 'agent-x', '2026-06-16T10:00:00Z', 'user'),
+        ('x2', 'x1', '2026-06-16T11:00:00Z', 'user'),
+        ('n1', 's2', '2026-06-16T12:00:00Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES
+        ('a1', 'agent-x', '2026-06-16T10:00:00Z', 'Read-only research. Report at most 8 items.'),
+        ('x2', 'x1', '2026-06-16T11:00:00Z', 'Read-only benchmark prompt'),
+        ('n1', 's2', '2026-06-16T12:00:00Z', '<task-notification><status>completed</status> Read-only</task-notification>');
+    `);
+    expect(recentUserText(db, { project_id: "proj-a" }).map((r) => r.session_id)).toEqual(["s2", "s1"]);
+    expect(recentUserText(db, { project_id: "proj-a", query: "Read-only" })).toEqual([]);
+  });
+
   it("a later reply in the turn matches too, and is the one shown", () => {
     db.exec(`
       INSERT INTO event (uuid, session_id, ts, role) VALUES

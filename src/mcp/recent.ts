@@ -9,7 +9,8 @@
 
 import type Database from "better-sqlite3";
 
-import { notCopiedClause } from "../analyzer/scope.js";
+import { notCopiedClause, workKindClause } from "../analyzer/scope.js";
+import { notNoise } from "./search.js";
 
 export interface RecentParams {
   project_id?: string;
@@ -61,17 +62,21 @@ export function recentUserText(db: Database.Database, params: RecentParams): Rec
              AND u2.ts > ut.ts AND u2.ts < a.ts
          )`;
   const firstReply = `(SELECT a.text FROM user_text a WHERE ${inTurn} ORDER BY a.ts ASC LIMIT 1)`;
-  // Command messages are listed for what was typed after the command; ones
-  // with nothing after it have empty text, and rows the old parser stored with
-  // broken command tags (see search.ts) stay out. A message copied into a
-  // resumed session is listed once.
+  // Only what the user wrote, as search's role "user" finds it. Command
+  // messages are listed for what was typed after the command; rows holding no
+  // message (an empty command, a task notification, an interrupt marker; see
+  // notNoise) stay out, and so do threads whose "user" is an agent: a
+  // subagent's, and one-shot exec runs with theirs (workKindClause). A
+  // message copied into a resumed session is listed once.
   const userRows = `
     FROM user_text ut
     JOIN session s ON s.id = ut.session_id
     ${where}
     AND ut.role = 'user'
     AND ut.type != 'continuation_summary'
-    AND NOT (ut.is_command = 1 AND (trim(ut.text) = '' OR ut.text LIKE '%<command-%<>%'))
+    AND ${workKindClause("s")}
+    AND s.kind IS NOT 'subagent'
+    AND ${notNoise("ut")}
     AND ${notCopiedClause("ut.event_uuid", "ut.session_id")}`;
 
   // The keyword filter also matches the assistant's replies in the turn: a

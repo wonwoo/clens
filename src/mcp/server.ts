@@ -186,9 +186,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "clens_recent",
       description:
-        "List recent Claude Code session messages by date and/or project, with an optional keyword filter — still time-ordered (ts DESC), not relevance-ranked. " +
-        "Use this when the user asks what they worked on recently (today, yesterday, last N days), optionally about a specific topic. " +
-        "For relevance-ranked keyword search without a time anchor, use clens_search instead. " +
+        "List the user's own messages in a project, Claude Code and Codex, each with the first reply to it, with an optional keyword filter — still time-ordered (ts DESC), not relevance-ranked. " +
+        "Use it to browse a narrow window (a few minutes, or a known session's span). Messages an agent wrote (a subagent's prompt, a one-shot claude -p or codex exec run) are left out. " +
+        "For where work stopped or what was done (\"where did I leave off\", \"what did I do yesterday\") use clens_left_off; for a topic or keyword, clens_search. " +
         "Returns FULL messages (not snippets), so the response is capped at maxBytes total; the oldest rows beyond the cap are dropped and reported as \"+N more\". Prefer a narrow since/until over a large window. " +
         "ALWAYS pass project_id. Derive it from the current working directory: replace every slash with a dash.",
       inputSchema: {
