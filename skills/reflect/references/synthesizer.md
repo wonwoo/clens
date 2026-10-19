@@ -54,8 +54,9 @@ Count with care:
   neighbouring messages too, often all under one timestamp. When the same
   text turns up in two sessions, look at both with `clens_session` and count
   a copy once.
-- The same words in another context (a quote, a review, a pasted document)
-  are not a repeat.
+- The same words in another context (a quote, a review, a pasted document),
+  or used where nothing went wrong, are not a repeat. Count only the
+  sessions where the same problem or correction happened.
 - clens lists a subagent's report relayed into a session as a user message.
   A hit that begins "Another Claude session sent a message:" or holds a
   `<teammate-message>` block is not the user's words, and the incidents it
@@ -88,10 +89,17 @@ and whether a rule already exists decides the row.
   Otherwise route it to the skill or the instruction file that can hold it.
   Its target reads `new skill: <kebab-name>`; the user chooses where it goes.
 - The instruction file is `CLAUDE.md` for Claude Code and `AGENTS.md` for
-  Codex. A rule seen in two or more projects goes in the global file
-  (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`), one seen only in this
-  project in the project's file. When the project keeps both `CLAUDE.md` and
-  `AGENTS.md`, propose the same line for both.
+  Codex. The global file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`)
+  holds the principles behind every session the user runs, in any project
+  and on any task. A rule goes there only when it would hold for every
+  session and sits at the level of the principles already there. A rule that
+  is one case of a principle the global file already states is not a new
+  line: propose rewording that principle only when it failed to fire, as
+  above, and otherwise reject the finding as already covered. Every other
+  rule, one tied to this project's code, services or domain included, goes
+  in the project's file. How many projects a rule showed up in decides
+  whether it is Accepted, never where it goes. When the project keeps both
+  `CLAUDE.md` and `AGENTS.md`, propose the same line for both.
 
 ## 4. Decide
 

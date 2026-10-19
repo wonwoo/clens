@@ -57,8 +57,9 @@ migrations before the tests", not "be careful with the database". Skip:
 Give each finding one target:
 
 - `instructions: project` or `instructions: global`: the instruction file,
-  `CLAUDE.md` for Claude Code or `AGENTS.md` for Codex, of this project or
-  of all the user's work
+  `CLAUDE.md` for Claude Code or `AGENTS.md` for Codex, of this project, or
+  the global one, which holds only principles that hold for every session
+  in any project
 - a skill the session used: `clens_stats` with the session id and
   `sections: ["skills"]` lists the skills and slash commands it ran, and the
   messages show a skill being followed. Give the skill's SKILL.md path and
