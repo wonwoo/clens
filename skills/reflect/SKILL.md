@@ -96,6 +96,12 @@ failure or friction worth keeping.
      its source instead when the user works in that repository (clens's own
      skills are this repository's `skills/`); otherwise leave the row in
      Backlog for the plugin's author.
+   - After editing or adding a skill, run `claude plugin validate` on the
+     `skills` folder it sits in (`~/.claude/skills`, the project's
+     `.claude/skills`, a plugin's `skills`) when that CLI is installed, and
+     fix what it reports: a frontmatter that does not parse loads with no
+     name or description, and nothing says so. Check that every file the
+     skill names exists.
    - Backlog rows are not filed anywhere. They stay in the report for the
      user.
 

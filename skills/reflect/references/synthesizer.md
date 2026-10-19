@@ -61,6 +61,9 @@ Count with care:
   `<teammate-message>` block is not the user's words, and the incidents it
   quotes belong to the session it reports on, not to the one it was relayed
   into.
+- A hit where the user asked for the opposite (what the finding forbids, or
+  turned down what it asks) counts against the finding. Quote it in the
+  evidence.
 
 For each finding, record the earlier sessions (date, the first 8 characters
 of the id, project), a one-line quote from each, and how many projects they
@@ -97,16 +100,28 @@ the agent's action just before it with `clens_session`. A rule that asks for
 what the agent did, the very thing the user corrected, is reversed: rewrite
 it to what the user asked for, or reject it.
 
+Read the user's words behind each `stated` rule the same way, for the
+rule's scope. Words about one task ("don't commit yet", "skip that test this
+time") are not a standing rule: write the rule no wider than the user's
+words, which can make it a project rule rather than a global one, and reject
+it when it held only for that task. The user's words set the scope, not a
+reviewer's paraphrase of them. When they leave it unclear, put the row in
+Held and say why.
+
 - **Accepted:** a `stated` rule, since the user said it and once is enough,
-  or an `inferred` rule seen in at least one earlier session. It must also be
+  or an `inferred` rule seen in at least one earlier session, provided the
+  user did not ask for the opposite in another session. It must also be
   specific enough that an agent knows when it applies, still true once paths
   and versions change, and change what an agent does.
-- **Held:** an `inferred` rule seen in this session only. It may be an
-  accident of this session; the user can promote it.
+- **Held:** an `inferred` rule seen in this session only, which may be an
+  accident of this session; a rule whose scope the user's words leave
+  unclear; or a rule the user contradicted in another session, with both
+  quotes in the evidence. The user can promote it.
 - **Backlog:** a rule a hook, a lint rule, a script or a setting would
   enforce better than prose, whatever its count.
 - **Rejected:** vague, a detail that goes stale, already covered, about a
-  skill the session did not use, or not a rule.
+  skill the session did not use, reversed, held only for one task, or not a
+  rule.
 
 The text to write carries the behavior only. Never put counts, dates,
 session ids or quotes in it: they belong in the evidence. Write it in the
@@ -139,4 +154,4 @@ For each: the rule, what happened, and the mechanism that would enforce it.
 ### Rejected
 
 For each: the rule and the reason (vague, stale detail, already covered,
-skill not used, not a rule).
+skill not used, reversed, one task only, not a rule).

@@ -51,7 +51,10 @@ current.
 - Do not redo work the record shows as done, and do not bring back an
   approach the user rejected there.
 - What the user decided or ruled out in that session (for example "do not
-  commit yet") still holds here unless the user says otherwise.
+  commit yet") still holds here unless the user says otherwise, as far as
+  the user's words reach: a ruling about one task does not extend to other
+  work. When its scope matters, read the user's own words with
+  `clens_session` rather than going by the record's summary.
 - The record is a summary, not the whole conversation. When a detail matters,
   read it with `clens_session` instead of guessing.
 - Keep what the record shows apart from your own inference when you report.
