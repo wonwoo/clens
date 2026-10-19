@@ -1,0 +1,6 @@
+interface:
+  display_name: "clens reflect"
+  short_description: "Turn this session's corrections into rule edits"
+  default_prompt: "Use $clens:reflect to turn what I corrected in this session into AGENTS.md or skill edits."
+policy:
+  allow_implicit_invocation: false

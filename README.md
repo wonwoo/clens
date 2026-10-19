@@ -43,7 +43,7 @@ Requires Node.js 20 or later, with npm.
 
 ### As a plugin
 
-clens is one plugin for both Claude Code and Codex. It brings the MCP server, the compaction hook and three skills.
+clens is one plugin for both Claude Code and Codex. It brings the MCP server, the compaction hook and four skills.
 
 Claude Code:
 
@@ -76,6 +76,7 @@ The plugin's skills:
 
 - `/clens:recap` writes a recap of your recent work in the current project: what each session did, where it stopped and what is left, with commits tied to the sessions that made them.
 - `/clens:continue` picks up the work of your latest other session in this project, such as one you just left in the other tool.
+- `/clens:reflect` turns what you had to correct in this session into proposed edits to CLAUDE.md or AGENTS.md and to skills, each with how often the same thing came up in your earlier sessions. Nothing is written until you approve it. A run takes about 10 to 20 minutes.
 - `clens:stats` guides the agent through usage questions ("which skills do I use most", "what is filling my context").
 
 In Codex, call a skill as `$clens:recap`.
