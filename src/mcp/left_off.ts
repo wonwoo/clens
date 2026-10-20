@@ -11,7 +11,7 @@ import type Database from "better-sqlite3";
 
 import { execCodeCommands } from "../util/codex_exec.js";
 import { TEMP_ROOTS } from "../util/temp_dirs.js";
-import { cutChars, notNoise } from "./search.js";
+import { cutChars, escapeRegExp, notNoise } from "./search.js";
 
 export interface LeftOffParams {
   project_id?: string;
@@ -862,10 +862,6 @@ export function commitSessions(
     }
     return { subject, sessions };
   });
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function formatCommitSessions(commits: CommitSessions[]): string {

@@ -256,6 +256,19 @@ describe("mcp/search.ts — NOT / OR / phrase FTS5 operators", () => {
     const results = searchUserText(db, { query: '"로그인 버그"' });
     expect(results.map((r) => r.snippet)).toEqual(["로그인 버그 재현됨"]);
   });
+
+  // Regression: a snippet shows each run of whitespace as one space, and a
+  // phrase copied from it found nothing where the message breaks the line.
+  it("a phrase matches across a line break or a double space, as a snippet shows it", () => {
+    db.exec("INSERT INTO event (uuid, session_id, ts, role) VALUES ('e4', 's1', '2026-06-01T10:03:00Z', 'user')");
+    db.prepare("INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES ('e4', 's1', '2026-06-01T10:03:00Z', ?)")
+      .run(`${"앞부분 ".repeat(60)}말이 많네 \n\n색인  먼저 하라는거`);
+
+    const results = searchUserText(db, { query: '"많네 색인 먼저"' });
+    expect(results).toHaveLength(1);
+    expect(results[0]!.snippet).toContain("말이 많네 색인 먼저 하라는거");
+    expect(searchUserText(db, { query: '하라는거 NOT "많네 색인"' })).toEqual([]);
+  });
 });
 
 /**

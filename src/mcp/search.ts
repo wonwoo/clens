@@ -82,11 +82,11 @@ export const DEFAULT_SEARCH_MAX_BYTES = 8192;
  *  matching a row containing only the bare "리팩토링" still locates its offset
  *  instead of silently falling back to a head cut. */
 function buildSnippet(text: string, probes: string[]): string {
-  const lower = text.toLowerCase();
   let off = -1;
   for (const p of probes) {
-    if (!p) continue;
-    const i = lower.indexOf(p.toLowerCase());
+    if (!p.trim()) continue;
+    // A space in the probe stands for any run of whitespace, as in flat().
+    const i = text.search(new RegExp(p.trim().split(/\s+/).map(escapeRegExp).join("\\s+"), "i"));
     if (i >= 0 && (off === -1 || i < off)) off = i;
   }
   if (off < 0) off = 0; // no probe located (defensive — post-filter guarantees a match); head snippet
@@ -400,6 +400,17 @@ export function cutChars(text: string, max: number): string {
   return chars.length > max ? chars.slice(0, max).join("") + "…" : chars.join("");
 }
 
+/** `text` lowercased, each run of whitespace made one space, so a phrase
+ *  matches across a line break or a double space, as FTS5 matches it and as
+ *  a snippet shows it. */
+function flat(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ");
+}
+
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** SQL condition that is false for a stored row holding no conversation:
  *  Claude Code's interrupt marker, an empty message, an imported session's
  *  marker and tool log, the fixed "No response requested." reply, a message
@@ -560,8 +571,8 @@ function searchGroups(
     });
   }
   const termSatisfied = (term: QueryTerm, r: RawResult): boolean => {
-    const lower = r.text.toLowerCase();
-    if (lower.includes(term.text.toLowerCase()) || lower.includes(term.raw.toLowerCase())) return true;
+    const text = flat(r.text);
+    if (text.includes(flat(term.text)) || text.includes(flat(term.raw))) return true;
     // Phrase terms require adjacency, which the language layer's tokenized-
     // content-word check below cannot verify (it only checks that each
     // token appears somewhere in the row, regardless of order/adjacency) —
@@ -590,7 +601,7 @@ function searchGroups(
   // (NOT never had language-layer support before this feature); left as a
   // known gap rather than in scope for this change's acceptance criteria.
   if (negatedTerms.length > 0) {
-    sorted = sorted.filter((r) => !negatedTerms.some((neg) => r.text.toLowerCase().includes(neg.toLowerCase())));
+    sorted = sorted.filter((r) => !negatedTerms.some((neg) => flat(r.text).includes(flat(neg))));
   }
   const ranked = sorted.slice(0, limit);
 

@@ -8,7 +8,7 @@
  */
 import { execCodeCommands } from "../util/codex_exec.js";
 import { TEMP_ROOTS } from "../util/temp_dirs.js";
-import { cutChars, notNoise } from "./search.js";
+import { cutChars, escapeRegExp, notNoise } from "./search.js";
 const DEFAULT_LIMIT = 3;
 const MAX_LIMIT = 10;
 const EDIT_TOOLS = "('Edit', 'Write', 'NotebookEdit', 'apply_patch', 'Bash', 'exec_command')";
@@ -716,9 +716,6 @@ export function commitSessions(db, subjects, params) {
         }
         return { subject, sessions };
     });
-}
-function escapeRegExp(text) {
-    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 export function formatCommitSessions(commits) {
     return commits.flatMap(({ subject, sessions }) => [
