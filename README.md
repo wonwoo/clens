@@ -83,6 +83,7 @@ In Codex, call a skill as `$clens:recap`.
 
 - Search matches words, not meaning. A question worded differently from the conversation can miss it; the agent then retries with other words.
 - Tool output (command results, file contents) is not stored, only the messages and the tool calls. A failed call keeps the first 100 and last 200 characters of its output, which a session's record shows; they are not searched.
+- An assistant reply over 4 KB is stored as its start and end, about 2 KB each, so words in its middle are not found.
 - Files a script changes, or whose path is set only when a command runs (`$VAR`, a glob), can be missing from a session's edited files. The same goes for git commands run from inside a script.
 - In Codex, the compaction recovery runs only after you trust the hook, and not after a subagent's compaction.
 
@@ -114,7 +115,7 @@ clens stats [--digest]      print the index's row counts, or a SHA-256 digest of
 clens mcp                   run the MCP server
 ```
 
-`CLENS_HOME`, `CLENS_CODEX_HOME` and `CLENS_INDEX_DIR` move `~/.claude`, `~/.codex` and `~/.clens`. Tests point all three at temporary folders, so they never touch your real ones. [CLAUDE.md](CLAUDE.md) describes the architecture.
+`CLENS_HOME`, `CLENS_CODEX_HOME` and `CLENS_INDEX_DIR` move `~/.claude`, `~/.codex` and `~/.clens`. Tests point all three at temporary folders, so they never touch your real ones. [CLAUDE.md](CLAUDE.md) holds the rules and invariants to keep when you change the code.
 
 A release ships `dist/` in the repository, because neither Claude Code nor Codex builds a plugin: run `npm run build`, commit `dist/`, and raise `version` in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`. `claude plugin validate .` checks the Claude Code side.
 

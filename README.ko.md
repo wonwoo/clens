@@ -85,6 +85,7 @@ Codex에서는 `$clens:recap`처럼 앞에 `$`를 붙여서 부릅니다.
 
 - 뜻이 아니라 단어로 검색합니다. 대화할 때와 다른 표현으로 물으면 못 찾을 수 있는데, 그러면 에이전트가 다른 단어로 다시 찾아봅니다.
 - 명령 실행 결과나 읽은 파일 내용 같은 도구 출력은 저장하지 않습니다. 메시지와 도구 호출만 남습니다. 실패한 호출만 출력의 앞 100자와 뒤 200자를 남겨 세션 기록에 보여 주고, 검색 대상에는 넣지 않습니다.
+- 4KB가 넘는 어시스턴트 답은 앞과 뒤 약 2KB씩만 저장합니다. 그래서 가운데에 있는 단어로는 찾을 수 없습니다.
 - 스크립트로 바꾼 파일이나 `$VAR`, glob처럼 실행해 봐야 경로가 정해지는 파일은 고친 파일 목록에서 빠질 수 있습니다. 스크립트 안에서 돌린 git 명령도 마찬가지입니다.
 - Codex에서는 훅을 신뢰해야 압축 뒤 복구가 동작하고, 서브에이전트가 압축했을 때는 동작하지 않습니다.
 
@@ -116,7 +117,7 @@ clens stats [--digest]      색인의 행 수나 테이블마다 SHA-256 digest�
 clens mcp                   MCP 서버를 띄웁니다
 ```
 
-`CLENS_HOME`, `CLENS_CODEX_HOME`, `CLENS_INDEX_DIR`로 `~/.claude`, `~/.codex`, `~/.clens` 위치를 바꿀 수 있습니다. 테스트는 이 셋을 임시 폴더로 돌려 놓고 돌기 때문에 실제 폴더는 건드리지 않습니다. 전체 구조는 [CLAUDE.md](CLAUDE.md)에 있습니다.
+`CLENS_HOME`, `CLENS_CODEX_HOME`, `CLENS_INDEX_DIR`로 `~/.claude`, `~/.codex`, `~/.clens` 위치를 바꿀 수 있습니다. 테스트는 이 셋을 임시 폴더로 돌려 놓고 돌기 때문에 실제 폴더는 건드리지 않습니다. 코드를 고칠 때 지켜야 할 규칙과 불변 조건은 [CLAUDE.md](CLAUDE.md)에 있습니다.
 
 릴리스할 때는 `dist/`도 같이 커밋합니다. Claude Code도 Codex도 플러그인을 직접 빌드하지 않아서입니다. `npm run build`로 `dist/`를 만들어 커밋하고, `.claude-plugin/plugin.json`과 `.codex-plugin/plugin.json`의 `version`을 올리세요. Claude Code 쪽은 `claude plugin validate .`로 검사할 수 있습니다.
 
