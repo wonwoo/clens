@@ -1127,9 +1127,12 @@ describe("mcp/search.ts — rows that are not conversation", () => {
     expect(["[Request interrupted by user for tool use]", "  ", "<EXTERNAL SESSION IMPORTED>", "No response requested.", "[external_agent_tool_call: Edit]",
       "<local-command-stdout>Set model to Sonnet 5</local-command-stdout>", "<local-command-stderr>Error: not found</local-command-stderr>",
       "<task-notification><task-id>b1</task-id><status>completed</status></task-notification>", "<bash-stdout>On branch main</bash-stdout>",
-      "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>"].map(pick)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>",
+      "Another Claude session sent a message:\n<teammate-message teammate_id=\"rA-judgment\">\nsaved\n</teammate-message>",
+      "<teammate-message teammate_id=\"team-lead\">\nYou are the security reviewer on this agent team.\n</teammate-message>"].map(pick)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(["ok", "No response requested. Then I added a test.", "a [Request interrupted by user] quote", "why is <local-command-stdout> in the log",
-      "<bash-input>git status</bash-input>", "<command-name>/deploy</command-name>\n<command-args>push it</command-args>"].map(pick)).toEqual([1, 1, 1, 1, 1, 1]);
+      "<bash-input>git status</bash-input>", "<command-name>/deploy</command-name>\n<command-args>push it</command-args>",
+      "why does clens list <teammate-message> rows as mine?"].map(pick)).toEqual([1, 1, 1, 1, 1, 1, 1]);
   });
 });
 

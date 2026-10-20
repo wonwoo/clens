@@ -311,10 +311,12 @@ export function cutChars(text, max) {
 }
 /** SQL condition that is false for a stored row holding no conversation:
  *  Claude Code's interrupt marker, an empty message, an imported session's
- *  marker and tool log, the fixed "No response requested." reply, and a
- *  command message the old parser stored with its "/word"s cut out (leaving
- *  "<command-name><>"-style remnants; rows re-parsed since hold what was
- *  typed after the command, and count as conversation). */
+ *  marker and tool log, the fixed "No response requested." reply, a message
+ *  an agent sent into the session (a task notification, or an agent team's
+ *  teammate message, relayed or bare), and a command message the old parser
+ *  stored with its "/word"s cut out (leaving "<command-name><>"-style
+ *  remnants; rows re-parsed since hold what was typed after the command, and
+ *  count as conversation). */
 export function notNoise(alias) {
     const t = `${alias}.text`;
     return `NOT (substr(${t}, 1, 28) = '[Request interrupted by user'
@@ -324,6 +326,8 @@ export function notNoise(alias) {
     OR ${t} = 'No response requested.'
     OR substr(${t}, 1, 15) = '<local-command-'
     OR substr(${t}, 1, 19) = '<task-notification>'
+    OR substr(${t}, 1, 38) = 'Another Claude session sent a message:'
+    OR substr(${t}, 1, 17) = '<teammate-message'
     OR substr(${t}, 1, 13) = '<bash-stdout>'
     OR (substr(${t}, 1, 9) = '<command-' AND instr(${t}, '<command-args></command-args>') > 0)
     OR (${alias}.is_command = 1 AND ${t} LIKE '%<command-%<>%'))`;
