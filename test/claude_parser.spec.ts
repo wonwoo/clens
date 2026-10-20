@@ -616,3 +616,31 @@ describe("hook block detection guards", () => {
     expect(batch.counters.get("null_content")?.count).toBe(1);
   });
 });
+
+describe("messages sent while the agent was working", () => {
+  const queued = (uuid: string, attachment: Record<string, unknown>) =>
+    JSON.stringify({ type: "attachment", uuid, sessionId: "s", timestamp: "2026-10-20T00:20:01Z", attachment: { type: "queued_command", ...attachment } });
+
+  it("stores the user's queued message as their message, text blocks only", () => {
+    const body = [
+      queued("q1", { prompt: "일단 테스트해보고 다음 진행하자", commandMode: "prompt", origin: { kind: "human" }, humanTurn: true }),
+      queued("q2", { prompt: [{ type: "text", text: "이거 봐바" }, { type: "image", source: { type: "base64", data: "AA==" } }], commandMode: "prompt", origin: { kind: "human" } }),
+    ].join("\n") + "\n";
+    const r = parseFileBody({ body, source_file: "x", batch: freshBatch() });
+    expect(r.events.flatMap((e) => e.user_texts).map(({ event_uuid, text, role, type, is_command }) => ({ event_uuid, text, role, type, is_command }))).toEqual([
+      { event_uuid: "q1", text: "일단 테스트해보고 다음 진행하자", role: "user", type: "user_message", is_command: 0 },
+      { event_uuid: "q2", text: "이거 봐바", role: "user", type: "user_message", is_command: 0 },
+    ]);
+  });
+
+  it("leaves out a queued message an agent sent: a task notification, a peer's or a coordinator's", () => {
+    const body = [
+      queued("n1", { prompt: "<task-notification><task-id>b1</task-id></task-notification>", commandMode: "task-notification", origin: { kind: "task-notification" } }),
+      queued("n2", { prompt: "<task-notification><task-id>b2</task-id></task-notification>", commandMode: "task-notification" }),
+      queued("p1", { prompt: "<cross-session-message from=\"uds:/tmp/a.sock\">hi</cross-session-message>", commandMode: "prompt", origin: { kind: "peer" } }),
+      queued("c1", { prompt: "Scope addition: compare both", origin: { kind: "coordinator" } }),
+    ].join("\n") + "\n";
+    const r = parseFileBody({ body, source_file: "x", batch: freshBatch() });
+    expect(r.events.flatMap((e) => e.user_texts)).toEqual([]);
+  });
+});

@@ -42,7 +42,7 @@ command's name. What clens keeps differs from the conversation in four ways:
 - It lists a subagent's report relayed into the session as a user message.
   A message that begins "Another Claude session sent a message:" or holds a
   `<teammate-message>` block is not the user's words.
-- It leaves out messages the user sent while the agent was working. When a
+- It can leave out messages the user sent while the agent was working. When a
   reply answers a question or follows a correction that no indexed user
   message holds, treat the reply as the trace of a message clens missed, and
   never take a missing correction as proof that the user made none.

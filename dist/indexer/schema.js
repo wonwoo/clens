@@ -63,7 +63,11 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // (errorExcerpt in claude_parser.ts), added in place like result_chars in v5;
 // the version-mismatch rebuild re-reads every transcript still on disk to
 // fill it.
-export const SCHEMA_VERSION = 13;
+// v14: a message the user sent while Claude Code was working (a
+// queued_command attachment from a human) is a user_text row. No structural
+// change; the version-mismatch rebuild re-reads every transcript still on
+// disk to add them.
+export const SCHEMA_VERSION = 14;
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population
  *  requires the JS-side language adapter (see lang/registry.ts) — writer.ts

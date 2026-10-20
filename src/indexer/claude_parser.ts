@@ -208,8 +208,8 @@ interface BlockSummary {
   text_len: number;
 }
 
-/** The text of a tool_result's content: the string itself, or its text blocks
- *  joined. Images and other blocks add nothing. */
+/** The text of a tool_result's content, or of a queued prompt: the string
+ *  itself, or its text blocks joined. Images and other blocks add nothing. */
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -677,6 +677,17 @@ export function parseEventLine(
         call_id: null,
         reason: typeof reason === "string" ? utf8SafeTruncate(reason, HOOK_REASON_BYTE_CAP).out : null,
       });
+    }
+    // A message the user sent while the agent was working is queued and
+    // handed over mid-turn as this attachment, never as a user line. Only
+    // the user's own: task notifications and peer or coordinator messages
+    // come the same way.
+    const origin = a.origin as Record<string, unknown> | null | undefined;
+    if (a.type === "queued_command" && origin?.kind === "human") {
+      const text = toolResultText(a.prompt).trim();
+      if (text !== "") {
+        parsed.user_texts.push({ event_uuid: uuid, session_id, ts, text, is_command: 0, role: "user", type: "user_message" });
+      }
     }
   }
 
