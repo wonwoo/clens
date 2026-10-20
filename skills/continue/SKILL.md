@@ -39,7 +39,10 @@ current.
    unclear.
 4. **Check the files.** The record says what happened in that session, not
    what the files hold now. Before acting on it, run `git status` and look at
-   the files it edited.
+   the files it edited. When your next step builds on a result that session
+   reported, such as tests passing or a build or deploy succeeding, run that
+   check again first: the record keeps no output of a call that succeeded,
+   and the files cannot show it.
 5. **Report, then continue.** In two to four sentences, tell the user what
    that session was doing, where it stopped and what was left open: a
    question the user never answered, a failing test, an uncommitted change.
