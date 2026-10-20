@@ -71,7 +71,9 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // queued_command attachment from a human) is a user_text row. No structural
 // change; the version-mismatch rebuild re-reads every transcript still on
 // disk to add them.
-export const SCHEMA_VERSION = 14;
+// v15: a failed Codex shell call's error_excerpt leaves out its output
+// header but the exit line (failedOutputText in codex_parser.ts).
+export const SCHEMA_VERSION = 15;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population

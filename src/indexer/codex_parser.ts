@@ -175,6 +175,19 @@ function headerRunningSession(text: string): number | null {
   return m === null ? null : Number(m[1]);
 }
 
+/** A failed shell call's output as its error excerpt reads it: the header's
+ *  exit line, then what the command printed. The rest of a shell header
+ *  (chunk id, wall time, token count) filled most of the excerpt's start and
+ *  pushed out the error a stack trace opens with. Other outputs as they are. */
+function failedOutputText(text: string): string {
+  const outputAt = text.indexOf("\nOutput:");
+  if (outputAt === -1) return text;
+  const header = text.slice(0, outputAt).split("\n");
+  if (!header.some((line) => line.startsWith("Wall time:"))) return text;
+  const exit = header.filter((line) => /^(?:Process exited with code|Exit code:)/.test(line));
+  return [...exit, text.slice(outputAt + "\nOutput:".length).replace(/^\n/, "")].join("\n");
+}
+
 /** Whether a tool output reports the tool's own failure (its failure line),
  *  as opposed to the exit code of a process it looked at. */
 function ownFailure(text: string): 0 | 1 {
@@ -740,7 +753,7 @@ function processLine(
           state.runningProcess.delete(target);
           const started = toolResults.get(origin);
           if (exit !== 0 && started !== undefined) {
-            toolResults.set(origin, { ...started, is_error: 1, error_excerpt: errorExcerpt(text) });
+            toolResults.set(origin, { ...started, is_error: 1, error_excerpt: errorExcerpt(failedOutputText(text)) });
           }
           is_error = ownFailure(text);
         }
@@ -749,7 +762,7 @@ function processLine(
           ts: timestamp,
           is_error,
           result_chars: codepointLength(text),
-          error_excerpt: is_error === 1 ? errorExcerpt(text) : null,
+          error_excerpt: is_error === 1 ? errorExcerpt(failedOutputText(text)) : null,
         });
         state.openToolCalls.delete(callId);
         // Recorded on the call's own event: the driver reads a whole rollout

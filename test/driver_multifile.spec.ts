@@ -400,10 +400,10 @@ describe("indexer — a Codex subagent rollout next to its parent", () => {
       // A command that exited after its call returned keeps the output that
       // reported the exit, which came through write_stdin.
       expect(excerpts).toEqual([
-        { call_id: "c2", error_excerpt: "Chunk ID: b\nWall time: 0\nProcess exited with code 1\nOutput:" },
+        { call_id: "c2", error_excerpt: "Process exited with code 1" },
         { call_id: "c3", error_excerpt: "Command blocked by PreToolUse hook: pushes need review. Command: git push" },
         { call_id: "x1", error_excerpt: "Script completed\nOutput:" },
-        { call_id: "c4", error_excerpt: "Chunk ID: d\nWall time: 5\nProcess exited with code 1\nOutput:" },
+        { call_id: "c4", error_excerpt: "Process exited with code 1" },
       ]);
       expect(okExcerpts).toEqual({ n: 0 });
       expect(ops).toEqual([

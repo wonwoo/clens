@@ -543,6 +543,22 @@ describe("parseCodexFileBody — shell commands", () => {
     expect(r.tool_results.get("k2")?.result_chars).toBe([..."aborted by user after 1.2s"].length);
   });
 
+  it("keeps a failed shell call's exit line and output in its error excerpt, not the rest of the header", () => {
+    const trace = "Error: Cannot find package 'better-sqlite3'\n" + "    at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)\n".repeat(20);
+    const r = parse([
+      meta("/w/app"),
+      fcall(1, "s1", "exec_command", { cmd: "node check.mjs" }),
+      fout(2, "s1", `Chunk ID: a\nWall time: 0.1 seconds\nProcess exited with code 1\nOriginal token count: 900\nOutput:\n${trace}`),
+      fcall(3, "s2", "exec_command", { cmd: "npm test" }),
+      fout(4, "s2", "Exit code: 1\nWall time: 0.2 seconds\nOutput:\nFailed"),
+      fcall(5, "s3", "apply_patch", {}),
+      fout(6, "s3", "apply_patch verification failed: Failed to find expected lines"),
+    ]);
+    expect(r.tool_results.get("s1")?.error_excerpt?.startsWith("Process exited with code 1\nError: Cannot find package 'better-sqlite3'")).toBe(true);
+    expect(r.tool_results.get("s2")?.error_excerpt).toBe("Exit code: 1\nFailed");
+    expect(r.tool_results.get("s3")?.error_excerpt).toBe("apply_patch verification failed: Failed to find expected lines");
+  });
+
   it("records the files exec code writes through tools.exec_command", () => {
     const code = 'const r = await tools.exec_command({cmd:"echo hi > out.txt", workdir:"/w/app/tmp"}); await tools.exec_command({cmd:"ls"});';
     const r = parse([
