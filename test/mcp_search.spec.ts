@@ -507,6 +507,38 @@ describe("mcp/search.ts — language layer (criteria a & b)", () => {
     expect(results).toEqual([]);
   });
 
+  // Regression: Kiwi splits a word by what follows it, so "써도" ending the
+  // quoted phrase became "쓰" while the message, where "세션은" follows it,
+  // kept "써도". The message then missed the language layer, and a longer
+  // message quoting the phrase, found by every layer, outranked it.
+  it("(regression) a quoted phrase is ranked without the language layer, which can split it unlike the message", () => {
+    registerLanguage({
+      code: "ko",
+      detect: (t) => /[가-힣]/.test(t),
+      tokenize: (t) => t.split(/\s+/).map((w) => (w === "써도" ? "쓰" : w)),
+    });
+    const db = openMem();
+    db.exec(`
+      INSERT INTO project (id, cwd) VALUES ('proj-a', '/a');
+      INSERT INTO session (id, project_id, started_at) VALUES ('s1', 'proj-a', '2026-06-01T10:00:00Z');
+      INSERT INTO event (uuid, session_id, ts, role) VALUES
+        ('e1', 's1', '2026-06-01T10:00:00Z', 'user'),
+        ('e2', 's1', '2026-06-02T10:00:00Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES
+        ('e1', 's1', '2026-06-01T10:00:00Z', '코덱스 exec 써도 세션은 절로 가냐'),
+        ('e2', 's1', '2026-06-02T10:00:00Z', '지난 대화 정리: 코덱스 exec 써도 세션은 절로 가냐고 물었고 이렇게 쓰면 된다고 답했다');
+      INSERT INTO user_text_fts_lang_ko (rowid, text, session_id, ts) VALUES
+        ((SELECT rowid FROM user_text WHERE event_uuid = 'e1'), '코덱스 exec 써도 세션 절로 가', 's1', '2026-06-01T10:00:00Z'),
+        ((SELECT rowid FROM user_text WHERE event_uuid = 'e2'), '지난 대화 정리 코덱스 exec 쓰 세션 절로 가 묻 이렇게 쓰 되 답하', 's1', '2026-06-02T10:00:00Z');
+    `);
+
+    const results = searchUserText(db, { query: '"코덱스 exec 써도"' });
+    expect(results.map((r) => r.snippet)).toEqual([
+      "코덱스 exec 써도 세션은 절로 가냐",
+      expect.stringContaining("지난 대화 정리"),
+    ]);
+  });
+
   // Regression: a real production crash. ja/zh's embedded dictionaries load
   // successfully as soon as the npm package is installed (unlike ko, which
   // also needs an external model directory), but applySchema() — which

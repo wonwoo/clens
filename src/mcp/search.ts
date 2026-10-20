@@ -283,12 +283,15 @@ function renderTrigram(groups: TermGroup[]): TrigramQuery {
  *  A term the adapter's script doesn't detect (e.g. an English word in an
  *  otherwise-Korean query) contributes nothing to this layer — the porter
  *  layer already enforces full query semantics; this layer is a
- *  supplementary precision signal, not a replacement. */
+ *  supplementary precision signal, not a replacement. A phrase contributes
+ *  nothing either: it must match literally, and the analyzer splits a word by
+ *  what follows it ("써도" ending the phrase, a message going on past it), so
+ *  this layer could only reorder the phrase's matches, and wrongly. */
 function renderLanguageMatch(groups: TermGroup[], adapter: LanguageAdapter): string {
   const groupExprs = groups
     .map((g) => {
       const termExprs = g.terms
-        .filter((t) => adapter.detect(t.text))
+        .filter((t) => !t.phrase && adapter.detect(t.text))
         .map((t) => adapter.tokenize(t.text))
         .filter((toks) => toks.length > 0)
         .map((toks) => toks.map((tok) => `"${tok}"`).join(" AND "));
