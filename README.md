@@ -2,9 +2,11 @@
 
 [한국어](README.ko.md)
 
-A memory of your past Claude Code and Codex sessions, for your coding agent.
+Your coding agent forgets a session once it ends. So it asks again about what you settled last week, and brings back the approach you already dropped. clens indexes every conversation you had in Claude Code and Codex, and lets the agent look things up itself when it needs them.
 
-Your agent forgets a session once it ends. With clens it looks up what you decided, tried and changed before, in every project and in both tools, instead of guessing or asking you again. Everything stays on your machine.
+It finds what you said in other projects too, and follows work you started in Claude Code and carried on in Codex. Korean is searched by word, so a different particle or verb ending still matches. It never calls an LLM, and nothing leaves your machine.
+
+Ask it things like:
 
 ```txt
 Why did we drop the retry logic?
@@ -15,6 +17,10 @@ Where did I leave off on this project? Who last changed src/app.ts?
 ```
 
 ```txt
+What did I do yesterday?
+```
+
+```txt
 Which files did I change and what did I commit before the compaction?
 ```
 
@@ -22,12 +28,15 @@ Status: pre-alpha, not published to npm yet.
 
 ## What it does
 
-- **Finds past discussions and decisions** across every project's conversations. Search understands Korean, Japanese and Chinese word forms, not just exact strings.
-- **Tells you where you left off** in a project or on one file: the latest sessions with their last request, last reply and the files they edited.
-- **Recovers after compaction.** Right after `/compact`, the agent gets back what the summary tends to drop: your requests, edited files, the git commands that changed state, failed tool calls and hook blocks.
-- **Shows how you work:** which tools, skills and subagents you use, which files you change most, what hooks blocked, what fills the context, for one session, one project or all of them.
-- **Keeps what Claude Code deletes.** Sessions stay searchable after Claude Code removes their transcripts.
-- **Stays on your machine.** It never calls an LLM. It goes online only to install its npm dependencies on first run and to download the Korean search model.
+- Finds past discussions and decisions across every project. When you say "last time" or "we tried this before", the agent is told to look before it answers, without you asking.
+- Shows where you left off in a project or on one file: the latest sessions with their last request, last reply and the files they edited.
+- Lists the conversation in a time window, in order.
+- Recovers after `/compact`. Right after a compaction the agent gets back what the summary tends to drop: your requests, edited files, the git commands that changed state, failed tool calls and hook blocks.
+- Keeps what Claude Code deletes. By default Claude Code deletes transcripts older than 30 days; a session clens has indexed stays searchable after its file is gone.
+- Shows how you work: which tools and skills you use most, which files you change most, what hooks blocked, what fills the context.
+- Recaps your recent work in this project, session by session (`/clens:recap`).
+- Picks up in Claude Code the work you left in Codex, or the other way round (`/clens:continue`).
+- Checks how often you had to make the same correction in earlier sessions, and turns it into lines for CLAUDE.md, AGENTS.md or a skill (`/clens:reflect`).
 
 ## Install
 
@@ -55,11 +64,13 @@ The first session indexes your history in the background. A long history takes a
 
 ### Korean, Japanese and Chinese search
 
-For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, run this yourself. Then close every open Claude Code and Codex session and start again: a session that was already running keeps indexing without the new analyzer. Without it, those messages are still found by their characters. English needs nothing.
+For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, run this yourself:
 
 ```sh
 node ~/.codex/plugins/cache/clens/clens/<version>/plugin/start.mjs install ko
 ```
+
+Then close every open Claude Code and Codex session and start again: a session that was already running keeps indexing without the new analyzer. Without it, those messages are still found by their characters. English needs nothing.
 
 ### Update
 
@@ -72,12 +83,29 @@ If you set clens up by hand before (`claude mcp add`, `codex mcp add`, a compact
 
 ## Skills
 
-- `/clens:recap` recaps your recent work in this project: what each session did, where it stopped and what is left, with commits tied to the sessions that made them.
-- `/clens:continue` picks up the work of your latest other session in this project, such as one you just left in the other tool.
-- `/clens:reflect` turns what you had to correct in this session into proposed edits to CLAUDE.md or AGENTS.md and to skills, each with how often the same thing came up in your earlier sessions. Give it a period (`/clens:reflect 2w`, `/clens:reflect 10주`, up to 10 weeks) to review this project's sessions over that time instead. Nothing is written until you approve it. Each run's results and your decisions are kept in `~/.clens/reflect/`, and the next run takes them into account: what you declined is not proposed again unless the problem came back. A run on one session takes about 10 to 20 minutes; a period takes longer.
-- `clens:stats` guides the agent through usage questions ("which skills do I use most", "what is filling my context").
+`/clens:recap` recaps your recent work in this project: what each session did, where it stopped and what is left, with commits tied to the sessions that made them.
+
+`/clens:continue` picks up the work of your latest other session in this project without you retelling it. Use it when you switch tools, say from Codex to Claude Code.
+
+`/clens:reflect` turns what you had to correct or explain in this session into proposed edits to CLAUDE.md or AGENTS.md and to skills. Each proposal comes with the earlier sessions where the same thing happened, and only what you pick is written. A rule that a hook or a script would enforce better than a line of text is listed apart, with each time it went wrong: when, and which command failed. Give it a period (`/clens:reflect 2w`, `/clens:reflect 10주`, up to 10 weeks) to review this project's sessions over that time instead. Each run's results and your decisions are kept in `~/.clens/reflect/`, and the next run takes them into account: what you declined is not proposed again unless the problem came back. A run on one session takes about 10 to 20 minutes; a period takes longer.
+
+`clens:stats` is not one you call. The agent reads it to answer usage questions such as "which skills do I use most" or "what is filling my context".
 
 In Codex, call a skill as `$clens:recap`.
+
+## How it works
+
+clens reads the transcripts Claude Code keeps in `~/.claude/projects/` and Codex in `~/.codex/sessions/`, and indexes them into `~/.clens/index.db` (SQLite). While a session is open it keeps indexing new messages as they arrive. The agent reads the index through five MCP tools:
+
+| Tool | What it does |
+|---|---|
+| `clens_search` | Finds past messages by word |
+| `clens_session` | Reads one session's conversation around a point |
+| `clens_left_off` | Shows a project's or a file's latest sessions and where they stopped |
+| `clens_recent` | Lists the messages in a time window, in order |
+| `clens_stats` | Counts tools, files, hook blocks and context use |
+
+After a compaction, a hook (`hooks/compact.mjs`) puts that session's work record back into the conversation. clens goes online only to install its npm dependencies on first run and to download a language analyzer.
 
 ## Limits
 
