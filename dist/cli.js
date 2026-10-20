@@ -42,7 +42,7 @@ function usage() {
         `\n` +
         `usage:\n` +
         `  clens index [--rebuild] [--lock-timeout <ms>]\n` +
-        `  clens install <lang>   (currently: ko)\n` +
+        `  clens install <lang>   (ko, ja, zh)\n` +
         `  clens stats [--digest]\n` +
         `  clens mcp\n`);
 }

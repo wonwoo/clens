@@ -8,38 +8,81 @@
  * anywhere in production) went unnoticed. This file closes that gap for
  * the actual init.ts entrypoint every production process calls.
  *
- * Only ja/zh are asserted as successfully registered: both lindera-wasm
- * packages are regular dependencies with embedded dictionaries, so they
- * succeed on any machine where `npm install` succeeded. Korean depends on
- * a model directory manually downloaded to ~/.clens/models/ko/ on this
- * developer's machine (see lang/init.ts's tryLoadKorean) that does not
- * exist on a fresh checkout/CI — so ko's outcome is intentionally not
- * asserted either way here (see lang_ko_real.spec.ts's skipIf for that gap).
+ * Japanese and Chinese load only from what `clens install ja|zh` put under
+ * the model dir, so each case points CLENS_INDEX_DIR at a temporary folder.
+ * The installed case needs the real packages, kept like Korean's model in a
+ * fixture folder that is not committed (test/fixtures/lindera/<code>, made
+ * with `npm install --prefix test/fixtures/lindera/<code> <name>@<version>`,
+ * the name and version in LINDERA_PACKAGES), and is skipped where it is
+ * missing. Korean's outcome is not asserted here (see
+ * lang_ko_real.spec.ts).
  */
-import { describe, expect, it } from "vitest";
-import { ensureLanguageAdaptersLoaded } from "../src/indexer/lang/init.js";
-import { getLanguageAdapter } from "../src/indexer/lang/registry.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { LINDERA_PACKAGES } from "../src/indexer/lang/init.js";
+
+const FIXTURE = join(process.cwd(), "test/fixtures/lindera");
+const installed = (code: "ja" | "zh") =>
+  existsSync(join(FIXTURE, code, "node_modules", LINDERA_PACKAGES[code].name, "package.json"));
+const hasFixture = installed("ja") && installed("zh");
+
+const savedIndexDir = process.env.CLENS_INDEX_DIR;
+const dirs: string[] = [];
+
+/** A fresh init.ts and registry (init.ts loads once per module instance),
+ *  run against an index dir whose models/ holds the given installs. */
+async function loadWith(installed: ("ja" | "zh")[], indexDir: (dir: string) => string = (dir) => dir) {
+  const dir = mkdtempSync(join(tmpdir(), "clens-lang-init-"));
+  dirs.push(dir);
+  mkdirSync(join(dir, "models"));
+  for (const code of installed) symlinkSync(join(FIXTURE, code), join(dir, "models", code));
+  process.env.CLENS_INDEX_DIR = indexDir(dir);
+  vi.resetModules();
+  const init = await import("../src/indexer/lang/init.js");
+  const registry = await import("../src/indexer/lang/registry.js");
+  await init.ensureLanguageAdaptersLoaded();
+  return { init, registry };
+}
+
+afterEach(() => {
+  if (savedIndexDir === undefined) delete process.env.CLENS_INDEX_DIR;
+  else process.env.CLENS_INDEX_DIR = savedIndexDir;
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("indexer/lang/init.ts — ensureLanguageAdaptersLoaded()", () => {
-  it("registers working ja and zh adapters through the real production entrypoint", async () => {
-    await ensureLanguageAdaptersLoaded();
+  it("registers no ja or zh adapter when neither is installed", async () => {
+    const { registry } = await loadWith([]);
+    expect(registry.getLanguageAdapter("ja")).toBeUndefined();
+    expect(registry.getLanguageAdapter("zh")).toBeUndefined();
+  });
 
-    const ja = getLanguageAdapter("ja");
-    const zh = getLanguageAdapter("zh");
-    expect(ja).toBeDefined();
-    expect(zh).toBeDefined();
-
+  it.skipIf(!hasFixture)("registers working ja and zh adapters from what is installed", async () => {
+    const { registry } = await loadWith(["ja", "zh"]);
     // Not just "truthy" — prove the registered adapter actually tokenizes,
     // the same failure mode (dead registration, adapter never really wired)
     // that sank the prior Korean attempt.
-    expect(ja!.tokenize("東京都に行く")).toEqual(["東京", "都", "行く"]);
-    expect(zh!.tokenize("我今天去了北京")).toEqual(["我", "今天", "去", "了", "北京"]);
+    expect(registry.getLanguageAdapter("ja")!.tokenize("東京都に行く")).toEqual(["東京", "都", "行く"]);
+    expect(registry.getLanguageAdapter("zh")!.tokenize("我今天去了北京")).toEqual(["我", "今天", "去", "了", "北京"]);
   });
 
-  it("is idempotent — a second call does not throw or replace the registered adapters", async () => {
-    await ensureLanguageAdaptersLoaded();
-    const jaBefore = getLanguageAdapter("ja");
-    await ensureLanguageAdaptersLoaded();
-    expect(getLanguageAdapter("ja")).toBe(jaBefore);
+  it.skipIf(!hasFixture)("registers only the language that is installed", async () => {
+    const { registry } = await loadWith(["ja"]);
+    expect(registry.getLanguageAdapter("ja")).toBeDefined();
+    expect(registry.getLanguageAdapter("zh")).toBeUndefined();
+  });
+
+  it.skipIf(!hasFixture)("loads an install under a relative CLENS_INDEX_DIR", async () => {
+    const { registry } = await loadWith(["ja"], (dir) => relative(process.cwd(), dir));
+    expect(registry.getLanguageAdapter("ja")).toBeDefined();
+  });
+
+  it.skipIf(!hasFixture)("is idempotent — a second call does not throw or replace the registered adapters", async () => {
+    const { init, registry } = await loadWith(["ja"]);
+    const jaBefore = registry.getLanguageAdapter("ja");
+    await init.ensureLanguageAdaptersLoaded();
+    expect(registry.getLanguageAdapter("ja")).toBe(jaBefore);
   });
 });

@@ -9,12 +9,21 @@
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { languageModelDir } from "../../util/paths.js";
 import { getLanguageAdapter, registerLanguage } from "./registry.js";
 import { createKoreanAdapter } from "./ko.js";
 import { createJapaneseAdapter } from "./ja.js";
 import { createChineseAdapter } from "./zh.js";
+/** Japanese's and Chinese's analyzers: npm packages with the dictionary
+ *  built into their WASM. `clens install ja|zh` installs each under the
+ *  language's model dir, and only that copy is loaded: Claude Code installs
+ *  a plugin's dev dependencies too, so one in the plugin's node_modules says
+ *  nothing about whether the user asked for the language. */
+export const LINDERA_PACKAGES = {
+    ja: { name: "lindera-wasm-nodejs-ipadic", version: "2.0.0", dictionary: "embedded://ipadic" },
+    zh: { name: "lindera-wasm-nodejs-cc-cedict", version: "2.0.0", dictionary: "embedded://cc-cedict" },
+};
 let attempted = false;
 function logLoadFailure(code, e) {
     // Gated behind CLENS_DEV so it stays
@@ -70,35 +79,41 @@ async function tryLoadKorean() {
         logLoadFailure("ko", e);
     }
 }
-/** Unlike Korean, ipadic's dictionary is embedded directly in the WASM
- *  binary (lindera-wasm-nodejs-ipadic ships a ~13MB .wasm with the
- *  dictionary baked in — verified directly, not assumed) — there is no
- *  separate model directory to check for, so the only "not installed" case
- *  is the optional package itself being absent, caught below. */
+/** The tokenizer of the Lindera package installed for `code`, or undefined
+ *  when `clens install <code>` has not run. Unlike Korean's, the dictionary
+ *  is embedded in the WASM binary (ipadic's .wasm is ~13MB), so the package
+ *  is the whole install. */
+function installedLinderaTokenizer(code) {
+    const { name, dictionary } = LINDERA_PACKAGES[code];
+    const dir = languageModelDir(code);
+    if (!existsSync(join(dir, "node_modules", name, "package.json")))
+        return undefined;
+    // createRequire takes only an absolute path; CLENS_INDEX_DIR may be relative.
+    const { TokenizerBuilder } = createRequire(resolve(dir, "package.json"))(name);
+    const builder = new TokenizerBuilder();
+    builder.setDictionary(dictionary);
+    builder.setMode("normal");
+    return builder.build();
+}
 async function tryLoadJapanese() {
     if (getLanguageAdapter("ja"))
         return;
     try {
-        const { TokenizerBuilder } = await import("lindera-wasm-nodejs-ipadic");
-        const builder = new TokenizerBuilder();
-        builder.setDictionary("embedded://ipadic");
-        builder.setMode("normal");
-        registerLanguage(createJapaneseAdapter(builder.build()));
+        const tokenizer = installedLinderaTokenizer("ja");
+        if (tokenizer)
+            registerLanguage(createJapaneseAdapter(tokenizer));
     }
     catch (e) {
         logLoadFailure("ja", e);
     }
 }
-/** Same embedded-dictionary shape as Japanese — see tryLoadJapanese(). */
 async function tryLoadChinese() {
     if (getLanguageAdapter("zh"))
         return;
     try {
-        const { TokenizerBuilder } = await import("lindera-wasm-nodejs-cc-cedict");
-        const builder = new TokenizerBuilder();
-        builder.setDictionary("embedded://cc-cedict");
-        builder.setMode("normal");
-        registerLanguage(createChineseAdapter(builder.build()));
+        const tokenizer = installedLinderaTokenizer("zh");
+        if (tokenizer)
+            registerLanguage(createChineseAdapter(tokenizer));
     }
     catch (e) {
         logLoadFailure("zh", e);

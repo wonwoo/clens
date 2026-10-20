@@ -53,9 +53,9 @@ Then open Codex, type `/hooks` and trust clens's hook. Until then the compaction
 
 The first session indexes your history in the background. A long history takes a few minutes; until then, answers cover what is indexed so far.
 
-### Korean search
+### Korean, Japanese and Chinese search
 
-Download the Korean model once, then start a new session. In Claude Code, ask the agent to run `clens install ko`. In Codex, run this yourself. Japanese and Chinese need no extra step.
+For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, run this yourself. Then close every open Claude Code and Codex session and start again: a session that was already running keeps indexing without the new analyzer. Without it, those messages are still found by their characters. English needs nothing.
 
 ```sh
 node ~/.codex/plugins/cache/clens/clens/<version>/plugin/start.mjs install ko
@@ -110,7 +110,7 @@ The CLI:
 
 ```
 clens index [--rebuild]     build or update the index
-clens install ko            download the Korean morpheme model
+clens install ko|ja|zh      install the Korean, Japanese or Chinese analyzer
 clens stats [--digest]      print the index's row counts, or a SHA-256 digest of each table
 clens mcp                   run the MCP server
 ```

@@ -5,6 +5,7 @@ node_modules/
 .idea/
 test/fixtures/synth-corpus/
 test/fixtures/kiwi-model/
+test/fixtures/lindera/
 coverage/
 .claude/
 .playwright-mcp/

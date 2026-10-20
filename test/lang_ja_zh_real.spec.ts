@@ -1,11 +1,13 @@
 /**
  * Real lindera-wasm analyzer tests — proves the adapters work against the
  * actual WASM tokenizer, not just a hand-written fake (same rationale as
- * lang_ko_real.spec.ts). Unlike Korean's kiwi-nlp, both dictionaries are
- * embedded directly in the WASM binary (verified: the ipadic .wasm is
- * ~13MB, cc-cedict's ~9.6MB, with no separate model directory to read), so
- * these tests need no fixture and no skipIf guard — they run wherever the
- * npm packages are installed.
+ * lang_ko_real.spec.ts). Both dictionaries are embedded directly in the WASM
+ * binary (verified: the ipadic .wasm is ~13MB, cc-cedict's ~9.6MB), and the
+ * packages are not dependencies: `clens install ja|zh` installs them. Like
+ * Korean's model, they are read from a fixture folder that is not committed
+ * (test/fixtures/lindera/<code>, made with `npm install --prefix
+ * test/fixtures/lindera/<code> <name>@<version>`, the name and version in
+ * LINDERA_PACKAGES), and these tests are skipped where it is missing.
  *
  * No real Japanese/Chinese usage data exists in this project's actual
  * corpus (unlike Korean, which was validated against 51,958 real messages).
@@ -14,24 +16,34 @@
  * of a single repeated character — closer to the shape of the real
  * oversized-paste-blob production failure than a synthetic string would be.
  */
-import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import { describe as describeAll, expect, it } from "vitest";
+import { LINDERA_PACKAGES } from "../src/indexer/lang/init.js";
 import { createJapaneseAdapter } from "../src/indexer/lang/ja.js";
 import { createChineseAdapter } from "../src/indexer/lang/zh.js";
 
-async function buildJapaneseTokenizer() {
-  const { TokenizerBuilder } = await import("lindera-wasm-nodejs-ipadic");
+const FIXTURE = join(process.cwd(), "test/fixtures/lindera");
+const installed = (code: "ja" | "zh") =>
+  existsSync(join(FIXTURE, code, "node_modules", LINDERA_PACKAGES[code].name, "package.json"));
+const describe = describeAll.skipIf(!installed("ja") || !installed("zh"));
+
+function buildTokenizer(code: "ja" | "zh") {
+  const { name, dictionary } = LINDERA_PACKAGES[code];
+  const { TokenizerBuilder } = createRequire(join(FIXTURE, code, "package.json"))(name);
   const builder = new TokenizerBuilder();
-  builder.setDictionary("embedded://ipadic");
+  builder.setDictionary(dictionary);
   builder.setMode("normal");
   return builder.build();
 }
 
+async function buildJapaneseTokenizer() {
+  return buildTokenizer("ja");
+}
+
 async function buildChineseTokenizer() {
-  const { TokenizerBuilder } = await import("lindera-wasm-nodejs-cc-cedict");
-  const builder = new TokenizerBuilder();
-  builder.setDictionary("embedded://cc-cedict");
-  builder.setMode("normal");
-  return builder.build();
+  return buildTokenizer("zh");
 }
 
 describe("indexer/lang/ja.ts — real lindera-wasm (ipadic) analyzer", () => {

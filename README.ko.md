@@ -55,9 +55,9 @@ codex plugin add clens@clens
 
 처음 세션을 열면 지난 기록을 백그라운드에서 색인합니다. 기록이 많으면 몇 분 걸리고, 그동안은 색인된 만큼만 찾을 수 있습니다.
 
-### 한국어 검색
+### 한국어·일본어·중국어 검색
 
-한국어 모델을 한 번 받아야 합니다. Claude Code에서는 에이전트에게 `clens install ko`를 실행해 달라고 하면 되고, Codex에서는 아래 명령을 직접 실행하세요. 받은 뒤 새 세션을 열면 적용됩니다. 일본어와 중국어는 따로 받을 게 없습니다.
+한국어, 일본어, 중국어를 단어 단위로 찾으려면 그 언어의 분석기를 한 번 받아야 합니다(`ko`, `ja`, `zh`). Claude Code에서는 에이전트에게 `clens install ko`를 실행해 달라고 하면 되고, Codex에서는 아래 명령을 직접 실행하세요. 받은 뒤에는 열려 있는 Claude Code와 Codex 세션을 모두 닫고 다시 여세요. 이미 열려 있던 세션은 새 분석기 없이 계속 색인합니다. 받지 않아도 글자로는 찾을 수 있고, 영어는 받을 게 없습니다.
 
 ```sh
 node ~/.codex/plugins/cache/clens/clens/<버전>/plugin/start.mjs install ko
@@ -112,7 +112,7 @@ CLI 명령은 이렇습니다.
 
 ```
 clens index [--rebuild]     색인을 만들거나 새로 고칩니다
-clens install ko            한국어 형태소 모델을 내려받습니다
+clens install ko|ja|zh      한국어, 일본어, 중국어 분석기를 받습니다
 clens stats [--digest]      색인의 행 수나 테이블마다 SHA-256 digest를 출력합니다
 clens mcp                   MCP 서버를 띄웁니다
 ```
