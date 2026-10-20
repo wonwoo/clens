@@ -118,6 +118,23 @@ export function utf8SafeTruncate(s: string, cap: number): { out: string; truncat
 
 const TRUNCATE_MARKER = "\n…[truncated]…\n";
 
+const ERROR_HEAD_CHARS = 100;
+const ERROR_TAIL_CHARS = 200;
+
+/** What a failed call's output keeps: its first ERROR_HEAD_CHARS and last
+ *  ERROR_TAIL_CHARS codepoints. The end gets more because most commands print
+ *  the error last, after the output that led to it. NULL for no text. */
+export function errorExcerpt(text: string): string | null {
+  const t = text.trim();
+  if (t === "") return null;
+  if (codepointLength(t) <= ERROR_HEAD_CHARS + ERROR_TAIL_CHARS) return t;
+  // A codepoint is at most two UTF-16 units, so these windows hold enough
+  // whole codepoints; a surrogate half cut at a window's edge falls outside.
+  const head = [...t.slice(0, ERROR_HEAD_CHARS * 2)].slice(0, ERROR_HEAD_CHARS).join("");
+  const tail = [...t.slice(-ERROR_TAIL_CHARS * 2)].slice(-ERROR_TAIL_CHARS).join("");
+  return head + TRUNCATE_MARKER + tail;
+}
+
 /** Like utf8SafeTruncate, but keeps a head half and a tail half instead of
  *  just the head — assistant messages tend to carry setup/context up front
  *  and the actual conclusion at the end, so a head-only cut loses the part
@@ -408,7 +425,12 @@ function walkContent(args: {
       const is_error: 0 | 1 = b.is_error === true ? 1 : 0;
       if (tool_use_id !== null) {
         const text = toolResultText(b.content);
-        toolResults.set(tool_use_id, { ts, is_error, result_chars: codepointLength(text) });
+        toolResults.set(tool_use_id, {
+          ts,
+          is_error,
+          result_chars: codepointLength(text),
+          error_excerpt: is_error === 1 ? errorExcerpt(text) : null,
+        });
         // Only an error result that opens with the prefix is a block: the
         // same words later in a result (grep output, a quoted log) are not.
         const m = is_error === 1 ? HOOK_ERROR_PREFIX_RE.exec(text) : null;

@@ -143,8 +143,14 @@ export interface ParsedEvent {
 }
 
 /** What a tool result tells its tool call: when it came, whether it was an
- *  error, and how much text it held (NULL where the source does not measure). */
-export type ToolResultInfo = { ts: string; is_error: 0 | 1; result_chars: number | null };
+ *  error, how much text it held (NULL where the source does not measure), and
+ *  for an error the start and end of that text (errorExcerpt). */
+export type ToolResultInfo = {
+  ts: string;
+  is_error: 0 | 1;
+  result_chars: number | null;
+  error_excerpt: string | null;
+};
 
 export interface FileParseResult {
   /** Parsed events in file order. */
@@ -174,7 +180,7 @@ export interface FileParseResult {
   /** Byte offset of the last byte consumed (== end of last `\n`-terminated
    *  line). Stored as file_cursor.last_ok. */
   last_ok_byte_offset: number;
-  /** Tool-result link map: tool_use_id → { ts, is_error, result_chars }. The
+  /** Tool-result link map: tool_use_id → { ts, is_error, result_chars, error_excerpt }. The
    *  driver uses this to fill tool_call.duration_ms by joining on call_id. */
   tool_results: Map<string, ToolResultInfo>;
 }

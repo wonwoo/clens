@@ -196,6 +196,8 @@ describe("clens_left_off session record", () => {
     call("g1", "mid", "2026-09-02T10:04:50Z", "Bash", '{"command":"git add -A && git commit -m \\"fix login\\""}');
     call("g2", "mid", "2026-09-02T10:04:51Z", "Bash", '{"command":"git status"}');
     call("f1", "mid", "2026-09-02T10:04:52Z", "Bash", '{"command":"npm test\\nnpm run lint"}', 1);
+    db.prepare("UPDATE tool_call SET error_excerpt = ? WHERE event_uuid = 'f1'")
+      .run("Exit code 1\n\nFAIL test/login.spec.ts\n…[truncated]…\nTests  1 failed");
     block("b1", "mid", "2026-09-02T10:04:53Z", "Stop", null, null, "req-harness: you cannot finish yet.\nmore detail");
   }
 
@@ -209,10 +211,21 @@ describe("clens_left_off session record", () => {
     expect(r.requests).toEqual([{ ts: "2026-09-02T10:00:00Z", text: "fix the login bug" }]);
     expect(r.edits.map((e) => e.path)).toEqual(["/w/app/src/cache.ts", "/w/app/src/login.ts"]);
     expect(r.git).toEqual([{ ts: "2026-09-02T10:04:50Z", command: 'git add -A && git commit -m "fix login"' }]);
-    expect(r.failures).toEqual([{ ts: "2026-09-02T10:04:52Z", tool: "Bash", input: "npm test" }]);
+    expect(r.failures).toEqual([{
+      ts: "2026-09-02T10:04:52Z",
+      tool: "Bash",
+      input: "npm test",
+      error: "Exit code 1 ⏎ FAIL test/login.spec.ts ⏎ …[truncated]… ⏎ Tests  1 failed",
+    }]);
     expect(r.hook_blocks).toEqual([
       { ts: "2026-09-02T10:04:53Z", hook_event: "Stop", tool: null, reason: "req-harness: you cannot finish yet." },
     ]);
+  });
+
+  it("lists failed calls without their output on an index that predates error_excerpt", () => {
+    seedMid();
+    db.exec("ALTER TABLE tool_call DROP COLUMN error_excerpt");
+    expect(sessionRecord(db, "mid")!.failures).toEqual([{ ts: "2026-09-02T10:04:52Z", tool: "Bash", input: "npm test", error: null }]);
   });
 
   it("lists a hook-blocked call under hook blocks only", () => {
@@ -662,6 +675,7 @@ describe("clens_left_off session record", () => {
       '  2026-09-02T10:04:50Z  git add -A && git commit -m "fix login"',
       "Failed tool calls (last 1 of 1):",
       "  2026-09-02T10:04:52Z  Bash: npm test",
+      "    Exit code 1 ⏎ FAIL test/login.spec.ts ⏎ …[truncated]… ⏎ Tests  1 failed",
       "Hook blocks (last 1 of 1):",
       "  2026-09-02T10:04:53Z  Stop: req-harness: you cannot finish yet.",
     ]);

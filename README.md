@@ -82,7 +82,7 @@ In Codex, call a skill as `$clens:recap`.
 ## Limits
 
 - Search matches words, not meaning. A question worded differently from the conversation can miss it; the agent then retries with other words.
-- Tool output (command results, file contents) is not stored, only the messages and the tool calls.
+- Tool output (command results, file contents) is not stored, only the messages and the tool calls. A failed call keeps the first 100 and last 200 characters of its output, which a session's record shows; they are not searched.
 - Files a script changes, or whose path is set only when a command runs (`$VAR`, a glob), can be missing from a session's edited files. The same goes for git commands run from inside a script.
 - In Codex, the compaction recovery runs only after you trust the hook, and not after a subagent's compaction.
 

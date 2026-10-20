@@ -41,10 +41,9 @@ would be there:
 - A failed command: `clens_left_off` with the `project_id` and `limit: 10`
   lists the latest sessions. For those whose work touches the command, call
   `clens_left_off` with their `session_id` and read their failed tool calls:
-  the first 100 characters of each command, the last 10 per session. Error
-  messages are not stored, so a failure shows as its command only; the
-  user's reaction to it is often in the messages, which `clens_search`
-  finds.
+  the first 100 characters of each command and, under it, the start and end
+  of its output, the last 10 per session. The user's reaction to a failure
+  is often in the messages, which `clens_search` finds.
 - When a snippet does not show that a hit is the same rule, read it with
   `clens_session` (its `session_id`, `around_ts` set to its ts, `limit: 6`).
 

@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import {
   assignTurnNumbers,
   codepointLength,
+  errorExcerpt,
   parseFileBody,
   utf8SafeTruncate,
 } from "../src/indexer/claude_parser.js";
@@ -42,6 +43,16 @@ describe("parser utilities", () => {
     expect(Buffer.from(r2.out, "utf8").byteLength).toBeLessThanOrEqual(4);
     // Must be a prefix
     expect(s.startsWith(r2.out)).toBe(true);
+  });
+
+  it("errorExcerpt keeps a short output whole and the first 100 and last 200 codepoints of a long one", () => {
+    expect(errorExcerpt("  \n")).toBeNull();
+    expect(errorExcerpt("Exit code 1\nboom\n")).toBe("Exit code 1\nboom");
+    const short = "가".repeat(300);
+    expect(errorExcerpt(short)).toBe(short);
+    // Emoji are two UTF-16 units each: the cut must count codepoints, not units.
+    const long = "H".repeat(99) + "👋" + "m".repeat(500) + "🌍" + "T".repeat(199);
+    expect(errorExcerpt(long)).toBe("H".repeat(99) + "👋" + "\n…[truncated]…\n" + "🌍" + "T".repeat(199));
   });
 });
 
@@ -524,6 +535,12 @@ describe("hook blocks and result size", () => {
     expect(result.tool_results.get("toolu_4")?.result_chars).toBe(54);
     expect(result.tool_results.get("toolu_5")?.result_chars).toBe(42);
     expect(result.tool_results.has("toolu_6")).toBe(false);
+  });
+
+  it("keeps an error result's text as its excerpt, and none for a result that is not an error", () => {
+    expect(result.tool_results.get("toolu_5")?.error_excerpt).toBe("exit 1: PreToolUse:Bash hook error: quoted");
+    expect(result.tool_results.get("toolu_1")?.error_excerpt).toBeNull();
+    expect(result.tool_results.get("toolu_4")?.error_excerpt).toBeNull();
   });
 
   it("records one PreToolUse block from the error result and one Stop block from the attachment", () => {

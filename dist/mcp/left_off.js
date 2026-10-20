@@ -498,13 +498,29 @@ export function sessionRecord(db, sessionId) {
         // past the stored input's 64 KB cut is not seen.
         .flatMap(({ ts, name, input_json }) => shellCommands(name, input_json).flatMap(stateChangingGitLines).reverse().map((line) => ({ ts, command: line })));
     // A call a hook blocked is listed under hook blocks, with its reason.
-    const failures = db.prepare(`
+    const failedCalls = (excerpt) => db.prepare(`
     ${TREE}
-    SELECT t.ts, t.name, t.input_json FROM tool_call t
+    SELECT t.ts, t.name, t.input_json, ${excerpt} AS error_excerpt FROM tool_call t
     WHERE t.session_id IN tree AND t.is_error = 1
       AND NOT EXISTS (SELECT 1 FROM hook_block h WHERE h.call_id = t.call_id)
-    ORDER BY t.ts DESC`).all(sessionId)
-        .map((r) => ({ ts: r.ts, tool: r.name, input: firstLine(commandOf(r.input_json) ?? r.input_json ?? "") }));
+    ORDER BY t.ts DESC`).all(sessionId);
+    let failedRows;
+    try {
+        failedRows = failedCalls("t.error_excerpt");
+    }
+    catch (e) {
+        // applySchema() runs only from the indexer, so an index this build has
+        // not indexed yet has no error_excerpt column.
+        if (!/no such column: (t\.)?error_excerpt/.test(e.message))
+            throw e;
+        failedRows = failedCalls("NULL");
+    }
+    const failures = failedRows.map((r) => ({
+        ts: r.ts,
+        tool: r.name,
+        input: firstLine(commandOf(r.input_json) ?? r.input_json ?? ""),
+        error: r.error_excerpt === null ? null : joinedLines(r.error_excerpt),
+    }));
     const hookBlocks = db.prepare(`
     ${TREE}
     SELECT ts, hook_event, tool, reason FROM hook_block
@@ -623,7 +639,7 @@ export function formatSessionRecord(r) {
         lines.push(`  Temporary: ${count} files (${r.temp_edits.map((t) => `${t.root} ${t.count}`).join(", ")})`);
     }
     section("Git", `Git (last ${r.git.length} of ${r.git_total}):`, r.git_total, r.git, (g) => `${g.ts}  ${shownGitLine(g.command)}`);
-    section("Failed tool calls", `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`, r.failures_total, r.failures, (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}`);
+    section("Failed tool calls", `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`, r.failures_total, r.failures, (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `\n    ${f.error}`}`);
     section("Hook blocks", `Hook blocks (last ${r.hook_blocks.length} of ${r.hook_blocks_total}):`, r.hook_blocks_total, r.hook_blocks, (b) => `${b.ts}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`);
     // Last, because hooks/compact.mjs leaves out segments and then cuts the
     // record from its end to fit, and the sections above are what a compaction

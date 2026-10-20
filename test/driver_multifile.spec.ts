@@ -383,6 +383,8 @@ describe("indexer — a Codex subagent rollout next to its parent", () => {
 
       const db = new Database(join(env.clens, "index.db"), { readonly: true });
       const calls = db.prepare("SELECT name, is_error, result_chars FROM tool_call WHERE session_id = 'sh' ORDER BY ts").all();
+      const excerpts = db.prepare("SELECT call_id, error_excerpt FROM tool_call WHERE session_id = 'sh' AND is_error = 1 ORDER BY ts").all();
+      const okExcerpts = db.prepare("SELECT count(*) AS n FROM tool_call WHERE session_id = 'sh' AND is_error = 0 AND error_excerpt IS NOT NULL").get();
       const ops = db.prepare("SELECT tool, path FROM file_op WHERE session_id = 'sh'").all();
       const blocks = db.prepare("SELECT hook_event, tool, call_id, reason FROM hook_block WHERE session_id = 'sh' ORDER BY ts").all();
       db.close();
@@ -395,6 +397,15 @@ describe("indexer — a Codex subagent rollout next to its parent", () => {
         { name: "write_stdin", is_error: 0, result_chars: 60 },
         { name: "exec", is_error: 0, result_chars: 25 },
       ]);
+      // A command that exited after its call returned keeps the output that
+      // reported the exit, which came through write_stdin.
+      expect(excerpts).toEqual([
+        { call_id: "c2", error_excerpt: "Chunk ID: b\nWall time: 0\nProcess exited with code 1\nOutput:" },
+        { call_id: "c3", error_excerpt: "Command blocked by PreToolUse hook: pushes need review. Command: git push" },
+        { call_id: "x1", error_excerpt: "Script completed\nOutput:" },
+        { call_id: "c4", error_excerpt: "Chunk ID: d\nWall time: 5\nProcess exited with code 1\nOutput:" },
+      ]);
+      expect(okExcerpts).toEqual({ n: 0 });
       expect(ops).toEqual([
         { tool: "exec_command", path: "/w/app/a.txt" },
         { tool: "exec_command", path: "/w/app/b.txt" },

@@ -59,7 +59,11 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // v12: an MCP call Codex exec code made (a McpToolCall item with an "exec-"
 // id) is a tool call of its own, mcp__<server>__<tool>; only the exec call
 // was recorded before.
-export const SCHEMA_VERSION = 12;
+// v13: tool_call.error_excerpt, the start and end of a failed call's output
+// (errorExcerpt in claude_parser.ts), added in place like result_chars in v5;
+// the version-mismatch rebuild re-reads every transcript still on disk to
+// fill it.
+export const SCHEMA_VERSION = 13;
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population
  *  requires the JS-side language adapter (see lang/registry.ts) — writer.ts
@@ -169,6 +173,7 @@ const SCHEMA_STATEMENTS = [
      duration_ms INTEGER,
      is_error    INTEGER DEFAULT 0,
      result_chars INTEGER,
+     error_excerpt TEXT,
      FOREIGN KEY (event_uuid) REFERENCES event(uuid)
    )`,
     `CREATE INDEX IF NOT EXISTS tool_session_idx ON tool_call(session_id)`,
@@ -343,6 +348,10 @@ export function applySchema(db) {
         const toolCallColumns = db.prepare("PRAGMA table_info(tool_call)").all();
         if (!toolCallColumns.some((c) => c.name === "result_chars")) {
             db.exec("ALTER TABLE tool_call ADD COLUMN result_chars INTEGER");
+        }
+        // v13 upgrade, the same way: error_excerpt follows result_chars.
+        if (!toolCallColumns.some((c) => c.name === "error_excerpt")) {
+            db.exec("ALTER TABLE tool_call ADD COLUMN error_excerpt TEXT");
         }
         const row = db.prepare("SELECT v FROM schema_version LIMIT 1").get();
         if (!row) {

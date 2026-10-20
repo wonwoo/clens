@@ -22,7 +22,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { codepointLength, HOOK_REASON_BYTE_CAP, SHELL_TOOL_INPUT_BYTE_CAP, utf8SafeHeadTailTruncate, utf8SafeTruncate, } from "./claude_parser.js";
+import { codepointLength, errorExcerpt, HOOK_REASON_BYTE_CAP, SHELL_TOOL_INPUT_BYTE_CAP, utf8SafeHeadTailTruncate, utf8SafeTruncate, } from "./claude_parser.js";
 import { shellWrittenFiles } from "./shell_writes.js";
 import { execCodeScan } from "../util/codex_exec.js";
 const TOOL_INPUT_BYTE_CAP = 2048;
@@ -654,12 +654,18 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
                 if (target !== undefined && exit !== null && origin !== undefined) {
                     state.runningProcess.delete(target);
                     const started = toolResults.get(origin);
-                    if (exit !== 0 && started !== undefined)
-                        toolResults.set(origin, { ...started, is_error: 1 });
+                    if (exit !== 0 && started !== undefined) {
+                        toolResults.set(origin, { ...started, is_error: 1, error_excerpt: errorExcerpt(text) });
+                    }
                     is_error = ownFailure(text);
                 }
                 state.stdinTarget.delete(callId);
-                toolResults.set(callId, { ts: timestamp, is_error, result_chars: codepointLength(text) });
+                toolResults.set(callId, {
+                    ts: timestamp,
+                    is_error,
+                    result_chars: codepointLength(text),
+                    error_excerpt: is_error === 1 ? errorExcerpt(text) : null,
+                });
                 state.openToolCalls.delete(callId);
                 // Recorded on the call's own event: the driver reads a whole rollout
                 // on every change, so the call and its output are parsed together.
@@ -801,7 +807,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
         const callId = typeof payload.call_id === "string" ? payload.call_id : null;
         const isError = detectToolError(payload.result);
         if (callId !== null) {
-            toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null });
+            toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null, error_excerpt: null });
             state.openToolCalls.delete(callId);
         }
         return;
@@ -841,7 +847,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
         const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : 0;
         const isError = exitCode !== 0 ? 1 : 0;
         if (callId !== null) {
-            toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null });
+            toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null, error_excerpt: null });
             state.openToolCalls.delete(callId);
         }
         return;

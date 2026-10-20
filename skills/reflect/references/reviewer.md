@@ -9,7 +9,8 @@ Your inputs:
 - the lens to apply: `judgment`, `tooling` or `divergent` (below)
 - the session's id
 - the session's clens record: its requests, edited files, git commands,
-  failed tool calls (the first line of each command), hook blocks and, for a
+  failed tool calls (the first line of each command, and under it the start
+  and end of its output), hook blocks and, for a
   long session, its segments. Use it to find where to look. Its edits, git
   commands and failed calls include those of the subagents the session
   started, without saying which agent ran each. Before blaming the main
@@ -32,7 +33,9 @@ segments. `clens_search` with `session_id` set to the session finds the
 messages that hold given words, such as the user's corrections or a failed
 command's name. What clens keeps differs from the conversation in four ways:
 
-- It keeps no tool output: an error shows only where a message repeats it.
+- It keeps no tool output, except the first 100 and last 200 characters of
+  a failed call's output, under the call in the session's record. A call
+  that succeeded shows nothing of its output.
 - It keeps only the start and the end of a long assistant message; the cut
   shows as `…[truncated]…`. Treat a cut as text you have not read, never as
   proof that the agent did not say something.

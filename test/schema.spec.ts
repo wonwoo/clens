@@ -237,6 +237,7 @@ describe("schema.ts — v5 upgrade of an existing index", () => {
     applySchema(upgraded);
     expect(columns(upgraded)).toEqual(columns(fresh));
     expect(columns(upgraded)).toContain("result_chars INTEGER");
+    expect(columns(upgraded)).toContain("error_excerpt TEXT");
     applySchema(upgraded);
     expect(columns(upgraded)).toEqual(columns(fresh));
     fresh.close();

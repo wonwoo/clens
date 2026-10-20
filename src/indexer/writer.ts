@@ -150,7 +150,8 @@ export function prepareStatements(db: Database.Database): WriterStatements {
       `UPDATE tool_call
        SET duration_ms = CAST((julianday(@result_ts) - julianday(ts)) * 86400000 AS INTEGER),
            is_error = @is_error,
-           result_chars = @result_chars
+           result_chars = @result_chars,
+           error_excerpt = @error_excerpt
        WHERE call_id = @call_id AND duration_ms IS NULL`,
     ),
     // A file writes only the sessions it holds in full (writableEvents in
@@ -314,8 +315,8 @@ export function applyToolResults(
   stmts: WriterStatements,
   results: Map<string, ToolResultInfo>,
 ): void {
-  for (const [call_id, { ts, is_error, result_chars }] of results) {
-    stmts.updateToolCallResult.run({ call_id, result_ts: ts, is_error, result_chars });
+  for (const [call_id, { ts, is_error, result_chars, error_excerpt }] of results) {
+    stmts.updateToolCallResult.run({ call_id, result_ts: ts, is_error, result_chars, error_excerpt });
   }
 }
 

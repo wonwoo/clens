@@ -35,6 +35,7 @@ import type {
 } from "./types.js";
 import {
   codepointLength,
+  errorExcerpt,
   HOOK_REASON_BYTE_CAP,
   SHELL_TOOL_INPUT_BYTE_CAP,
   utf8SafeHeadTailTruncate,
@@ -738,11 +739,18 @@ function processLine(
         if (target !== undefined && exit !== null && origin !== undefined) {
           state.runningProcess.delete(target);
           const started = toolResults.get(origin);
-          if (exit !== 0 && started !== undefined) toolResults.set(origin, { ...started, is_error: 1 });
+          if (exit !== 0 && started !== undefined) {
+            toolResults.set(origin, { ...started, is_error: 1, error_excerpt: errorExcerpt(text) });
+          }
           is_error = ownFailure(text);
         }
         state.stdinTarget.delete(callId);
-        toolResults.set(callId, { ts: timestamp, is_error, result_chars: codepointLength(text) });
+        toolResults.set(callId, {
+          ts: timestamp,
+          is_error,
+          result_chars: codepointLength(text),
+          error_excerpt: is_error === 1 ? errorExcerpt(text) : null,
+        });
         state.openToolCalls.delete(callId);
         // Recorded on the call's own event: the driver reads a whole rollout
         // on every change, so the call and its output are parsed together.
@@ -882,7 +890,7 @@ function processLine(
     const callId = typeof payload.call_id === "string" ? payload.call_id : null;
     const isError = detectToolError(payload.result);
     if (callId !== null) {
-      toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null });
+      toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null, error_excerpt: null });
       state.openToolCalls.delete(callId);
     }
     return;
@@ -924,7 +932,7 @@ function processLine(
     const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : 0;
     const isError: 0 | 1 = exitCode !== 0 ? 1 : 0;
     if (callId !== null) {
-      toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null });
+      toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null, error_excerpt: null });
       state.openToolCalls.delete(callId);
     }
     return;

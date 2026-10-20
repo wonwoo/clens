@@ -63,6 +63,7 @@ describe("parseCodexFileBody", () => {
       ts: "2026-07-01T00:00:03Z",
       is_error: 0,
       result_chars: 2,
+      error_excerpt: null,
     });
   });
 
@@ -86,7 +87,7 @@ describe("parseCodexFileBody", () => {
 
     expect(result.events).toHaveLength(1);
     expect(result.events[0]!.tool_calls[0]).toMatchObject({ call_id: "call-p", name: "apply_patch", input_json: patch });
-    expect(result.tool_results.get("call-p")).toEqual({ ts: "2026-07-01T00:00:03Z", is_error: 0, result_chars: 21 });
+    expect(result.tool_results.get("call-p")).toEqual({ ts: "2026-07-01T00:00:03Z", is_error: 0, result_chars: 21, error_excerpt: null });
   });
 
   it("derives file_op rows from response_item arguments for file tools", () => {
@@ -170,6 +171,7 @@ describe("parseCodexFileBody", () => {
       ts: "2026-07-01T00:00:02Z",
       is_error: 1,
       result_chars: null,
+      error_excerpt: null,
     });
   });
 
