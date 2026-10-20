@@ -107,9 +107,11 @@ instruction file of another project or a skill file may not be there at all,
 and whether a rule already exists decides the row.
 
 - If the file already says it clearly and the problem came back after the
-  rule was there, propose making the rule fire: rewording it, moving it up,
-  making it specific. If the problem did not come back, reject the finding
-  as already covered.
+  rule was there, the prose did not stop it. Put it in Backlog when a hook,
+  a lint rule, a script or a setting could enforce it, and say where the
+  rule is written; otherwise propose making the rule fire: rewording it,
+  moving it up, making it specific. If the problem did not come back, reject
+  the finding as already covered.
 - A skill can already hold a rule meant for an instruction file. Look
   through the user's skills (`~/.claude/skills/`, `~/.codex/skills/`, the
   project's `.claude/skills/`) and the installed plugins' skills for one
@@ -199,7 +201,15 @@ The same columns.
 
 ### Backlog
 
-For each: the rule, what happened, and the mechanism that would enforce it.
+For each: the rule, what happened, the mechanism that would enforce it, and
+where the rule is already written, if it is. Under it, list each time it
+happened, in this session and earlier ones, for the user to test the
+mechanism against: the date, the first 8 characters of the session's id,
+and the command with its error, or the hook's reason, as the reviewers or
+`clens_left_off` gave them, not reworded. clens shows a command only when
+it failed or was a git command that changes state, and for a hook block the
+tool and the reason; for anything else, quote the user's words that caught
+it.
 
 ### Rejected
 
