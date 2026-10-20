@@ -133,7 +133,11 @@ Newest first, one block per session:
   characters of the session id, so the user can ask for more of it
 - what it worked on, in order, from the requests, the reply, the commits
   attached to it and what the searches in step 6 found
-- its commits, each with its short hash and branch
+- its commits, each with its short hash and branch. A revert goes with the
+  commit it undoes: its subject reads `Revert "<subject>"` and its message
+  `This reverts commit <hash>` (`git log -1 --format=%b <revert>`). Mark the
+  undone commit **reverted by <revert's hash>**: a branch that holds both
+  does not hold its change, whatever `git cherry` says.
 - its state, in two parts:
   - the conversation: **in progress** (it stopped mid-task, or the reply
     says work continues), **waiting on the user** (the reply ends with a
