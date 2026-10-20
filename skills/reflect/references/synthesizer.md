@@ -22,7 +22,10 @@ The clens tools may be deferred; load `clens_search`, `clens_session`,
 
 Merge findings that state the same rule, and note which reviewers raised
 each. A rule two or three reviewers raised is stronger than one only one
-raised.
+raised. Each row ends up a rule no other row already makes an agent follow:
+a finding that is one case of another finding's rule (verify before
+reporting, and reproduce a cause before fixing it) goes into that row as
+evidence.
 
 ## 2. Check recurrence with clens
 
@@ -62,11 +65,11 @@ Count with care:
 - The same words in another context (a quote, a review, a pasted document),
   or used where nothing went wrong, are not a repeat. Count only the
   sessions where the same problem or correction happened.
-- clens lists a subagent's report relayed into a session as a user message.
-  A hit that begins "Another Claude session sent a message:" or holds a
-  `<teammate-message>` block is not the user's words, and the incidents it
-  quotes belong to the session it reports on, not to the one it was relayed
-  into.
+- `clens_session` shows a subagent's report relayed into a session as a user
+  message (search leaves it out). A message that begins "Another Claude
+  session sent a message:" or `<teammate-message>` is not the user's words,
+  and the incidents it quotes belong to the session it reports on, not to
+  the one it was relayed into.
 - A hit where the user asked for the opposite (what the finding forbids, or
   turned down what it asks) counts against the finding. Quote it in the
   evidence.
@@ -107,6 +110,12 @@ and whether a rule already exists decides the row.
   rule was there, propose making the rule fire: rewording it, moving it up,
   making it specific. If the problem did not come back, reject the finding
   as already covered.
+- A skill can already hold a rule meant for an instruction file. Look
+  through the user's skills (`~/.claude/skills/`, `~/.codex/skills/`, the
+  project's `.claude/skills/`) and the installed plugins' skills for one
+  whose description covers the moment the rule is about. When one does,
+  the rule is covered: make the row a `trigger:` for that skill if it
+  should have run and did not, and reject it as already covered otherwise.
 - A finding about a skill stands only for a skill the session used, or as
   `trigger:` for one that should have run.
 - A `new skill:` finding stands only when the procedure recurs (it shows in
