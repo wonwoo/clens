@@ -179,7 +179,7 @@ export function formatResults(
       // point at clens_session for the full text — valid here because this row
       // IS shown, so its session_id + ts are visible to the caller.
       const marker = (omitted: number) =>
-        `\n…[truncated ${omitted} chars — full text via clens_session(session_id, ts)]`;
+        `\n…[truncated ${omitted} chars — full text via clens_session(session_id, around_ts: <ts>, full: true)]`;
       const reserve = Buffer.byteLength(marker(body.length), "utf8");
       const keptBody = truncateToBytes(body, MAX_ROW_BYTES - Buffer.byteLength(header, "utf8") - reserve);
       const omitted = [...body].length - [...keptBody].length;

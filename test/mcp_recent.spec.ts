@@ -239,6 +239,14 @@ describe("mcp/recent.ts — single oversized row is truncated, not dropped", () 
     expect(out).toContain(`session:s1`); // header (id) survives → still chainable
   });
 
+  // Regression: the marker said `clens_session(session_id, ts)`, a call the
+  // server rejects (its parameter is around_ts), and without `full` it cuts
+  // the middle of a message this long.
+  it("the marker names clens_session's own parameters, full included", () => {
+    const out = formatResults([row("2026-06-01T00:00:00Z", "X".repeat(MAX_ROW_BYTES + 100))]);
+    expect(out).toContain("clens_session(session_id, around_ts: <ts>, full: true)");
+  });
+
   it("the omitted-char count in the marker is accurate", () => {
     const huge = "Y".repeat(MAX_ROW_BYTES + 5000);
     const out = formatResults([row("2026-06-01T00:00:00Z", huge)]);

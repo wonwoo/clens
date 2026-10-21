@@ -269,6 +269,25 @@ describe("mcp/search.ts — NOT / OR / phrase FTS5 operators", () => {
     expect(results[0]!.snippet).toContain("말이 많네 색인 먼저 하라는거");
     expect(searchUserText(db, { query: '하라는거 NOT "많네 색인"' })).toEqual([]);
   });
+
+  // Regression: a negated word was compared in its cleaned form, so one with
+  // a ":" or brackets ("https //x", "foobar") never matched the message.
+  it("NOT excludes a word with punctuation, as written", () => {
+    db.exec(`
+      INSERT INTO event (uuid, session_id, ts, role) VALUES
+        ('e4', 's1', '2026-06-01T10:03:00Z', 'user'),
+        ('e5', 's1', '2026-06-01T10:04:00Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES
+        ('e4', 's1', '2026-06-01T10:03:00Z', '배포 문서는 https://example.com/deploy 에 있음'),
+        ('e5', 's1', '2026-06-01T10:04:00Z', '배포 전에 foo(bar) 호출 확인');
+    `);
+    const found = (query: string) => searchUserText(db, { query }).map((r) => r.snippet);
+    expect(found("배포 NOT https://example.com/deploy")).toEqual(["배포 전에 foo(bar) 호출 확인"]);
+    expect(found('배포 NOT "https://example.com/deploy"')).toEqual(["배포 전에 foo(bar) 호출 확인"]);
+    expect(found("배포 NOT foo(bar)")).toEqual(["배포 문서는 https://example.com/deploy 에 있음"]);
+    // A prefix still excludes what starts with it, as before.
+    expect(found("배포 NOT exampl*")).toEqual(["배포 전에 foo(bar) 호출 확인"]);
+  });
 });
 
 /**

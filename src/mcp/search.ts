@@ -172,11 +172,14 @@ interface QueryTerm {
 
 interface TokenizedQuery {
   groups: TermGroup[];
-  /** Raw (unquoted) text of NOT-negated terms, used as a post-filter over
-   *  merged results — see the note in searchGroups() for why this can't
-   *  be enforced inside a single layer's MATCH clause alone. */
-  negatedTerms: string[];
+  /** NOT-negated terms, sanitized and as typed, used as a post-filter over
+   *  merged results: a row holding either form is left out. See the note in
+   *  searchGroups() for why this can't be enforced inside a single layer's
+   *  MATCH clause alone. */
+  negatedTerms: NegatedTerm[];
 }
+
+type NegatedTerm = Pick<QueryTerm, "text" | "raw">;
 
 const BARE_WORD_UNSAFE = /["'(){}[\]*:^~]/g;
 const PHRASE_UNSAFE = /['(){}[\]:^~]/g;
@@ -191,7 +194,7 @@ const PHRASE_UNSAFE = /['(){}[\]:^~]/g;
  *  NOT marks the next term (phrase or bare word) as negated. */
 function tokenizeQuery(raw: string): TokenizedQuery {
   const groups: TermGroup[] = [{ terms: [] }];
-  const negatedTerms: string[] = [];
+  const negatedTerms: NegatedTerm[] = [];
   let pendingNot = false;
 
   const tokenRe = /"([^"]*)"|(\S+)/g;
@@ -200,7 +203,7 @@ function tokenizeQuery(raw: string): TokenizedQuery {
     if (m[1] !== undefined) {
       const cleaned = m[1].replace(PHRASE_UNSAFE, " ").replace(/\s+/g, " ").trim();
       if (!cleaned) { pendingNot = false; continue; }
-      if (pendingNot) negatedTerms.push(cleaned);
+      if (pendingNot) negatedTerms.push({ text: cleaned, raw: m[1].trim() });
       else groups[groups.length - 1]!.terms.push({ text: cleaned, raw: m[1].trim(), phrase: cleaned.includes(" ") });
       pendingNot = false;
       continue;
@@ -214,7 +217,7 @@ function tokenizeQuery(raw: string): TokenizedQuery {
     // into "eccplan-prd" and a URL's scheme onto its host, which no row holds.
     const cleaned = word.replace(/:/g, " ").replace(BARE_WORD_UNSAFE, "").replace(/\s+/g, " ").trim();
     if (!cleaned) { pendingNot = false; continue; }
-    if (pendingNot) negatedTerms.push(cleaned);
+    if (pendingNot) negatedTerms.push({ text: cleaned, raw: word });
     else groups[groups.length - 1]!.terms.push({ text: cleaned, raw: word, phrase: false });
     pendingNot = false;
   }
@@ -493,7 +496,7 @@ function searchGroups(
   db: Database.Database,
   params: SearchParams,
   groups: TermGroup[],
-  negatedTerms: string[],
+  negatedTerms: NegatedTerm[],
   currentTurn: CurrentTurn | undefined,
   adapters: LanguageAdapter[],
 ): { results: SearchResult[]; totalMatched: number } {
@@ -604,7 +607,10 @@ function searchGroups(
   // (NOT never had language-layer support before this feature); left as a
   // known gap rather than in scope for this change's acceptance criteria.
   if (negatedTerms.length > 0) {
-    sorted = sorted.filter((r) => !negatedTerms.some((neg) => flat(r.text).includes(flat(neg))));
+    sorted = sorted.filter((r) => {
+      const text = flat(r.text);
+      return !negatedTerms.some((neg) => text.includes(flat(neg.text)) || text.includes(flat(neg.raw)));
+    });
   }
   const ranked = sorted.slice(0, limit);
 

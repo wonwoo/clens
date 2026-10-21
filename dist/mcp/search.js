@@ -140,7 +140,7 @@ function tokenizeQuery(raw) {
                 continue;
             }
             if (pendingNot)
-                negatedTerms.push(cleaned);
+                negatedTerms.push({ text: cleaned, raw: m[1].trim() });
             else
                 groups[groups.length - 1].terms.push({ text: cleaned, raw: m[1].trim(), phrase: cleaned.includes(" ") });
             pendingNot = false;
@@ -172,7 +172,7 @@ function tokenizeQuery(raw) {
             continue;
         }
         if (pendingNot)
-            negatedTerms.push(cleaned);
+            negatedTerms.push({ text: cleaned, raw: word });
         else
             groups[groups.length - 1].terms.push({ text: cleaned, raw: word, phrase: false });
         pendingNot = false;
@@ -491,7 +491,10 @@ function searchGroups(db, params, groups, negatedTerms, currentTurn, adapters) {
     // (NOT never had language-layer support before this feature); left as a
     // known gap rather than in scope for this change's acceptance criteria.
     if (negatedTerms.length > 0) {
-        sorted = sorted.filter((r) => !negatedTerms.some((neg) => flat(r.text).includes(flat(neg))));
+        sorted = sorted.filter((r) => {
+            const text = flat(r.text);
+            return !negatedTerms.some((neg) => text.includes(flat(neg.text)) || text.includes(flat(neg.raw)));
+        });
     }
     const ranked = sorted.slice(0, limit);
     // Snippet probes: for each positive query term, its literal text plus — for
