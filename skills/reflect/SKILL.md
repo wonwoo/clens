@@ -89,7 +89,10 @@ has no session in it.
    change, and writes four lists to `<folder>/synthesis.md`: Accepted,
    Held, Backlog and Rejected.
 
-5. **Save the report, show it and wait.** Copy `<folder>/synthesis.md` to
+5. **Save the report, show it and wait.** In `<folder>/synthesis.md`, move
+   to Backlog any Accepted or Held row whose target is not an instruction
+   file or a skill, such as a hook script, a settings file or a memory note.
+   Then copy it to
    `<reports folder>/<local date and time as YYYY-MM-DD-HHMM>.md`. Before
    the rows, say in two lines that applying a row edits the file it names in
    this turn (a global instruction file reaches every project), and that
