@@ -10,7 +10,7 @@
  * For incremental updates the writer accepts a list of session_ids whose
  * derived rows must be wiped first (since one new line in a session can
  * change the second-pass turn numbering for every later event in that
- * session). The driver computes that set and calls `wipeSessionEvents`
+ * session). The driver computes that set and calls `wipeSessions`
  * before re-inserting all events for the affected sessions.
  */
 import { getLanguageAdapter, languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
@@ -197,9 +197,7 @@ function toSqlBindable(row) {
  *  Before flushing, any prior anomaly rows for this source_file are wiped
  *  so re-parsing the same file does not double-count. */
 export function flushAnomalyBatch(stmts, batch) {
-    if (batch.source_file !== null) {
-        stmts.wipeAnomaliesForFile.run(batch.source_file);
-    }
+    stmts.wipeAnomaliesForFile.run(batch.source_file);
     for (const [kind, { count, detail }] of batch.counters) {
         stmts.insertAnomaly.run({
             session_id: batch.session_id,
@@ -211,7 +209,8 @@ export function flushAnomalyBatch(stmts, batch) {
         });
     }
 }
-/** Cross-event tool_result → tool_call.duration_ms fill. */
+/** Cross-event tool_result → tool_call.duration_ms, is_error, result_chars
+ *  and error_excerpt fill. */
 export function applyToolResults(stmts, results) {
     for (const [call_id, { ts, is_error, result_chars, error_excerpt }] of results) {
         stmts.updateToolCallResult.run({ call_id, result_ts: ts, is_error, result_chars, error_excerpt });

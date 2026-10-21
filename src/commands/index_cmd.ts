@@ -1,7 +1,8 @@
 /**
  * `clens index [--rebuild] [--lock-timeout <ms>]`
  *
- * Builds or updates the local SQLite index. Verbose progress goes to stderr.
+ * Builds or updates the local SQLite index and prints one summary line to
+ * stderr.
  * On success exits 0; on advisory-lock timeout exits 4 per §8 exit codes.
  */
 

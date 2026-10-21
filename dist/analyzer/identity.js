@@ -1,18 +1,16 @@
 /**
- * Identity / scope-level basics for the canonical facts JSON.
+ * Identity / scope-level basics for clens_stats.
  *
- * In session scope: session id, project_id, kind, model_primary, version,
- *   started/ended_at, primary cwd, git_branch.
+ * In session scope: session id, project_id, model_primary, started/ended_at.
  * In project scope: project id, session count, model_primary mode, date range.
- * In global scope: per-corpus totals (sessions, projects, files).
+ * In global scope: session count and date range.
  */
-import { realProjectClause, workKindClause } from "./scope.js";
+import { workKindClause } from "./scope.js";
 export function analyzeIdentity(db, scope) {
     switch (scope.mode) {
         case "session": {
             const row = db
-                .prepare(`SELECT id, project_id, kind, parent_id, model_primary, version,
-                  started_at, ended_at, cwd, git_branch
+                .prepare(`SELECT id, project_id, model_primary, started_at, ended_at
            FROM session WHERE id = ?`)
                 .get(scope.params.session_id);
             if (!row) {
@@ -21,14 +19,9 @@ export function analyzeIdentity(db, scope) {
                     session: {
                         session_id: scope.params.session_id,
                         project_id: null,
-                        kind: null,
-                        parent_id: null,
                         model_primary: null,
-                        version: null,
                         started_at: null,
                         ended_at: null,
-                        cwd: null,
-                        git_branch: null,
                     },
                 };
             }
@@ -37,14 +30,9 @@ export function analyzeIdentity(db, scope) {
                 session: {
                     session_id: row.id,
                     project_id: row.project_id,
-                    kind: row.kind,
-                    parent_id: row.parent_id,
                     model_primary: row.model_primary,
-                    version: row.version,
                     started_at: row.started_at,
                     ended_at: row.ended_at,
-                    cwd: row.cwd,
-                    git_branch: row.git_branch,
                 },
             };
         }
@@ -89,16 +77,10 @@ export function analyzeIdentity(db, scope) {
            FROM event e
            WHERE e.session_id IN (SELECT id FROM session WHERE ${workKindClause()}) ${tsCond}`)
                 .get(...tsBind);
-            const proj = db
-                .prepare(`SELECT COUNT(*) c FROM project WHERE ${realProjectClause("id")}`)
-                .get().c;
-            const files = db.prepare(`SELECT COUNT(*) c FROM file_cursor`).get().c;
             return {
                 kind: scope.mode === "global" ? "global" : "since",
                 global: {
                     sessions: row.sessions,
-                    projects: proj,
-                    files,
                     earliest_event: row.earliest_event,
                     latest_event: row.latest_event,
                 },

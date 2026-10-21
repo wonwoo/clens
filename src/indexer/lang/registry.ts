@@ -1,6 +1,6 @@
 /**
  * Language adapter registry. schema.ts, writer.ts, and mcp/search.ts all
- * drive off listKnownLanguageCodes() + getLanguageAdapter() instead of
+ * drive off listKnownLanguageCodes() and the registered adapters instead of
  * referencing any specific language — adding a new language later means
  * adding one code here and one adapter module, not touching those three
  * files' logic.
@@ -8,9 +8,11 @@
  * A code being "known" (listKnownLanguageCodes()) and a code being
  * "registered" (getLanguageAdapter() returns non-undefined) are different:
  * known codes always get a schema table (so nothing needs a schema migration
- * when a language is later installed), but a table only gets populated/
- * queried once its adapter is actually registered — i.e. the optional
- * dependency + model files were found at startup. See lang/init.ts.
+ * when a language is later installed), but a table only gets populated once
+ * its adapter is registered in the indexing process — i.e. the optional
+ * dependency + model files were found. See lang/init.ts. Search queries a
+ * table with the watcher's adapters, asked over a socket when this process
+ * has none (src/mcp/analyzers.ts).
  */
 import type { LanguageAdapter } from "./types.js";
 

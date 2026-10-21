@@ -1,11 +1,11 @@
 /**
- * Optional-install wiring: at process startup, try to load each known
- * language's morphological analyzer and register it. If the optional
- * package isn't installed or the model files haven't been downloaded to
- * languageModelDir(code), registration is silently skipped — every caller
- * downstream (schema/writer/search) already treats an unregistered language
- * as "not installed" and falls back to today's porter+trigram-only behavior.
- * This function must never throw.
+ * Optional-install wiring: try to load each known language's morphological
+ * analyzer and register it. The indexer and the MCP server that becomes the
+ * watcher call it; other servers ask the watcher over a local socket
+ * (src/mcp/analyzers.ts). If the optional package isn't installed or the
+ * model files haven't been downloaded to languageModelDir(code), registration
+ * is silently skipped — the writer treats an unregistered language as "not
+ * installed". This function must never throw.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -32,9 +32,9 @@ function logLoadFailure(code, e) {
         console.error(`clens: failed to load the ${code} language adapter:`, e);
     }
 }
-/** Idempotent — safe to call from every entrypoint that indexes or searches
- *  (driver.ts's runIndex() and the MCP server's startup). Only the first
- *  call in a process does any work. */
+/** Idempotent — safe to call from every entrypoint that indexes (driver.ts's
+ *  runIndex() and the MCP server once it becomes the watcher). Only the
+ *  first call in a process does any work. */
 export async function ensureLanguageAdaptersLoaded() {
     if (attempted)
         return;
@@ -52,9 +52,9 @@ async function tryLoadKorean() {
     try {
         const { KiwiBuilder, Match } = await import("kiwi-nlp");
         // createRequire().resolve() rather than import.meta.resolve() — the
-        // latter isn't implemented under Vitest's SSR module runner, and this
-        // path is exercised by tests (see lang_ko_real.spec.ts) as well as
-        // production. kiwi-nlp has no "exports" map, so resolving its main
+        // latter isn't implemented under Vitest's SSR module runner
+        // (lang_ko_real.spec.ts resolves kiwi-nlp the same way). kiwi-nlp has
+        // no "exports" map, so resolving its main
         // entry and looking up kiwi-wasm.wasm as a sibling file works
         // regardless of node_modules layout (local, global, monorepo, ...).
         const kiwiEntry = createRequire(import.meta.url).resolve("kiwi-nlp");

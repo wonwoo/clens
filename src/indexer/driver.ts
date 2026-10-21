@@ -38,12 +38,13 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 import type { AnomalyBatch, FileParseResult, ParsedEvent, ToolResultInfo } from "./types.js";
 
 export interface IndexOptions {
-  /** Force full rebuild — drops all file_cursor rows and reparses everything. */
+  /** Force full rebuild — re-derives every session whose transcripts are
+   *  still on disk; a session whose transcript is gone is kept as it is. */
   rebuild?: boolean;
   /** Advisory write-lock wait (ms). Default 30_000. */
   lockTimeoutMs?: number;
-  /** Override "now" for tests (controls live=1 threshold and when the FTS
-   *  tables are next optimized). */
+  /** Override "now" for tests (controls when the FTS tables are next
+   *  optimized). */
   now?: number;
 }
 
@@ -114,7 +115,7 @@ function deriveSessionKind(args: {
   any_sidechain: boolean;
   cwd: string | null;
   recorded?: FileParseResult["session_meta"]["kind"];
-}): "interactive" | "subagent" | "pipeline" | "exec" | "unknown" {
+}): "interactive" | "subagent" | "pipeline" | "exec" {
   // §7 §"`session.kind` and `session.parent_id` derivation"
   // Rule 1: subagents/agent-*.jsonl path → subagent.
   if (SUBAGENT_FILE_RE.test(args.source_file)) return "subagent";
@@ -155,9 +156,6 @@ interface FileWriteSummary {
   earliest_ts: string | null;
   latest_ts: string | null;
   primary_model: string | null;
-  cwd: string | null;
-  git_branch: string | null;
-  version: string | null;
 }
 
 function summarizeFile(events: ParsedEvent[]): FileWriteSummary {
@@ -168,9 +166,6 @@ function summarizeFile(events: ParsedEvent[]): FileWriteSummary {
     earliest_ts: null,
     latest_ts: null,
     primary_model: null,
-    cwd: null,
-    git_branch: null,
-    version: null,
   };
   const modelCount = new Map<string, number>();
   for (const p of events) {
@@ -222,13 +217,11 @@ function filterCodexSkillCandidates(events: ParsedEvent[], cwd: string | null): 
 function commitFile(args: {
   db: Database.Database;
   stmts: WriterStatements;
-  filePath: string;
   source_file: string;
   mtime: number;
   size: number;
   fully_terminated_line_count: number;
   last_ok_byte_offset: number;
-  live: boolean;
   events: ParsedEvent[];
   tool_results: Map<string, ToolResultInfo>;
   batch: AnomalyBatch;
@@ -243,7 +236,6 @@ function commitFile(args: {
     size,
     fully_terminated_line_count,
     last_ok_byte_offset,
-    live,
     events,
     tool_results,
     batch,
@@ -252,11 +244,11 @@ function commitFile(args: {
   } = args;
 
   const summary = summarizeFile(writableEvents(db, source, source_file, events, batch));
-  // Prefer session-level meta harvested from raw JSONL lines (§6.5 maps these
+  // Session-level meta harvested from raw JSONL lines (§6.5 maps these
   // top-level fields onto session.*, not event.*).
-  const cwd = session_meta.cwd ?? summary.cwd;
-  const gitBranch = session_meta.git_branch ?? summary.git_branch;
-  const version = session_meta.version ?? summary.version;
+  const cwd = session_meta.cwd;
+  const gitBranch = session_meta.git_branch;
+  const version = session_meta.version;
 
   const tx = db.transaction(() => {
     // 1) Project upsert (one row per project dir; derived from path or cwd).
@@ -324,7 +316,8 @@ function commitFile(args: {
       for (const p of list) writeParsedEvent(stmts, p, known);
     }
 
-    // 5) Cross-event tool_result → tool_call.duration_ms.
+    // 5) Cross-event tool_result → tool_call.duration_ms, is_error,
+    //    result_chars and error_excerpt.
     applyToolResults(stmts, tool_results);
 
     // 6) Anomaly batch flush.
@@ -337,7 +330,6 @@ function commitFile(args: {
       size,
       lines: fully_terminated_line_count,
       last_ok: last_ok_byte_offset,
-      live: live ? 1 : 0,
     });
   });
   tx();
@@ -423,7 +415,8 @@ function optimizeFtsIfDue(db: Database.Database, now: number, rebuilt: boolean):
 }
 
 /**
- * Public entry. On rebuild=true, drops all rows first.
+ * Public entry. On rebuild=true, or when the stored schema version differs,
+ * first drops what the transcripts on disk can re-derive.
  */
 export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
   // Idempotent — only the first call in a process actually loads anything.
@@ -441,9 +434,9 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
     // CREATE TABLE IF NOT EXISTS never adds columns to an already-existing
     // table, so a schema change (e.g. adding session.source) is invisible to
     // a pre-existing index.db until it hits a hard SQL error on write.
-    // index.db is a fully derived cache (source of truth is the raw JSONL
-    // under ~/.claude/projects and ~/.codex/sessions), so on a version
-    // mismatch we just force the same full rebuild --rebuild would do.
+    // So on a version mismatch we force the same full rebuild --rebuild
+    // would do, which re-derives every session whose transcripts are still
+    // on disk.
     const storedVersion = getSchemaVersion(db);
     const needsRebuild =
       opts.rebuild === true || (storedVersion !== null && storedVersion !== SCHEMA_VERSION);
@@ -487,7 +480,6 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
 
     const now = opts.now ?? Date.now();
     const discovered: DiscoveredFile[] = discoverFiles(db, {
-      now,
       forceRebuild: needsRebuild,
     });
 
@@ -519,13 +511,11 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
       const { eventsInserted } = commitFile({
         db,
         stmts,
-        filePath: f.path,
         source_file: f.path,
         mtime: f.mtime,
         size: f.size,
         fully_terminated_line_count: parsed.fully_terminated_line_count,
         last_ok_byte_offset: parsed.last_ok_byte_offset,
-        live: f.live,
         events: parsed.events,
         tool_results: parsed.tool_results,
         batch,

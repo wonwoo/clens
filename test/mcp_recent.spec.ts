@@ -172,7 +172,7 @@ describe("mcp/recent.ts — back-to-back user turns do not double-pair the same 
  */
 describe("mcp/recent.ts — formatResults byte budget", () => {
   function row(ts: string, text: string, assistant: string | null = null): RecentResult {
-    return { session_id: "s1", project_id: "proj-a", ts, text, assistant_response: assistant };
+    return { session_id: "s1", ts, text, assistant_response: assistant };
   }
 
   it("empty results return the sentinel, no footer", () => {
@@ -226,7 +226,7 @@ describe("mcp/recent.ts — formatResults byte budget", () => {
  */
 describe("mcp/recent.ts — single oversized row is truncated, not dropped", () => {
   function row(ts: string, text: string, assistant: string | null = null): RecentResult {
-    return { session_id: "s1", project_id: "proj-a", ts, text, assistant_response: assistant };
+    return { session_id: "s1", ts, text, assistant_response: assistant };
   }
 
   it("a single row over MAX_ROW_BYTES is truncated to fit, with a clens_session marker", () => {

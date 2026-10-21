@@ -11,7 +11,7 @@
  *   skipped entirely, same as before any language support existed.
  *
  * Results from all active layers are merged via Reciprocal Rank Fusion
- * (K=60), so partial matches like "리뷰" finding "리뷰해바" work naturally.
+ * (K=60 for user rows, 80 for assistant rows), so partial matches like "리뷰" finding "리뷰해바" work naturally.
  */
 
 import type Database from "better-sqlite3";
@@ -28,7 +28,7 @@ export interface SearchParams {
   until?: string;
   /** Restrict matches to one author. Omit to search both (default). Filtering
    *  to "user" is the cheapest way to cut assistant-reply noise when looking
-   *  for something the user themselves said (Task 2, item 1). */
+   *  for something the user themselves said. */
   role?: "user" | "assistant";
   /** Only this session's own messages, not those of the subagents it started. */
   session_id?: string;
@@ -42,7 +42,7 @@ export interface SearchResult {
   role: "user" | "assistant";
   /** A short match-centered excerpt of the matched message — NOT the full
    *  message. Enough to judge relevance; fetch the full conversation with
-   *  clens_session (find/read split — see CLENS-IMPROVEMENT-TASKS.md Task 1). */
+   *  clens_session. */
   snippet: string;
   /** RRF fused relevance score (higher = more relevant); results are ordered
    *  by it descending. Exposed so callers can gauge confidence and so a byte
@@ -60,7 +60,7 @@ const RRF_K = 60;
 // offset. TRAIL > LEAD because the text that explains *why* a hit is relevant
 // usually follows the matched term. ~240 chars total keeps each result small
 // enough that a full page fits the default byte budget while still carrying
-// enough context to judge relevance (Task 1: "관련성 판단이 가능한 최소 길이").
+// enough context to judge relevance.
 const SNIPPET_LEAD = 60;
 const SNIPPET_TRAIL = 180;
 const CONTEXT_LINE_CHARS = SNIPPET_LEAD + SNIPPET_TRAIL;
@@ -89,7 +89,9 @@ function buildSnippet(text: string, probes: string[]): string {
     const i = text.search(new RegExp(p.trim().split(/\s+/).map(escapeRegExp).join("\\s+"), "i"));
     if (i >= 0 && (off === -1 || i < off)) off = i;
   }
-  if (off < 0) off = 0; // no probe located (defensive — post-filter guarantees a match); head snippet
+  // No probe located: possible when a language layer matched a token, such as
+  // a base form, that the text itself does not contain. Head snippet.
+  if (off < 0) off = 0;
   const start = Math.max(0, off - SNIPPET_LEAD);
   const end = Math.min(text.length, off + SNIPPET_TRAIL);
   let slice = text.slice(start, end).replace(/\s+/g, " ").trim();
@@ -101,7 +103,7 @@ function buildSnippet(text: string, probes: string[]): string {
 /** Serialize search results into the MCP text response under a total byte
  *  budget. Results arrive already ordered by score (descending), so the budget
  *  truncates from the least-relevant end and reports the hidden count — a
- *  size cap must never silently hide a relevant hit (Task 1: recall 무회귀).
+ *  size cap must never silently hide a relevant hit.
  *  The top result is always emitted even if it alone exceeds the budget.
  *
  *  `totalMatched` is how many rows matched before the `limit` slice (see
@@ -171,7 +173,7 @@ interface QueryTerm {
 interface TokenizedQuery {
   groups: TermGroup[];
   /** Raw (unquoted) text of NOT-negated terms, used as a post-filter over
-   *  merged results — see the note in searchUserText() for why this can't
+   *  merged results — see the note in searchGroups() for why this can't
    *  be enforced inside a single layer's MATCH clause alone. */
   negatedTerms: string[];
 }
@@ -259,7 +261,7 @@ interface TrigramQuery {
  *  inside a longer word ("authentication" in "preauthentication"). Shorter
  *  words cannot be in a MATCH expression and go to LIKE, which cannot be
  *  OR'd with a MATCH; under OR they are left to the other layers (the
- *  post-filter in searchUserText still requires them), since a LIKE per group
+ *  post-filter in searchGroups still requires them), since a LIKE per group
  *  scanned the table once per group (a 3-group Korean query took 1.1 s,
  *  against 0.2 s at most before). Phrase
  *  adjacency is not checked here either. Negated terms are excluded from the
@@ -282,7 +284,8 @@ function renderTrigram(groups: TermGroup[]): TrigramQuery {
  *  are AND'd together, mirroring renderPorterMatch's OR-of-AND-groups shape.
  *  A term the adapter's script doesn't detect (e.g. an English word in an
  *  otherwise-Korean query) contributes nothing to this layer — the porter
- *  layer already enforces full query semantics; this layer is a
+ *  layer still matches it, and the post-filter in searchGroups requires
+ *  every term; this layer is a
  *  supplementary precision signal, not a replacement. A phrase contributes
  *  nothing either: it must match literally, and the analyzer splits a word by
  *  what follows it ("써도" ending the phrase, a message going on past it), so
@@ -513,7 +516,7 @@ function searchGroups(
   // Every layer runs for both roles so no layer is weighted differently
   // from the others beyond that user/assistant split. A `role` filter narrows
   // this to just that author's passes — the cheapest noise cut for "find what
-  // I said" (Task 2, item 1) — without touching the per-role RRF weights.
+  // I said" — without touching the per-role RRF weights.
   const scores = new Map<number, number>();
   const rows = new Map<number, RawResult>();
 
@@ -531,11 +534,12 @@ function searchGroups(
   }
 
   // Neither layer's MATCH clause can fully enforce NOT (exclusion) or exact
-  // phrase adjacency on its own: searchUserText unions results across every
+  // phrase adjacency on its own: this function unions results across every
   // layer, and the trigram layer doesn't understand negation or phrase
   // boundaries (renderTrigram splits each group into individually-required
-  // words). A row the porter layer would correctly exclude/reject can still
-  // surface via the trigram layer. The only place all layers' results are
+  // words). No layer's MATCH holds a NOT term (they are built from positive
+  // terms only), and a row the porter layer rejects for phrase adjacency can
+  // still surface via the trigram layer. The only place all layers' results are
   // already merged into one set is here, after scoring — so both guarantees
   // are enforced as a post-filter over the full scored candidate pool,
   // before slicing to `limit` (fetchLimit's 3x headroom keeps enough
@@ -588,8 +592,7 @@ function searchGroups(
     }
     return false;
   };
-  const satisfiesGroup = (r: RawResult) =>
-    groups.length === 0 || groups.some((g) => g.terms.every((t) => termSatisfied(t, r)));
+  const satisfiesGroup = (r: RawResult) => groups.some((g) => g.terms.every((t) => termSatisfied(t, r)));
   let sorted = [...scores.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([rowid]) => rows.get(rowid)!)
@@ -613,7 +616,7 @@ function searchGroups(
   // reused across every result. Every matched row is searched and returned on
   // its own (both roles independently), so each hit's snippet comes from its
   // own text — the paired next-assistant-reply enrichment was removed with the
-  // find/read split (Task 1): the full reply is fetched via clens_session.
+  // find/read split: the full reply is fetched via clens_session.
   const snippetProbes: string[] = [];
   for (const g of groups) {
     for (const t of g.terms) {
@@ -639,9 +642,10 @@ function searchGroups(
 
 /** Search plus the total number of matched rows (see searchGroups). Words
  *  are AND'ed, so a query worded differently from the message it is after,
- *  such as a paraphrase, often matches nothing. When a multi-word query finds
- *  nothing, it is retried with each word on its own and `partial` is set, so
- *  the caller can say the hits hold only some of the words. */
+ *  such as a paraphrase, often matches nothing. When a query of one group (no
+ *  OR) with two or more terms finds nothing, it is retried with each term on
+ *  its own and `partial` is set, so the caller can say the hits hold only
+ *  some of the words. */
 export function searchWithTotal(
   db: Database.Database,
   params: SearchParams,
@@ -659,9 +663,9 @@ export function searchWithTotal(
   return { ...every, partial: false };
 }
 
-/** Convenience wrapper returning only the results array (the common case).
- *  Callers that need to know whether matches were hidden past `limit` — the
- *  MCP server, to build an honest "+N more" footer — use searchWithTotal. */
+/** Convenience wrapper returning only the results array, for tests. The MCP
+ *  server goes through searchText, which uses searchWithTotal to build an
+ *  honest "+N more" footer. */
 export function searchUserText(db: Database.Database, params: SearchParams, opts: SearchOptions = {}): SearchResult[] {
   return searchWithTotal(db, params, opts).results;
 }

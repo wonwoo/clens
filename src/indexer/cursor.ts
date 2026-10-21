@@ -7,14 +7,12 @@
  *     and ~/.codex/sessions/).
  *   - Compare each file's mtime against file_cursor.mtime to decide whether
  *     it needs (re)parsing.
- *   - Decide each file's `live` flag (mtime within last 60s → live=1, exclude
- *     from orphan-tool counts per §7).
  *
  * Reading the body itself happens in the driver, not here, so this module
  * stays free of I/O strategy decisions (full-read vs partial-resume).
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { SOURCE_ADAPTERS, type SourceAdapter } from "./sources.js";
@@ -25,7 +23,6 @@ export interface FileCursorRow {
   size: number;
   lines: number;
   last_ok: number;
-  live: 0 | 1;
 }
 
 export interface DiscoveredFile {
@@ -35,20 +32,15 @@ export interface DiscoveredFile {
   mtime: number;
   /** Disk size in bytes. */
   size: number;
-  /** True iff mtime within last 60 seconds of `now`. */
-  live: boolean;
-  /** Existing cursor row, or null if first time seen. */
-  prior: FileCursorRow | null;
   /** True if the file needs (re)parsing this run: new file, or mtime newer
-   *  than prior.mtime, or size shrunk (truncated). */
+   *  than its cursor row's, or size shrunk (truncated). */
   needs_parse: boolean;
   /** Adapter name this file was discovered under (see sources.ts). */
   source: string;
 }
 
-const LIVE_WINDOW_MS = 60_000;
-
-/** Recursive *.jsonl walker that ignores broken symlinks and dotfiles. */
+/** Recursive *.jsonl walker that skips symlinks and dotfiles; a missing
+ *  root yields nothing. */
 function walkJsonl(root: string, out: string[] = []): string[] {
   let entries: import("node:fs").Dirent[];
   try {
@@ -78,10 +70,9 @@ function discoverSource(
   cursorIdx: Map<string, FileCursorRow>,
   root: string,
   source: string,
-  opts: { now: number; forceRebuild?: boolean },
+  opts: { forceRebuild?: boolean },
   out: DiscoveredFile[],
 ): void {
-  if (!existsSync(root)) return;
   const files = walkJsonl(root);
   for (const path of files) {
     let st;
@@ -93,13 +84,12 @@ function discoverSource(
     const mtime = st.mtimeMs / 1000;
     const size = st.size;
     const prior = cursorIdx.get(path) ?? null;
-    const live = opts.now - st.mtimeMs <= LIVE_WINDOW_MS;
     const needs =
       opts.forceRebuild === true ||
       prior === null ||
       mtime > prior.mtime + 1e-6 ||
       size < prior.size;
-    out.push({ path, mtime, size, live, prior, needs_parse: needs, source });
+    out.push({ path, mtime, size, needs_parse: needs, source });
   }
 }
 
@@ -109,7 +99,7 @@ function discoverSource(
  *  changing this function. */
 export function discoverFiles(
   db: Database.Database,
-  opts: { now: number; forceRebuild?: boolean } = { now: Date.now() },
+  opts: { forceRebuild?: boolean } = {},
   adapters: readonly SourceAdapter[] = SOURCE_ADAPTERS,
 ): DiscoveredFile[] {
   const cursorIdx = loadCursorIndex(db);
@@ -126,13 +116,12 @@ export function upsertCursor(
   row: FileCursorRow,
 ): void {
   db.prepare(
-    `INSERT INTO file_cursor (path, mtime, size, lines, last_ok, live)
-     VALUES (@path, @mtime, @size, @lines, @last_ok, @live)
+    `INSERT INTO file_cursor (path, mtime, size, lines, last_ok)
+     VALUES (@path, @mtime, @size, @lines, @last_ok)
      ON CONFLICT(path) DO UPDATE SET
        mtime=excluded.mtime,
        size=excluded.size,
        lines=excluded.lines,
-       last_ok=excluded.last_ok,
-       live=excluded.live`,
+       last_ok=excluded.last_ok`,
   ).run(row);
 }

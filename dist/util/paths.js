@@ -4,12 +4,13 @@
  *
  * clensHome() is intentionally NOT nested under claudeHome() — clens indexes
  * multiple sources (Claude Code, Codex, and future ones registered in
- * sources.ts), so its index/reports live in their own top-level ~/.clens/,
+ * sources.ts), so its index lives in its own top-level ~/.clens/,
  * not inside any one source's home directory.
  *
  * Environment overrides (test-only):
- *   CLENS_HOME       — overrides ~/.claude/  (Claude Code input data dir)
- *   CLENS_INDEX_DIR  — overrides ~/.clens/   (index + reports output dir)
+ *   CLENS_HOME        — overrides ~/.claude/  (Claude Code input data dir)
+ *   CLENS_CODEX_HOME  — overrides ~/.codex/   (Codex input data dir)
+ *   CLENS_INDEX_DIR   — overrides ~/.clens/   (index output dir)
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";

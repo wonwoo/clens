@@ -844,7 +844,7 @@ export function shellWrittenFiles(command: string, cwd: string | null, home: str
       piped = stdin;
     }
     // The || branch ends here: the cd before it took effect.
-    if (sep !== "||") endBranch(sep);
+    endBranch(sep);
   }
   return [...found];
 }

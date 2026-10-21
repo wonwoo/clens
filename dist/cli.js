@@ -38,7 +38,7 @@ function parse(argv) {
     return { cmd, flags, positional };
 }
 function usage() {
-    process.stderr.write(`clens — Claude Code session analyzer\n` +
+    process.stderr.write(`clens — search past Claude Code and Codex sessions\n` +
         `\n` +
         `usage:\n` +
         `  clens index [--rebuild] [--lock-timeout <ms>]\n` +

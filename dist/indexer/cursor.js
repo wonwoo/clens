@@ -7,17 +7,15 @@
  *     and ~/.codex/sessions/).
  *   - Compare each file's mtime against file_cursor.mtime to decide whether
  *     it needs (re)parsing.
- *   - Decide each file's `live` flag (mtime within last 60s → live=1, exclude
- *     from orphan-tool counts per §7).
  *
  * Reading the body itself happens in the driver, not here, so this module
  * stays free of I/O strategy decisions (full-read vs partial-resume).
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SOURCE_ADAPTERS } from "./sources.js";
-const LIVE_WINDOW_MS = 60_000;
-/** Recursive *.jsonl walker that ignores broken symlinks and dotfiles. */
+/** Recursive *.jsonl walker that skips symlinks and dotfiles; a missing
+ *  root yields nothing. */
 function walkJsonl(root, out = []) {
     let entries;
     try {
@@ -47,8 +45,6 @@ function loadCursorIndex(db) {
     return m;
 }
 function discoverSource(cursorIdx, root, source, opts, out) {
-    if (!existsSync(root))
-        return;
     const files = walkJsonl(root);
     for (const path of files) {
         let st;
@@ -61,19 +57,18 @@ function discoverSource(cursorIdx, root, source, opts, out) {
         const mtime = st.mtimeMs / 1000;
         const size = st.size;
         const prior = cursorIdx.get(path) ?? null;
-        const live = opts.now - st.mtimeMs <= LIVE_WINDOW_MS;
         const needs = opts.forceRebuild === true ||
             prior === null ||
             mtime > prior.mtime + 1e-6 ||
             size < prior.size;
-        out.push({ path, mtime, size, live, prior, needs_parse: needs, source });
+        out.push({ path, mtime, size, needs_parse: needs, source });
     }
 }
 /** Walk every registered source's sessions dir and decide which files need
  *  (re)parsing. `adapters` defaults to the full registry; tests may inject
  *  a subset or a fake adapter to verify new sources plug in without
  *  changing this function. */
-export function discoverFiles(db, opts = { now: Date.now() }, adapters = SOURCE_ADAPTERS) {
+export function discoverFiles(db, opts = {}, adapters = SOURCE_ADAPTERS) {
     const cursorIdx = loadCursorIndex(db);
     const out = [];
     for (const adapter of adapters) {
@@ -83,13 +78,12 @@ export function discoverFiles(db, opts = { now: Date.now() }, adapters = SOURCE_
 }
 /** Upsert a file_cursor row. */
 export function upsertCursor(db, row) {
-    db.prepare(`INSERT INTO file_cursor (path, mtime, size, lines, last_ok, live)
-     VALUES (@path, @mtime, @size, @lines, @last_ok, @live)
+    db.prepare(`INSERT INTO file_cursor (path, mtime, size, lines, last_ok)
+     VALUES (@path, @mtime, @size, @lines, @last_ok)
      ON CONFLICT(path) DO UPDATE SET
        mtime=excluded.mtime,
        size=excluded.size,
        lines=excluded.lines,
-       last_ok=excluded.last_ok,
-       live=excluded.live`).run(row);
+       last_ok=excluded.last_ok`).run(row);
 }
 //# sourceMappingURL=cursor.js.map

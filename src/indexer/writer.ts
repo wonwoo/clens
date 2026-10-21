@@ -10,7 +10,7 @@
  * For incremental updates the writer accepts a list of session_ids whose
  * derived rows must be wiped first (since one new line in a session can
  * change the second-pass turn numbering for every later event in that
- * session). The driver computes that set and calls `wipeSessionEvents`
+ * session). The driver computes that set and calls `wipeSessions`
  * before re-inserting all events for the affected sessions.
  */
 
@@ -295,9 +295,7 @@ export function flushAnomalyBatch(
   stmts: WriterStatements,
   batch: AnomalyBatch,
 ): void {
-  if (batch.source_file !== null) {
-    stmts.wipeAnomaliesForFile.run(batch.source_file);
-  }
+  stmts.wipeAnomaliesForFile.run(batch.source_file);
   for (const [kind, { count, detail }] of batch.counters) {
     stmts.insertAnomaly.run({
       session_id: batch.session_id,
@@ -310,7 +308,8 @@ export function flushAnomalyBatch(
   }
 }
 
-/** Cross-event tool_result → tool_call.duration_ms fill. */
+/** Cross-event tool_result → tool_call.duration_ms, is_error, result_chars
+ *  and error_excerpt fill. */
 export function applyToolResults(
   stmts: WriterStatements,
   results: Map<string, ToolResultInfo>,

@@ -48,7 +48,7 @@ describe("discoverFiles — extensibility via injected adapters", () => {
       },
     };
 
-    const discovered = discoverFiles(db, { now: Date.now() }, [fakeAdapter]);
+    const discovered = discoverFiles(db, {}, [fakeAdapter]);
 
     expect(discovered).toHaveLength(1);
     expect(discovered[0]!.source).toBe("cursor");
@@ -79,7 +79,7 @@ describe("discoverFiles — extensibility via injected adapters", () => {
       },
     };
 
-    const discovered = discoverFiles(db, { now: Date.now() }, [adapterA, adapterB]);
+    const discovered = discoverFiles(db, {}, [adapterA, adapterB]);
     const bySource = new Map(discovered.map((d) => [d.source, d.path]));
 
     expect(bySource.get("windsurf")).toBe(join(rootA, "s1.jsonl"));
@@ -94,7 +94,7 @@ describe("discoverFiles — extensibility via injected adapters", () => {
         throw new Error("not exercised");
       },
     };
-    expect(() => discoverFiles(db, { now: Date.now() }, [missingAdapter])).not.toThrow();
-    expect(discoverFiles(db, { now: Date.now() }, [missingAdapter])).toEqual([]);
+    expect(() => discoverFiles(db, {}, [missingAdapter])).not.toThrow();
+    expect(discoverFiles(db, {}, [missingAdapter])).toEqual([]);
   });
 });

@@ -45,7 +45,7 @@ function parse(argv: string[]): ParsedArgs {
 
 function usage(): void {
   process.stderr.write(
-    `clens — Claude Code session analyzer\n` +
+    `clens — search past Claude Code and Codex sessions\n` +
       `\n` +
       `usage:\n` +
       `  clens index [--rebuild] [--lock-timeout <ms>]\n` +

@@ -1,5 +1,5 @@
 /**
- * Dimension 8 — subagents started.
+ * Dimension 11 — subagents started.
  *
  * Source of truth: `agent_call` rows (parser emits one per `Agent` tool_use
  * block), counted per `subagent_type`.

@@ -1,4 +1,5 @@
 import type { LanguageAdapter } from "./types.js";
+import type { LinderaTokenizerLike } from "./ja.js";
 import { hasHan as hasHanChars, hasKana } from "./scripts.js";
 
 // CJK Unified Ideographs. This range also matches Japanese Kanji, so on its
@@ -31,10 +32,6 @@ function isContentTag(pos: string): boolean {
 // kiwi-nlp did — this cap is a throughput safeguard (that same input took
 // ~12s to tokenize) rather than a confirmed crash workaround for Lindera.
 const MAX_TOKENIZE_LENGTH = 20_000;
-
-export interface LinderaTokenizerLike {
-  tokenize(text: string): { surface: string; partOfSpeech: string }[];
-}
 
 /** Builds a LanguageAdapter around an already-constructed Lindera Tokenizer
  *  (cc-cedict dictionary). Kept separate from the lindera-wasm package

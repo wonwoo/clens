@@ -1,26 +1,20 @@
 /**
- * Identity / scope-level basics for the canonical facts JSON.
+ * Identity / scope-level basics for clens_stats.
  *
- * In session scope: session id, project_id, kind, model_primary, version,
- *   started/ended_at, primary cwd, git_branch.
+ * In session scope: session id, project_id, model_primary, started/ended_at.
  * In project scope: project id, session count, model_primary mode, date range.
- * In global scope: per-corpus totals (sessions, projects, files).
+ * In global scope: session count and date range.
  */
 
 import type Database from "better-sqlite3";
-import { realProjectClause, workKindClause, type Scope } from "./scope.js";
+import { workKindClause, type Scope } from "./scope.js";
 
 export interface IdentitySession {
   session_id: string;
   project_id: string | null;
-  kind: string | null;
-  parent_id: string | null;
   model_primary: string | null;
-  version: string | null;
   started_at: string | null;
   ended_at: string | null;
-  cwd: string | null;
-  git_branch: string | null;
 }
 
 export interface IdentityProject {
@@ -33,8 +27,6 @@ export interface IdentityProject {
 
 export interface IdentityGlobal {
   sessions: number;
-  projects: number;
-  files: number;
   earliest_event: string | null;
   latest_event: string | null;
 }
@@ -50,22 +42,16 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
     case "session": {
       const row = db
         .prepare(
-          `SELECT id, project_id, kind, parent_id, model_primary, version,
-                  started_at, ended_at, cwd, git_branch
+          `SELECT id, project_id, model_primary, started_at, ended_at
            FROM session WHERE id = ?`,
         )
         .get(scope.params.session_id) as
         | {
             id: string;
             project_id: string | null;
-            kind: string | null;
-            parent_id: string | null;
             model_primary: string | null;
-            version: string | null;
             started_at: string | null;
             ended_at: string | null;
-            cwd: string | null;
-            git_branch: string | null;
           }
         | undefined;
       if (!row) {
@@ -74,14 +60,9 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
           session: {
             session_id: scope.params.session_id,
             project_id: null,
-            kind: null,
-            parent_id: null,
             model_primary: null,
-            version: null,
             started_at: null,
             ended_at: null,
-            cwd: null,
-            git_branch: null,
           },
         };
       }
@@ -90,14 +71,9 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
         session: {
           session_id: row.id,
           project_id: row.project_id,
-          kind: row.kind,
-          parent_id: row.parent_id,
           model_primary: row.model_primary,
-          version: row.version,
           started_at: row.started_at,
           ended_at: row.ended_at,
-          cwd: row.cwd,
-          git_branch: row.git_branch,
         },
       };
     }
@@ -150,18 +126,10 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
            WHERE e.session_id IN (SELECT id FROM session WHERE ${workKindClause()}) ${tsCond}`,
         )
         .get(...tsBind) as { sessions: number; earliest_event: string | null; latest_event: string | null };
-      const proj = (
-        db
-          .prepare(`SELECT COUNT(*) c FROM project WHERE ${realProjectClause("id")}`)
-          .get() as { c: number }
-      ).c;
-      const files = (db.prepare(`SELECT COUNT(*) c FROM file_cursor`).get() as { c: number }).c;
       return {
         kind: scope.mode === "global" ? "global" : "since",
         global: {
           sessions: row.sessions,
-          projects: proj,
-          files,
           earliest_event: row.earliest_event,
           latest_event: row.latest_event,
         },

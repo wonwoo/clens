@@ -277,8 +277,9 @@ export interface SessionSegment {
   topics: string[];
   /** The reply that closed its latest request in which a file outside a
    *  temporary folder was edited or a commit, merge or push ran, and that
-   *  request's place among its requests; null when there is none or its
-   *  reply is last_reply, as the last request's is. Where the work stood when
+   *  request's place among its requests; null when there is none, when that
+   *  request has no reply, or when it is the last request (whose reply
+   *  last_reply already shows, or stands close to). Where the work stood when
    *  the segment ended on a side question (docs/segment-eval.md). */
   last_change: { request: number; reply: string } | null;
 }

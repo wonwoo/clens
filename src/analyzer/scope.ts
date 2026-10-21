@@ -11,22 +11,6 @@
  * session asked for, whatever its kind.
  */
 
-/**
- * Synthetic project ids that the Workflow tool (and a stray "subagents"
- * entry from the claude-code repo) materialize in the `project` table
- * without any real sessions or events. They show up as empty rows in the
- * Projects dimension and inflate the "projects: N" identity count.
- *
- * Callers that surface project lists or per-project rollups should AND
- * this clause into their WHERE. Use the column reference that fits the
- * query (`p.id`, `project.id`, `s.project_id`, etc.).
- */
-export function realProjectClause(idColumn: string): string {
-  // SQLite GLOB is faster than LIKE-with-ESCAPE for a constant prefix and
-  // less error-prone than the backslash dance.
-  return `(${idColumn} NOT GLOB 'wf_*' AND ${idColumn} != 'subagents')`;
-}
-
 /** Parenthesized SQL that keeps a session row unless it is a judge
  *  transcript or a one-shot exec/SDK run, or a subagent one of those
  *  started. A subagent's file is always stored as kind `subagent`, so its

@@ -1,6 +1,6 @@
 /**
  * Per-language morphological analysis adapter. Each installed language's
- * support (Korean now, others later) implements this shape and registers
+ * support (Korean, Japanese, Chinese) implements this shape and registers
  * itself via registry.ts — schema/writer/search never reference a specific
  * language by name, only by the codes registry.ts knows about.
  */

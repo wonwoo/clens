@@ -4,8 +4,8 @@
  *
  * Uses recursive fs.watch (macOS FSEvents / Windows RCWC) per root.
  * On any JSONL change, debounces 500ms then runs an incremental index.
- * The DB handle is replaced after each successful index so callers
- * always get a fresh view via the getDb() accessor passed in.
+ * After each successful index it calls onIndexed, where the caller (the MCP
+ * server) replaces its DB handle to get a fresh view.
  */
 import { existsSync, watch } from "node:fs";
 import { runIndex } from "./driver.js";

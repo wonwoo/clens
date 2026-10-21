@@ -6,8 +6,9 @@
  * works for fresh init and re-open. The schema_version table is
  * seeded with the current SCHEMA_VERSION constant on init only.
  *
- * Migration path: append-only files in src/indexer/migrations/<n>-<slug>.sql,
- * each idempotent. Down-migration is not supported in v1 (rebuild instead).
+ * Upgrades: a column added to an existing table is added with ALTER TABLE
+ * in applySchema(); anything else bumps SCHEMA_VERSION, and runIndex()
+ * rebuilds on the mismatch. Down-migration is not supported.
  */
 import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // v2: added session.source (multi-source indexing — Claude/Codex/...).
@@ -17,7 +18,8 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // language, so adding a language later needs no schema rewrite here.
 // CREATE TABLE IF NOT EXISTS does not add columns to an existing table, so
 // runIndex() compares this against the stored schema_version and forces a
-// full rebuild on mismatch (index.db is a derived cache, safe to regenerate).
+// full rebuild on mismatch. The rebuild keeps sessions whose transcripts are
+// gone: the index is their only copy, so index.db is not safe to delete.
 // v4: user_text_fts_trigram switched to external content mode (content =
 // 'user_text'), eliminating ~39MB of duplicated raw text it previously kept
 // in its own shadow table but never actually read (search.ts always JOINs
@@ -93,7 +95,7 @@ function languageTableStatements(code) {
        END`,
     ];
 }
-/** Statement list in declaration order. Splitter knows each ends in `;`. */
+/** Statement list in declaration order; applySchema() runs each on its own. */
 const SCHEMA_STATEMENTS = [
     `CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`,
     // ----- File cursor (incremental indexing state) -----
@@ -103,6 +105,7 @@ const SCHEMA_STATEMENTS = [
      size     INTEGER NOT NULL,
      lines    INTEGER NOT NULL,
      last_ok  INTEGER NOT NULL,
+     -- no longer written or read; kept so the schema does not change
      live     INTEGER NOT NULL DEFAULT 0
    )`,
     // ----- Upkeep state (not derived from transcripts; digest.ts leaves it out) -----
@@ -337,7 +340,7 @@ const SCHEMA_STATEMENTS = [
 /** Apply schema (idempotent) and PRAGMAs on a freshly opened database. */
 export function applySchema(db) {
     db.pragma("journal_mode = WAL");
-    // 30s, matching acquireLock()'s own default wait (driver.ts) — a 5s
+    // 30s, matching runIndex()'s default lock wait (driver.ts) — a 5s
     // SQLite-level busy_timeout was too short whenever a concurrent writer
     // (e.g. the MCP server's watcher reindexing on its own) legitimately held
     // a write for longer than that, producing a raw "database is locked"

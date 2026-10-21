@@ -65,14 +65,10 @@ function extractSkillCandidates(text: string): string[] {
   return [...names];
 }
 
-function bumpAnomaly(batch: AnomalyBatch, kind: string, detail?: string): void {
+function bumpAnomaly(batch: AnomalyBatch, kind: string): void {
   const cur = batch.counters.get(kind);
-  if (cur) {
-    cur.count += 1;
-    if (detail !== undefined) cur.detail = detail;
-  } else {
-    batch.counters.set(kind, { count: 1, detail: detail ?? null });
-  }
+  if (cur) cur.count += 1;
+  else batch.counters.set(kind, { count: 1, detail: null });
 }
 
 /** Derive a stable synthetic UUID from file path + line sequence number. */
@@ -417,13 +413,9 @@ interface SessionState {
   version: string | null;
   model: string | null;
   // turn-level accumulation
-  currentTurnId: string | null;
-  currentTurnStartTs: string | null;
   pendingInTok: number;
   pendingCachedTok: number;
   pendingOutTok: number;
-  // mcp tool call tracking: call_id → begin ts
-  openToolCalls: Map<string, string>;
   /** call_id → the parsed event of that function or custom tool call, for
    *  the hook block its output may report. */
   callEvents: Map<string, ParsedEvent>;
@@ -514,12 +506,9 @@ export function parseCodexFileBody(args: {
     git_branch: null,
     version: null,
     model: null,
-    currentTurnId: null,
-    currentTurnStartTs: null,
     pendingInTok: 0,
     pendingCachedTok: 0,
     pendingOutTok: 0,
-    openToolCalls: new Map(),
     callEvents: new Map(),
     openExec: new Map(),
     failedExec: new Set(),
@@ -535,7 +524,7 @@ export function parseCodexFileBody(args: {
     parentId: null,
   };
 
-  // tool_results map: call_id → { ts, is_error } — same shape as Claude parser
+  // tool_results map: call_id → ToolResultInfo — same shape as Claude parser
   const toolResults = new Map<string, ToolResultInfo>();
 
   const buf = Buffer.from(body, "utf8");
@@ -569,12 +558,9 @@ export function parseCodexFileBody(args: {
     i += 1;
   }
 
-  const trailingNewline = lineStartByte === buf.byteLength;
-
   return {
     events,
     anomalies: batch,
-    trailing_newline: trailingNewline,
     fully_terminated_line_count: fullyTerminated,
     last_ok_byte_offset: lastOk,
     tool_results: toolResults,
@@ -652,7 +638,6 @@ function processLine(
     if (itemType === "function_call" || itemType === "custom_tool_call") {
       const uuid = syntheticUuid(source_file, seq);
       const callId = typeof payload.call_id === "string" ? payload.call_id : null;
-      if (callId !== null) state.openToolCalls.set(callId, timestamp);
 
       const name = typeof payload.name === "string" ? payload.name : "<unknown>";
       // A custom (freeform) tool such as apply_patch or exec carries its raw
@@ -743,11 +728,11 @@ function processLine(
         // exit through a later write_stdin naming the same process session:
         // the exit is the exec_command call's, not the write_stdin call's.
         const running = headerRunningSession(text);
-        if (callName === "exec_command" && running !== null && headerExitCode(text) === null) {
+        const exit = headerExitCode(text);
+        if (callName === "exec_command" && running !== null && exit === null) {
           state.runningProcess.set(running, callId);
         }
         const target = state.stdinTarget.get(callId);
-        const exit = headerExitCode(text);
         const origin = target === undefined ? undefined : state.runningProcess.get(target);
         if (target !== undefined && exit !== null && origin !== undefined) {
           state.runningProcess.delete(target);
@@ -764,7 +749,6 @@ function processLine(
           result_chars: codepointLength(text),
           error_excerpt: is_error === 1 ? errorExcerpt(failedOutputText(text)) : null,
         });
-        state.openToolCalls.delete(callId);
         // Recorded on the call's own event: the driver reads a whole rollout
         // on every change, so the call and its output are parsed together.
         const reason = preToolUseReason(text);
@@ -794,9 +778,6 @@ function processLine(
 
   // task_started / turn_started
   if (msgType === "task_started" || msgType === "turn_started") {
-    const turnId = typeof payload.turn_id === "string" ? payload.turn_id : null;
-    state.currentTurnId = turnId;
-    state.currentTurnStartTs = timestamp;
     state.pendingInTok = 0;
     state.pendingCachedTok = 0;
     state.pendingOutTok = 0;
@@ -814,8 +795,6 @@ function processLine(
     state.pendingInTok = 0;
     state.pendingCachedTok = 0;
     state.pendingOutTok = 0;
-    state.currentTurnId = null;
-    state.currentTurnStartTs = null;
     const parsed = makeBlankParsed(ev);
     events.push(parsed);
     return;
@@ -868,7 +847,6 @@ function processLine(
   // mcp_tool_call_begin
   if (msgType === "mcp_tool_call_begin") {
     const callId = typeof payload.call_id === "string" ? payload.call_id : null;
-    if (callId !== null) state.openToolCalls.set(callId, timestamp);
     const invocation = payload.invocation as Record<string, unknown> | undefined;
     const toolName = invocation && typeof invocation.tool === "string"
       ? invocation.tool
@@ -904,7 +882,6 @@ function processLine(
     const isError = detectToolError(payload.result);
     if (callId !== null) {
       toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null, error_excerpt: null });
-      state.openToolCalls.delete(callId);
     }
     return;
   }
@@ -912,7 +889,6 @@ function processLine(
   // exec_command_begin — shell commands as tool calls (tool name = "exec")
   if (msgType === "exec_command_begin") {
     const callId = typeof payload.call_id === "string" ? payload.call_id : null;
-    if (callId !== null) state.openToolCalls.set(callId, timestamp);
     const cmd = Array.isArray(payload.command)
       ? (payload.command as unknown[]).join(" ")
       : typeof payload.command === "string"
@@ -946,7 +922,6 @@ function processLine(
     const isError: 0 | 1 = exitCode !== 0 ? 1 : 0;
     if (callId !== null) {
       toolResults.set(callId, { ts: timestamp, is_error: isError, result_chars: null, error_excerpt: null });
-      state.openToolCalls.delete(callId);
     }
     return;
   }
@@ -1080,8 +1055,8 @@ function pushExecMcpCall(
   events.push(parsed);
 }
 
-/** A CommandExecution item's cwd, a file:// URL, as a path; null when it is
- *  not one. */
+/** A CommandExecution item's cwd as a path: a file:// URL converted, an
+ *  absolute path as it is; null otherwise. */
 function cwdOf(value: unknown): string | null {
   if (typeof value !== "string" || value === "") return null;
   if (value.startsWith("file://")) {

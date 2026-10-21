@@ -71,12 +71,12 @@ export function recentUserText(db, params) {
            AND a.ts > t.ts AND a.ts <= COALESCE(t.next_ts, '9999')`;
         const sql = `
       WITH t AS (
-        SELECT ut.session_id, s.project_id, ut.ts, ut.text,
+        SELECT ut.session_id, ut.ts, ut.text,
           (SELECT min(u2.ts) FROM user_text u2
             WHERE u2.session_id = ut.session_id AND u2.role = 'user' AND u2.ts > ut.ts) AS next_ts
         ${userRows}
       )
-      SELECT session_id, project_id, ts, text,
+      SELECT session_id, ts, text,
         CASE WHEN text LIKE ? THEN (${reply} ORDER BY a.ts ASC LIMIT 1)
              ELSE (${reply} AND a.text LIKE ? ORDER BY a.ts ASC LIMIT 1)
         END AS assistant_response
@@ -87,7 +87,7 @@ export function recentUserText(db, params) {
         return db.prepare(sql).all(...bindings, like, like, like, like, limit);
     }
     const sql = `
-    SELECT ut.session_id, s.project_id, ut.ts, ut.text, ${firstReply} AS assistant_response
+    SELECT ut.session_id, ut.ts, ut.text, ${firstReply} AS assistant_response
     ${userRows}
     ORDER BY ut.ts DESC
     LIMIT ?`;
@@ -133,8 +133,8 @@ function truncateToBytes(s, maxLen) {
  *  and a clens_session pointer appended, so the response can never exceed the
  *  MCP ceiling even when one message is enormous. The header (ts + session_id)
  *  always survives, so a truncated row is still identifiable and one
- *  clens_session call away from its full text. project_id is omitted per row
- *  because the caller passes it as a required param. */
+ *  clens_session call away from its full text. Rows carry no project_id:
+ *  the caller passes it as a required param. */
 export function formatResults(results, maxBytes = DEFAULT_RECENT_MAX_BYTES) {
     if (results.length === 0)
         return "No results found.";

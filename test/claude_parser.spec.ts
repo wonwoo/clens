@@ -60,8 +60,7 @@ describe("parseFileBody on canonical fixture", () => {
   const body = readFileSync(FIXTURE, "utf8");
   const result = parseFileBody({ body, source_file: FIXTURE, batch: freshBatch() });
 
-  it("trailing_newline=true and last_ok ends at file end (fixture is fully terminated)", () => {
-    expect(result.trailing_newline).toBe(true);
+  it("last_ok ends at file end (fixture is fully terminated)", () => {
     expect(result.last_ok_byte_offset).toBe(Buffer.from(body, "utf8").byteLength);
   });
 
@@ -518,7 +517,6 @@ describe("partial-last-line handling", () => {
     expect(result.fully_terminated_line_count).toBe(1);
     expect(result.events.length).toBe(1);
     expect(result.last_ok_byte_offset).toBe(body.indexOf("\n") + 1);
-    expect(result.trailing_newline).toBe(false);
   });
 });
 

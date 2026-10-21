@@ -275,7 +275,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     },
                     session_id: {
                         type: "string",
-                        description: "Scope stats to a single session instead of a project. Get it from a clens_search/clens_recent/clens_session result, or pass \"current\" for this conversation (Claude Code and Codex). When set, since is ignored.",
+                        description: "Scope stats to a single session instead of a project. Get it from a clens_search/clens_recent/clens_left_off result, or pass \"current\" for this conversation (Claude Code and Codex). When set, since is ignored.",
                     },
                     since: {
                         type: "string",

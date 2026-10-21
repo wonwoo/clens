@@ -167,8 +167,6 @@ function stripCommandMarkup(text) {
         .trim();
 }
 function isContinuationSummary(text) {
-    if (text.length === 0)
-        return false;
     const head = text.slice(0, 200);
     return /This session is being continued from a previous conversation/i.test(head);
 }
@@ -411,7 +409,8 @@ function walkContent(args) {
     if (userTextChunks.length > 0) {
         const joined = userTextChunks.join("\n");
         if (isMeta) {
-            // Skill/system-injected message — drop user_text (slash_commands already emitted).
+            // Skill/system-injected message — drop user_text. Unlike the string
+            // form above, no slash_command rows are emitted for it.
             bumpAnomaly(batch, "skill_body_skipped");
         }
         else {
@@ -471,8 +470,8 @@ export function agentSessionId(agentId) {
  * Parse one JSONL line into a ParsedEvent. Returns null if the line is
  * empty (consumer can skip), or throws-like flags via the anomaly batch.
  *
- * `seq` is the file-local 1-based ordinal of this line (only used as a
- * fallback uuid when the JSON object is missing one).
+ * `seq` is the file-local 1-based ordinal of this line (only used in the
+ * json_parse_error detail; a line with no uuid is skipped).
  */
 export function parseEventLine(line, source_file, seq, batch, toolResults) {
     if (line.length === 0)
@@ -615,12 +614,12 @@ export function parseEventLine(line, source_file, seq, batch, toolResults) {
 }
 /**
  * Parse an entire JSONL file body. Partial last line (no trailing \n)
- * is excluded from `events` and from `last_ok_byte_offset` so the next
- * incremental run picks it up.
+ * is excluded from `events` and from `last_ok_byte_offset`; the driver
+ * re-reads the whole file on its next change, which picks it up.
  *
- * `last_ok_byte_offset` is a BYTE offset (not codepoint offset). We compute
- * it by working over the UTF-8 buffer directly so multi-byte characters
- * (Korean, emoji, …) don't break file_cursor resume positions.
+ * `last_ok_byte_offset` is a BYTE offset (not codepoint offset), computed
+ * over the UTF-8 buffer. It is stored as file_cursor.last_ok; nothing
+ * resumes reading from it.
  */
 export function parseFileBody(args) {
     const { body, source_file, batch } = args;
@@ -676,7 +675,6 @@ export function parseFileBody(args) {
         }
         i += 1;
     }
-    const trailingNewline = lineStartByte === buf.byteLength;
     // A session started through the SDK (`claude -p`, or a program built on
     // it) is a program's run, not the user's conversation.
     if (entrypoint?.startsWith("sdk-"))
@@ -684,7 +682,6 @@ export function parseFileBody(args) {
     return {
         events,
         anomalies: batch,
-        trailing_newline: trailingNewline,
         fully_terminated_line_count: fullyTerminated,
         last_ok_byte_offset: lastOk,
         tool_results: toolResults,
@@ -698,7 +695,7 @@ export function parseFileBody(args) {
  *   pseudo-user (purely tool_result content).
  * - assistant_turn_no: 1-based row_number over events with role='assistant'.
  *
- * `pseudoUserFlag` is true when the user event's content was purely tool_result
+ * A user event is pseudo-user when its content was purely tool_result
  * blocks (i.e. has_tool_res=1 AND has_text=0 AND has_tool_use=0).
  */
 export function assignTurnNumbers(events) {

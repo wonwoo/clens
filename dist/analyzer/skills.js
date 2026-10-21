@@ -18,9 +18,8 @@
  */
 import { sessionScopedWhere } from "./scope.js";
 export function analyzeSkills(db, scope) {
-    // `sc.` prefix: by_name joins in `session` for source-splitting, and
-    // `skill_call`/`session` both have columns that would otherwise be
-    // ambiguous to the scope filter (e.g. `ts`).
+    // `sc.` prefix: by_name joins in `session` for source-splitting, so its
+    // columns are named by table.
     const skScopeAliased = sessionScopedWhere(scope, "sc.session_id", "sc.ts", "sc.event_uuid");
     const slScope = sessionScopedWhere(scope, "session_id", "ts", "event_uuid");
     const byNameRows = db

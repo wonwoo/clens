@@ -24,13 +24,15 @@ export interface SessionMessage {
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 40;
-/** A message longer than this (a pasted log, a compaction summary; no stored
+/** A message longer than this (a pasted log, a long prompt; no stored
  *  assistant reply is) keeps KEPT_END_CHARS at each end unless `full` is set,
  *  so one pasted log does not fill the caller's context. */
 const LONG_MESSAGE_CHARS = 20_000;
 const KEPT_END_CHARS = 5_000;
 
-const ROLE_FILTER = "role IN ('user', 'assistant') AND type IN ('user_message', 'assistant_message')";
+// The type fixes the role: a user_message row is the user's, an
+// assistant_message row the assistant's.
+const ROLE_FILTER = "type IN ('user_message', 'assistant_message')";
 
 export function sessionContext(db: Database.Database, params: SessionParams): SessionMessage[] {
   const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
