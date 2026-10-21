@@ -67,7 +67,7 @@ The first session indexes your history in the background. A long history takes a
 For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, run this yourself:
 
 ```sh
-node ~/.codex/plugins/cache/clens/clens/<version>/plugin/start.mjs install ko
+node ~/.codex/plugins/cache/clens/clens/<version>/start.mjs install ko
 ```
 
 Then close every open Claude Code and Codex session and start again: a session that was already running keeps indexing without the new analyzer. Without it, those messages are still found by their characters. English needs nothing.
@@ -119,20 +119,20 @@ After a compaction, a hook (`hooks/compact.mjs`) puts that session's work record
 
 ```sh
 git clone https://github.com/wonwoo/clens && cd clens
-npm install                    # also builds dist/
-node dist/cli.js index         # first full index into ~/.clens/index.db
-claude --plugin-dir .          # run the plugin from the clone, this session only
+npm install                    # also builds plugin/
+node plugin/dist/cli.js index  # first full index into ~/.clens/index.db
+claude --plugin-dir plugin     # run the plugin from the clone, this session only
 npm test && npm run typecheck
 ```
 
-To register the MCP server by hand, point it at `dist/mcp/server.js` itself, not `clens mcp`; otherwise `session_id: "current"` stays on the session the server started in after `/clear` or `/resume`.
+To register the MCP server by hand, point it at `plugin/dist/server.js` itself, not `clens mcp`; otherwise `session_id: "current"` stays on the session the server started in after `/clear` or `/resume`.
 
 ```sh
-claude mcp add -s user clens -- node /absolute/path/to/clens/dist/mcp/server.js
-codex mcp add clens -- node /absolute/path/to/clens/dist/mcp/server.js
+claude mcp add -s user clens -- node /absolute/path/to/clens/plugin/dist/server.js
+codex mcp add clens -- node /absolute/path/to/clens/plugin/dist/server.js
 ```
 
-The compaction hook is `hooks/compact.mjs`; `hooks/hooks.json` (Claude Code) and `.codex-plugin/hooks.json` (Codex) show how to register it.
+The compaction hook is `plugin/hooks/compact.mjs`, built from `src/hooks/compact.ts`; `plugin/hooks/hooks.json` (Claude Code) and `plugin/.codex-plugin/hooks.json` (Codex) show how to register it.
 
 The CLI:
 
@@ -145,7 +145,7 @@ clens mcp                   run the MCP server
 
 `CLENS_HOME`, `CLENS_CODEX_HOME` and `CLENS_INDEX_DIR` move `~/.claude`, `~/.codex` and `~/.clens`. Tests point all three at temporary folders, so they never touch your real ones. [CLAUDE.md](CLAUDE.md) holds the rules and invariants to keep when you change the code.
 
-A release ships `dist/` in the repository, because neither Claude Code nor Codex builds a plugin: run `npm run build`, commit `dist/`, and raise `version` in `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`. `claude plugin validate .` checks the Claude Code side.
+Both tools install `plugin/` as it is in the repository, since neither builds a plugin, so `npm run build` bundles `src/` into it and a change is committed with what it builds to. A release raises `version` in `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`. `claude plugin validate plugin` checks the Claude Code side.
 
 ## License
 

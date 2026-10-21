@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run build         # tsc + chmod +x dist/cli.js (the bin entrypoint)
+npm run build         # tsc --noEmit, then bundle src/ into plugin/ (scripts/build.mjs)
 npm run typecheck     # tsc --noEmit
 npm test              # vitest run (full suite)
 npm run test:watch    # vitest in watch mode
@@ -15,7 +15,7 @@ npm run redact        # tsx test/scripts/redact.ts — scrub real session for fi
 npm run synth         # tsx test/scripts/synth-corpus.ts — synthetic JSONL corpus
 ```
 
-Local CLI run (after build): `node dist/cli.js <subcommand>`. Subcommands: `index`, `install <lang>`, `stats [--digest]`, `mcp`.
+Local CLI run (after build): `node plugin/dist/cli.js <subcommand>`. Subcommands: `index`, `install <lang>`, `stats [--digest]`, `mcp`.
 
 ## Test path overrides
 
@@ -33,8 +33,8 @@ The indexer (`src/indexer/`), the MCP server (`src/mcp/`) and the analyzer behin
 
 - The MCP server opens the index read-only; only its watcher writes, through the driver. Only the watcher loads the language analyzers (kiwi's is most of the memory); the other servers, one per session, ask it over a local socket to split search terms (`analyzers.ts`).
 - Claude Code cuts each piece of the server instructions (`src/mcp/instructions.ts`) at 2,048 characters; `mcp_instructions.spec.ts` guards it.
-- The repository root is one plugin for both tools: `.claude-plugin/` and `hooks/hooks.json` for Claude Code, `.codex-plugin/` for Codex. Both start `plugin/start.mjs`, which installs the runtime dependencies on a first run and then runs the server in its own process, since the server finds the calling session through its parent process.
-- clens's own skills (`skills/`) read sessions only through the clens MCP tools, never from transcript files under `~/.claude/projects/` or `~/.codex/sessions/`; where clens lacks something a skill needs, such as tool output, the skill says so instead of opening the file.
+- `plugin/` is one plugin for both tools, and the root's `.claude-plugin/marketplace.json` points both at it: `plugin/.claude-plugin/` and `plugin/hooks/hooks.json` for Claude Code, `plugin/.codex-plugin/` for Codex. Both start `plugin/start.mjs`, which installs the runtime dependencies on a first run and then runs the server in its own process, since the server finds the calling session through its parent process.
+- clens's own skills (`plugin/skills/`) read sessions only through the clens MCP tools, never from transcript files under `~/.claude/projects/` or `~/.codex/sessions/`; where clens lacks something a skill needs, such as tool output, the skill says so instead of opening the file.
 - Raise `version` in both manifests only for a release the user asks for. To get a change into the installed plugin, push it, then reinstall in both tools (Claude Code: `claude plugin marketplace update clens`, `claude plugin uninstall clens@clens`, `claude plugin install clens@clens`; Codex: `codex plugin marketplace upgrade clens`, `codex plugin remove clens@clens`, `codex plugin add clens@clens`), compare the installed copies with the build, and tell the user to restart open sessions.
 
 ### Key invariants
@@ -51,7 +51,7 @@ The indexer (`src/indexer/`), the MCP server (`src/mcp/`) and the analyzer behin
 
 - `"type": "module"` + `module: NodeNext` — all relative imports must end in `.js` (e.g. `import { … } from "./schema.js"`) even when the source is `.ts`.
 - `strict: true`, `noUncheckedIndexedAccess: true` — array access returns `T | undefined`; non-null assertion (`!`) is acceptable when the parser has already established the invariant.
-- Source lives only under `src/`; `dist/` is build output and never edited. `dist/` is committed, because the plugin runs it and neither Claude Code nor Codex builds a plugin: run `npm test` and `npm run build` before each commit, and commit `dist/` with every source change.
+- Source lives only under `src/`. `npm run build` bundles it with esbuild into `plugin/dist/server.js`, `plugin/dist/cli.js` and `plugin/hooks/compact.mjs`, and writes `plugin/package.json` with the two dependencies left out of the bundles, `better-sqlite3` (native) and `kiwi-nlp` (loads a .wasm file beside it), which `plugin/start.mjs` installs. The bundles are never edited and are committed, because neither Claude Code nor Codex builds a plugin: run `npm test` and `npm run build` before each commit, and commit `plugin/` with every source change. CI fails when `plugin/` differs from what the source builds to, and runs `test/scripts/plugin-smoke.mjs`, which runs a copy of `plugin/` with only its own dependencies.
 
 ## Testing notes
 

@@ -67,7 +67,7 @@ codex plugin add clens@clens
 한국어, 일본어, 중국어를 단어 단위로 찾으려면 언어별 분석기를 한 번 받아야 합니다(`ko`, `ja`, `zh`). Claude Code에서는 에이전트에게 `clens install ko`를 실행해 달라고 하면 되고, Codex에서는 아래 명령을 직접 실행하세요.
 
 ```sh
-node ~/.codex/plugins/cache/clens/clens/<버전>/plugin/start.mjs install ko
+node ~/.codex/plugins/cache/clens/clens/<버전>/start.mjs install ko
 ```
 
 받은 다음에는 열려 있는 Claude Code와 Codex 세션을 모두 닫았다가 다시 여세요. 이미 열려 있던 세션은 분석기 없이 계속 색인합니다. 분석기를 받지 않아도 글자로는 찾을 수 있고, 영어는 따로 받을 게 없습니다.
@@ -119,20 +119,20 @@ clens는 Claude Code가 `~/.claude/projects/`에, Codex가 `~/.codex/sessions/`�
 
 ```sh
 git clone https://github.com/wonwoo/clens && cd clens
-npm install                    # dist/ 빌드까지 합니다
-node dist/cli.js index         # ~/.clens/index.db에 첫 색인을 만듭니다
-claude --plugin-dir .          # 이 세션에서만 저장소를 플러그인으로 띄웁니다
+npm install                    # plugin/ 빌드까지 합니다
+node plugin/dist/cli.js index  # ~/.clens/index.db에 첫 색인을 만듭니다
+claude --plugin-dir plugin     # 이 세션에서만 저장소의 플러그인을 띄웁니다
 npm test && npm run typecheck
 ```
 
-MCP 서버를 직접 등록할 때는 `clens mcp` 말고 `dist/mcp/server.js`를 등록하세요. `clens mcp`로 등록하면 `/clear`나 `/resume` 뒤에도 `session_id: "current"`가 서버가 처음 뜬 세션을 가리킵니다.
+MCP 서버를 직접 등록할 때는 `clens mcp` 말고 `plugin/dist/server.js`를 등록하세요. `clens mcp`로 등록하면 `/clear`나 `/resume` 뒤에도 `session_id: "current"`가 서버가 처음 뜬 세션을 가리킵니다.
 
 ```sh
-claude mcp add -s user clens -- node /절대/경로/clens/dist/mcp/server.js
-codex mcp add clens -- node /절대/경로/clens/dist/mcp/server.js
+claude mcp add -s user clens -- node /절대/경로/clens/plugin/dist/server.js
+codex mcp add clens -- node /절대/경로/clens/plugin/dist/server.js
 ```
 
-압축 훅은 `hooks/compact.mjs`입니다. 어떻게 등록하는지는 Claude Code는 `hooks/hooks.json`, Codex는 `.codex-plugin/hooks.json`에 있습니다.
+압축 훅은 `src/hooks/compact.ts`를 빌드한 `plugin/hooks/compact.mjs`입니다. 어떻게 등록하는지는 Claude Code는 `plugin/hooks/hooks.json`, Codex는 `plugin/.codex-plugin/hooks.json`에 있습니다.
 
 CLI 명령은 이렇습니다.
 
@@ -145,7 +145,7 @@ clens mcp                   MCP 서버를 띄웁니다
 
 `CLENS_HOME`, `CLENS_CODEX_HOME`, `CLENS_INDEX_DIR`로 `~/.claude`, `~/.codex`, `~/.clens` 위치를 바꿀 수 있습니다. 테스트는 이 셋을 임시 폴더로 돌려 놓고 돌기 때문에 실제 폴더는 건드리지 않습니다. 코드를 고칠 때 지켜야 할 규칙과 불변 조건은 [CLAUDE.md](CLAUDE.md)에 있습니다.
 
-릴리스할 때는 `dist/`도 같이 커밋합니다. Claude Code도 Codex도 플러그인을 직접 빌드하지 않아서입니다. `npm run build`로 `dist/`를 만들어 커밋하고, `.claude-plugin/plugin.json`과 `.codex-plugin/plugin.json`의 `version`을 올리세요. Claude Code 쪽은 `claude plugin validate .`로 검사할 수 있습니다.
+Claude Code도 Codex도 플러그인을 직접 빌드하지 않고 저장소의 `plugin/`을 그대로 설치합니다. 그래서 `npm run build`가 `src/`를 `plugin/`에 번들로 묶고, 코드를 고치면 빌드 결과도 같이 커밋합니다. 릴리스할 때는 `plugin/.claude-plugin/plugin.json`과 `plugin/.codex-plugin/plugin.json`의 `version`을 올리세요. Claude Code 쪽은 `claude plugin validate plugin`으로 검사할 수 있습니다.
 
 ## 라이선스
 

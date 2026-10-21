@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "clens": {
+      "command": "node",
+      "args": [
+        "./start.mjs",
+        "mcp"
+      ],
+      "cwd": ".",
+      "startup_timeout_sec": 120,
+      "default_tools_approval_mode": "approve"
+    }
+  }
+}

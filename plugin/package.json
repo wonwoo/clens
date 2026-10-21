@@ -1,0 +1,14 @@
+{
+  "name": "clens",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "kiwi-nlp": "^0.23.0"
+  }
+}

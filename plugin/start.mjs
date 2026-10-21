@@ -6,8 +6,8 @@
 // better-sqlite3: Codex copies the plugin and installs nothing, and Claude
 // Code runs `npm ci --ignore-scripts`, which skips the script that fetches
 // better-sqlite3's native binary. So the first run installs the runtime
-// dependencies into the plugin folder, or rebuilds better-sqlite3, before
-// loading dist/ (committed, built by `npm run build`).
+// dependencies into this folder, or rebuilds better-sqlite3, before loading
+// dist/, the bundles `npm run build` writes from the repository's src/.
 //
 // The server runs in this process, not a child: it finds the calling
 // session through its parent process (detectCurrentSessionId).
@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const root = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const deps = Object.keys(pkg.dependencies ?? {});
 const log = (msg) => process.stderr.write(`clens: ${msg}\n`);
@@ -73,8 +73,8 @@ function ensureDependencies() {
   withInstallLock(() => {
     if (missing().length > 0) {
       log("installing runtime dependencies (first run only)…");
-      // Without scripts: clens's own `prepare` builds with tsc, a dev
-      // dependency, and dist/ is already in the plugin.
+      // Without scripts, as Claude Code installs; the rebuild below fetches
+      // better-sqlite3's binary.
       npm(["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]);
     }
     if (!sqliteLoads()) {
@@ -96,7 +96,7 @@ try {
 
 const [command, ...rest] = process.argv.slice(2);
 if (command === "mcp") {
-  await import(pathToFileURL(join(root, "dist", "mcp", "server.js")).href);
+  await import(pathToFileURL(join(root, "dist", "server.js")).href);
 } else {
   process.argv = [process.argv[0], join(root, "dist", "cli.js"), ...(command === undefined ? [] : [command, ...rest])];
   await import(pathToFileURL(join(root, "dist", "cli.js")).href);

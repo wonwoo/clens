@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "clens",
-      "source": "./",
+      "source": "./plugin",
       "description": "A memory of your past Claude Code and Codex sessions, searchable by the agent through MCP tools."
     }
   ]

@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # Both tools install plugin/ as it is in git, so it must be what the
+      # source builds to. `npm ci` has already run the build.
+      - name: plugin/ matches the source
+        run: |
+          git status --porcelain -- plugin
+          test -z "$(git status --porcelain -- plugin)"
+      - name: The plugin runs from its own folder
+        run: node test/scripts/plugin-smoke.mjs
+      - run: node test/scripts/codex-current-e2e.mjs

@@ -11,8 +11,8 @@ import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 
 export async function mcpCommand(): Promise<number> {
-  // This file compiles to dist/commands/; the server is dist/mcp/server.js.
-  const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "mcp", "server.js");
+  // This file is bundled into plugin/dist/cli.js, beside the server's bundle.
+  const serverPath = join(dirname(fileURLToPath(import.meta.url)), "server.js");
   const child = spawn(process.execPath, [serverPath], {
     stdio: "inherit",
     env: process.env,

@@ -4,7 +4,7 @@
  * resolves session_id "current" from a Codex tool call's _meta.
  *
  * Indexes a one-session Codex rollout into a temporary index with the built
- * CLI, starts dist/mcp/server.js over stdio and calls clens_left_off with
+ * CLI, starts plugin/dist/server.js over stdio and calls clens_left_off with
  * session_id "current": once with Codex's x-codex-turn-metadata in _meta
  * (must return that session's record) and once without it (must refuse).
  * Needs `npm run build` first. Touches nothing outside a temporary folder.
@@ -54,8 +54,8 @@ const env = { ...getDefaultEnvironment(), ...dirs };
 let failed = false;
 const client = new Client({ name: "codex-current-e2e", version: "0.0.0" });
 try {
-  execFileSync("node", [join(REPO, "dist", "cli.js"), "index"], { env, stdio: "ignore" });
-  await client.connect(new StdioClientTransport({ command: "node", args: [join(REPO, "dist", "mcp", "server.js")], env }));
+  execFileSync("node", [join(REPO, "plugin", "dist", "cli.js"), "index"], { env, stdio: "ignore" });
+  await client.connect(new StdioClientTransport({ command: "node", args: [join(REPO, "plugin", "dist", "server.js")], env }));
 
   const textOf = (r) => (r.content?.[0]?.type === "text" ? r.content[0].text : "");
   const withMeta = await client.callTool({

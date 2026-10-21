@@ -9,3 +9,4 @@ test/fixtures/lindera/
 coverage/
 .claude/
 .playwright-mcp/
+/dist/
