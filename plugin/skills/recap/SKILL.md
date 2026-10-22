@@ -127,7 +127,14 @@ when_to_use: |
 
 ## Output
 
-Newest first, one block per session:
+Start with where the work stands, in five lines at most, before the first
+session: whether any session stopped mid-task or waits on the user, where the
+commits have reached (all in the default branch, or which branch falls short
+and how far it got), and what the user can pick up now. This is what the user
+came back for, and the rest of the recap is what it rests on. When nothing is
+left to do now, say so, and name what is on hold.
+
+Then the sessions, newest first, one block each:
 
 - its span in local time, the source (claude / codex) and the first 8
   characters of the session id, so the user can ask for more of it
@@ -150,8 +157,8 @@ Newest first, one block per session:
   and quote the line that decides it when it is unclear.
 - what comes next, only when the record states it
 
-Then the commits attached to no session, if any. End with the open items,
-most recent first:
+Then the commits attached to no session, if any. End with what is still
+open:
 
 - branches with the user's commits in the span that are not in the default
   branch yet, with how far each has reached
@@ -160,10 +167,14 @@ most recent first:
 - uncommitted changes from `git status`
 - questions or next steps the sessions left open
 
-An item a later session or commit already settled is not open: a question
-the user answered next time, or work a later commit finished or removed.
-Say when `git fetch` failed and the remote state may be old. Write in the
-user's language.
+List first what the user can act on now, most recent first. After it, apart,
+what is on hold: work the user put off ("wait", "later", "not now", in any
+language), with their words, and work that waits on something not there yet,
+such as reports to pile up or a release, with what it waits for. Mixed into
+one list, the held items hide the next step. An item a later session or
+commit already settled is not open: a question the user answered next time,
+or work a later commit finished or removed. Say when `git fetch` failed and
+the remote state may be old. Write in the user's language.
 
 ## As a document
 
