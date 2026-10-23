@@ -32,6 +32,7 @@
 - 어디까지 했는지 보여 줍니다. 프로젝트나 파일을 하나 고르면 최근 세션마다 마지막 요청과 답, 고친 파일이 나옵니다.
 - 기간을 주면 그동안 나눈 대화를 시간 순서대로 보여 줍니다.
 - `/compact`로 대화가 압축되면 요약에서 잘 빠지는 것들을 바로 다시 넣어 줍니다. 내가 한 요청, 고친 파일, git 명령, 실패한 호출, 훅에 막힌 호출입니다.
+- 에이전트가 실행한 명령이 다시 돌려도 안 되는 이유로 실패하면(명령이 없음, 권한 거부, 호스트를 찾지 못함), 다른 세션에서 같은 실패가 났을 때 에이전트가 그다음에 한 말을 바로 알려 줍니다. 같은 시도를 되풀이하지 않게 하려는 것입니다.
 - Claude Code는 기본 설정에서 30일 지난 대화 기록을 지웁니다. clens에 한 번 들어간 세션은 원본이 지워져도 계속 찾을 수 있습니다.
 - 어떤 도구와 스킬을 많이 쓰는지, 어떤 파일을 자주 고치는지, 훅이 뭘 막았는지, 컨텍스트를 뭐가 많이 먹는지 숫자로 보여 줍니다.
 - 이 프로젝트에서 최근에 한 일을 세션별로 정리합니다(`/clens:recap`).
@@ -58,7 +59,7 @@ codex plugin marketplace add wonwoo/clens
 codex plugin add clens@clens
 ```
 
-설치한 다음 Codex에서 `/hooks`를 열고 clens 훅을 신뢰해 주세요. 신뢰하기 전에는 압축 뒤 복구가 동작하지 않습니다.
+설치한 다음 Codex에서 `/hooks`를 열고 clens 훅을 신뢰해 주세요. 신뢰하기 전에는 압축 뒤 복구와 실패한 명령 안내가 동작하지 않습니다.
 
 처음 세션을 열면 지난 기록을 백그라운드에서 색인합니다. 기록이 많으면 몇 분 걸리고, 그동안은 색인이 끝난 만큼만 찾을 수 있습니다.
 
@@ -105,7 +106,7 @@ clens는 Claude Code가 `~/.claude/projects/`에, Codex가 `~/.codex/sessions/`�
 | `clens_recent` | 기간 안의 메시지를 시간 순서대로 보여 줍니다 |
 | `clens_stats` | 도구, 파일, 훅, 컨텍스트 사용량을 셉니다 |
 
-대화가 압축되면 훅(`hooks/compact.mjs`)이 그 세션의 작업 기록을 대화에 다시 넣습니다. 네트워크는 처음 실행할 때 npm 패키지를 설치하거나 언어 분석기를 받을 때만 씁니다.
+대화가 압축되면 훅(`hooks/compact.mjs`)이 그 세션의 작업 기록을 대화에 다시 넣습니다. 셸 명령이 실패하면 다른 훅(`hooks/tool_failure.mjs`)이 색인에 저장된 실패 기록과 비교합니다. Claude Code에서는 실패했을 때만, Codex에서는 실패 전용 이벤트가 없어서 명령마다 돕니다. 네트워크는 처음 실행할 때 npm 패키지를 설치하거나 언어 분석기를 받을 때만 씁니다.
 
 ## 한계
 
@@ -132,7 +133,7 @@ claude mcp add -s user clens -- node /절대/경로/clens/plugin/dist/server.js
 codex mcp add clens -- node /절대/경로/clens/plugin/dist/server.js
 ```
 
-압축 훅은 `src/hooks/compact.ts`를 빌드한 `plugin/hooks/compact.mjs`입니다. 어떻게 등록하는지는 Claude Code는 `plugin/hooks/hooks.json`, Codex는 `plugin/.codex-plugin/hooks.json`에 있습니다.
+압축 훅은 `src/hooks/compact.ts`를 빌드한 `plugin/hooks/compact.mjs`이고, 실패한 명령 훅은 `src/hooks/tool_failure.ts`를 빌드한 `plugin/hooks/tool_failure.mjs`입니다. 어떻게 등록하는지는 Claude Code는 `plugin/hooks/hooks.json`, Codex는 `plugin/.codex-plugin/hooks.json`에 있습니다.
 
 CLI 명령은 이렇습니다.
 

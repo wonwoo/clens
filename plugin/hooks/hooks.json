@@ -1,5 +1,5 @@
 {
-  "description": "Right after Claude Code compacts a conversation, put that session's clens work record back into it.",
+  "description": "Right after Claude Code compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,18 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/compact.mjs\"",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/tool_failure.mjs\"",
+            "timeout": 10
           }
         ]
       }

@@ -1,5 +1,5 @@
 {
-  "description": "Right after Codex compacts a conversation, put that session's clens work record back into it.",
+  "description": "Right after Codex compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure.",
   "hooks": {
     "SessionStart": [
       {
@@ -10,6 +10,18 @@
             "command": "node \"${PLUGIN_ROOT}/hooks/compact.mjs\"",
             "timeout": 30,
             "additionalContextLimit": 10000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/tool_failure.mjs\"",
+            "timeout": 10
           }
         ]
       }

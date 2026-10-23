@@ -57,6 +57,12 @@ export function indexDbPath(): string {
   return join(clensHome(), "index.db");
 }
 
+/** Where the tool-failure hook (src/hooks/tool_failure.ts) notes, one file
+ *  per session, the failures it already told that session about. */
+export function hintsSeenDir(): string {
+  return join(clensHome(), "hints-seen");
+}
+
 export function indexLockPath(): string {
   return join(clensHome(), "index.db.lock");
 }

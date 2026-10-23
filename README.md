@@ -32,6 +32,7 @@ Status: pre-alpha, not published to npm yet.
 - Shows where you left off in a project or on one file: the latest sessions with their last request, last reply and the files they edited.
 - Lists the conversation in a time window, in order.
 - Recovers after `/compact`. Right after a compaction the agent gets back what the summary tends to drop: your requests, edited files, the git commands that changed state, failed tool calls and hook blocks.
+- Stops the same dead end twice. When a command the agent runs fails in a way a retry does not fix (a missing command, a refused operation, a host that does not resolve), the agent is told what it said next when another session hit the same failure.
 - Keeps what Claude Code deletes. By default Claude Code deletes transcripts older than 30 days; a session clens has indexed stays searchable after its file is gone.
 - Shows how you work: which tools and skills you use most, which files you change most, what hooks blocked, what fills the context.
 - Recaps your recent work in this project, session by session (`/clens:recap`).
@@ -58,7 +59,7 @@ codex plugin marketplace add wonwoo/clens
 codex plugin add clens@clens
 ```
 
-Then open Codex, type `/hooks` and trust clens's hook. Until then the compaction recovery does nothing.
+Then open Codex, type `/hooks` and trust clens's hooks. Until then the compaction recovery and the failed-command hints do nothing.
 
 The first session indexes your history in the background. A long history takes a few minutes; until then, answers cover what is indexed so far.
 
@@ -105,7 +106,7 @@ clens reads the transcripts Claude Code keeps in `~/.claude/projects/` and Codex
 | `clens_recent` | Lists the messages in a time window, in order |
 | `clens_stats` | Counts tools, files, hook blocks and context use |
 
-After a compaction, a hook (`hooks/compact.mjs`) puts that session's work record back into the conversation. clens goes online only to install its npm dependencies on first run and to download a language analyzer.
+After a compaction, a hook (`hooks/compact.mjs`) puts that session's work record back into the conversation. When a shell command fails, another hook (`hooks/tool_failure.mjs`) compares it with the failures in the index; it runs on failures in Claude Code, and after every command in Codex, which has no failure event. clens goes online only to install its npm dependencies on first run and to download a language analyzer.
 
 ## Limits
 
@@ -132,7 +133,7 @@ claude mcp add -s user clens -- node /absolute/path/to/clens/plugin/dist/server.
 codex mcp add clens -- node /absolute/path/to/clens/plugin/dist/server.js
 ```
 
-The compaction hook is `plugin/hooks/compact.mjs`, built from `src/hooks/compact.ts`; `plugin/hooks/hooks.json` (Claude Code) and `plugin/.codex-plugin/hooks.json` (Codex) show how to register it.
+The compaction hook is `plugin/hooks/compact.mjs`, built from `src/hooks/compact.ts`, and the failed-command hook `plugin/hooks/tool_failure.mjs`, built from `src/hooks/tool_failure.ts`; `plugin/hooks/hooks.json` (Claude Code) and `plugin/.codex-plugin/hooks.json` (Codex) show how to register it.
 
 The CLI:
 
