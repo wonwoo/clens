@@ -37,6 +37,7 @@ Status: pre-alpha, not published to npm yet.
 - Shows how you work: which tools and skills you use most, which files you change most, what hooks blocked, what fills the context.
 - Recaps your recent work in this project, session by session (`/clens:recap`).
 - Picks up in Claude Code the work you left in Codex, or the other way round (`/clens:continue`).
+- Tells why a line of code is the way it is: finds the session that wrote it, with the request and the proposal you agreed to (`/clens:why`).
 - Checks how often you had to make the same correction in earlier sessions, and turns it into lines for CLAUDE.md, AGENTS.md or a skill (`/clens:reflect`).
 
 ## Install
@@ -87,6 +88,8 @@ If you set clens up by hand before (`claude mcp add`, `codex mcp add`, a compact
 `/clens:recap` recaps your recent work in this project: what each session did, where it stopped and what is left, with commits tied to the sessions that made them.
 
 `/clens:continue` picks up the work of your latest other session in this project without you retelling it. Use it when you switch tools, say from Codex to Claude Code.
+
+`/clens:why` explains why a piece of code is the way it is. It finds the session whose edit wrote the line, so it works after a squash or a rebase too, and reads the request of that turn and the proposal you said yes to. When no stored edit has the line, it follows `git blame` to the session that made the commit.
 
 `/clens:reflect` turns what you had to correct or explain in this session into proposed edits to CLAUDE.md or AGENTS.md and to skills. Each proposal comes with the earlier sessions where the same thing happened, and only what you pick is written. A rule that a hook or a script would enforce better than a line of text is listed apart, with each time it went wrong: when, and which command failed. Give it a period (`/clens:reflect 2w`, `/clens:reflect 10주`, up to 10 weeks) to review this project's sessions over that time instead. Each run's results and your decisions are kept in `~/.clens/reflect/`, and the next run takes them into account: what you declined is not proposed again unless the problem came back. A run on one session takes about 10 to 20 minutes; a period takes longer.
 

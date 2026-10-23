@@ -7,9 +7,10 @@
  * Installs from plugin/package-lock.json as Claude Code does (`npm ci
  * --ignore-scripts`), indexes fixture sessions with `start.mjs index`,
  * starts the server with `start.mjs mcp` and searches it, runs the
- * compaction hook for one session, and runs the tool-failure hook on a `gh`
- * that another session found missing. Needs `npm run build` first and the
- * npm registry. Touches nothing outside a temporary folder.
+ * compaction hook for one session, runs the tool-failure hook on a `gh`
+ * that another session found missing, and asks which session wrote a line.
+ * Needs `npm run build` first and the npm registry. Touches nothing outside
+ * a temporary folder.
  *
  *   node test/scripts/plugin-smoke.mjs
  */
@@ -36,7 +37,7 @@ const project = join(dirs.CLENS_HOME, "projects", "-fixture-cwd");
 for (const dir of [project, dirs.CLENS_CODEX_HOME, dirs.CLENS_INDEX_DIR]) mkdirSync(dir, { recursive: true });
 cpSync(join(REPO, "test", "fixtures", "brainstorm-session.jsonl"), join(project, "test.jsonl"));
 // A session whose `gh` call failed, for the tool-failure hook.
-const line = (uuid, parentUuid, timestamp, type, content) => ({ uuid, parentUuid, timestamp, type, sessionId: "gh", cwd: "/fixture/cwd", message: { role: type, content } });
+const line = (uuid, parentUuid, timestamp, type, content, sessionId = "gh") => ({ uuid, parentUuid, timestamp, type, sessionId, cwd: "/fixture/cwd", message: { role: type, content } });
 writeFileSync(
   join(project, "gh.jsonl"),
   [
@@ -44,6 +45,18 @@ writeFileSync(
     line("g2", "g1", "2026-06-22T01:00:05Z", "assistant", [{ type: "tool_use", id: "toolu_gh", name: "Bash", input: { command: "gh pr create" } }]),
     line("g3", "g2", "2026-06-22T01:00:06Z", "user", [{ type: "tool_result", tool_use_id: "toolu_gh", is_error: true, content: "Exit code 127\n(eval):1: command not found: gh" }]),
     line("g4", "g3", "2026-06-22T01:00:10Z", "assistant", [{ type: "text", text: "gh is not installed here, so I pushed with git." }]),
+  ].map((l) => JSON.stringify(l)).join("\n") + "\n",
+);
+// A session that wrote a line after the user agreed to it, for clens_left_off's text.
+const KEY_LINE = "const key = `${sessionId}:${name}`;";
+writeFileSync(
+  join(project, "why.jsonl"),
+  [
+    line("w1", null, "2026-06-22T02:00:00Z", "user", "make the cache key per session", "why"),
+    line("w2", "w1", "2026-06-22T02:00:05Z", "assistant", [{ type: "text", text: "Keying the cache by session keeps two sessions apart; shall I?" }], "why"),
+    line("w3", "w2", "2026-06-22T02:00:10Z", "user", "do it", "why"),
+    line("w4", "w3", "2026-06-22T02:00:15Z", "assistant", [{ type: "tool_use", id: "toolu_why", name: "Edit", input: { file_path: "/fixture/cwd/src/cache.ts", old_string: "const key = name;", new_string: KEY_LINE } }], "why"),
+    line("w5", "w4", "2026-06-22T02:00:16Z", "user", [{ type: "tool_result", tool_use_id: "toolu_why", content: "The file has been updated." }], "why"),
   ].map((l) => JSON.stringify(l)).join("\n") + "\n",
 );
 cpSync(join(REPO, "plugin"), plugin, {
@@ -69,6 +82,11 @@ try {
   const found = await client.callTool({ name: "clens_search", arguments: { query: "brainstorming", project_id: "-fixture-cwd", limit: 3 } });
   const text = found.content?.[0]?.text ?? "";
   check("search", !found.isError && text.includes("session:test"), text);
+  const wrote = await client.callTool({ name: "clens_left_off", arguments: { file: "src/cache.ts", text: KEY_LINE } });
+  const wroteText = wrote.content?.[0]?.text ?? "";
+  check("line origin", !wrote.isError && wroteText.includes("session:why") && wroteText.includes("request 2026-06-22T02:00:10") && wroteText.includes("shall I?"), wroteText);
+  const noFile = await client.callTool({ name: "clens_left_off", arguments: { text: KEY_LINE } });
+  check("line origin (no file)", noFile.isError === true && (noFile.content?.[0]?.text ?? "").includes("text needs file"), JSON.stringify(noFile));
 
   const hook = execFileSync("node", [join(plugin, "hooks", "compact.mjs")], {
     env,

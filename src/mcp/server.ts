@@ -43,6 +43,7 @@ import { sessionContext } from "./session.js";
 import {
   leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord, commitSessions, formatCommitSessions,
 } from "./left_off.js";
+import { formatLineOrigins, lineOrigins } from "./line_origin.js";
 import { SEARCH_DESCRIPTION, SERVER_INSTRUCTIONS, STATS_DESCRIPTION } from "./instructions.js";
 import { formatStats, projectStats, STATS_SECTIONS } from "./stats.js";
 import { codexSessionFromMeta, detectCurrentSessionId, resolveSessionId } from "./current_session.js";
@@ -91,7 +92,11 @@ const LeftOffParamsSchema = z.strictObject({
   limit: z.number().int().min(1).max(10).optional(),
   session_id: z.string().min(1).optional(),
   commits: z.array(z.string().min(1)).min(1).max(50).optional(),
+  text: z.string().min(1).optional(),
 });
+
+/** Fewer non-space characters than this match too many edits to tell one apart. */
+const MIN_TEXT_CHARS = 20;
 
 const StatsParamsSchema = z.strictObject({
   // min(1): an empty string would otherwise fall through to a wider scope.
@@ -256,7 +261,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "clens_left_off",
       description:
-        "Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first. " +
+        "Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first; or, with file and text, the sessions that wrote that text. " +
         "Each comes with when its conversation started and ended, the user's last request, the assistant's last reply (often a status or summary) and the files it edited. " +
         "Use it for \"where did I leave off\", \"what was I doing on this\", \"who last changed this file and why\"; then clens_session to read more of one. " +
         "When the limit leaves out a session that was active in the span the list covers, the list ends with how many. " +
@@ -287,13 +292,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           session_id: {
             type: "string",
             description:
-              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit and commits are then ignored.",
+              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits and text are then ignored.",
           },
           commits: {
             type: "array",
             items: { type: "string" },
             description:
               "Commit subjects (git log's %s), 1-50. Returns, for each, the sessions that ran git commit with it, newest first, instead of a list: which of the sessions open at a commit's time made it. project_id, since and until narrow it; file and limit are then ignored. Not found: a commit whose command holds no subject (--no-edit, revert, rebase, -F with a file).",
+          },
+          text: {
+            type: "string",
+            description:
+              "Text from the file, one line or a few, with file. Returns the sessions whose edits of that file wrote it, the first first, instead of a list: each at its first such edit, with the user's request that started that turn and the assistant reply just before the request, which is what the user answered and often holds the reasons. When the same session wrote it again in a later turn, that last turn follows as \"written again\": it holds the reason when the first attempt was rolled back, the first turn does when later work only carried the text along. Read around a request with clens_session. Lines are trimmed and must all appear in one edit; at least 20 characters in all. project_id, since, until and limit narrow it. An edit's input is stored up to 2 KB, so later lines of a long edit or of a large new file are not found.",
           },
         },
       },
@@ -423,6 +433,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           ? formatSessionRecord(record)
           : `No session found: ${resolved.id}. A session only just started may not be indexed yet; try again in a few seconds.`;
         return { content: [{ type: "text", text }] };
+      }
+      if (parsed.data.text !== undefined) {
+        const { file, text, commits } = parsed.data;
+        const invalid = (message: string) => ({ content: [{ type: "text" as const, text: `Invalid params: ${message}` }], isError: true });
+        if (file === undefined) return invalid("text needs file, the file the text is in");
+        if (commits !== undefined) return invalid("pass text or commits, not both");
+        if (text.replace(/\s/g, "").length < MIN_TEXT_CHARS) {
+          return invalid("text is too short to tell one edit from another; pass a longer line or a few lines");
+        }
+        return { content: [{ type: "text", text: formatLineOrigins(file, lineOrigins(getDb(), file, text, parsed.data)) }] };
       }
       if (parsed.data.commits !== undefined) {
         return { content: [{ type: "text", text: formatCommitSessions(commitSessions(getDb(), parsed.data.commits, parsed.data)) }] };

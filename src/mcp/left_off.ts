@@ -43,8 +43,8 @@ export interface LeftOffSession {
 const DEFAULT_LIMIT = 3;
 const MAX_LIMIT = 10;
 const EDIT_TOOLS = "('Edit', 'Write', 'NotebookEdit', 'apply_patch', 'Bash', 'exec_command')";
-const REQUEST_CHARS = 500;
-const REPLY_CHARS = 1500;
+export const REQUEST_CHARS = 500;
+export const REPLY_CHARS = 1500;
 const FILES_SHOWN = 10;
 
 /** A slash command typed with nothing after it ("/compact", "/clear") acts on
@@ -59,12 +59,12 @@ const BARE_COMMAND = (alias: string) =>
  *  tree. UNION, not UNION ALL, so a cycle ends. */
 const TREE = `WITH RECURSIVE tree(id) AS (
     SELECT ? UNION SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id)`;
-const TOP = `WITH RECURSIVE top(id, root) AS (
+export const TOP = `WITH RECURSIVE top(id, root) AS (
     SELECT id, id FROM session WHERE parent_id IS NULL
     UNION SELECT s.id, t.root FROM session s JOIN top t ON s.parent_id = t.id)`;
 
 /** A conversation message worth reading. */
-const REAL_MESSAGE = (alias: string) =>
+export const REAL_MESSAGE = (alias: string) =>
   `${alias}.type IN ('user_message', 'assistant_message') AND ${notNoise(alias)} AND NOT ${BARE_COMMAND(alias)}`;
 
 /** Sessions the limit left out although they were active in the span the

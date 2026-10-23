@@ -31111,6 +31111,130 @@ function formatCommitSessions(commits) {
   ]).join("\n");
 }
 
+// src/mcp/line_origin.ts
+var DEFAULT_LIMIT5 = 3;
+var NEW_TEXT_KEY = {
+  Edit: '"new_string":',
+  Write: '"content":',
+  NotebookEdit: '"new_source":'
+};
+var PATCH_HEADER = /^\*\*\* (?:Update File|Add File|Delete File|Move to): ([^\n\r\\"'`]+)/;
+var PATCH_END = "*** End Patch";
+var escaped = (s) => JSON.stringify(s).slice(1, -1);
+function addedLines(input, path, inLiteral) {
+  const out = [];
+  let mine = false;
+  for (const line of input.split(inLiteral ? /\r?\n|(?<!\\)\\n/ : /\r?\n/)) {
+    const header = PATCH_HEADER.exec(line);
+    if (header) {
+      const named = header[1].trim().replace(/^\.\//, "");
+      mine = named === path || path.endsWith(`/${named}`);
+    } else if (line.startsWith(PATCH_END)) {
+      mine = false;
+    } else if (mine && line.startsWith("+")) {
+      out.push(line);
+    }
+  }
+  return out;
+}
+function wrote(name, input, path, lines) {
+  const key = NEW_TEXT_KEY[name];
+  if (key !== void 0) {
+    const at = input.indexOf(key);
+    return at >= 0 && lines.every((l) => input.indexOf(escaped(l), at) >= 0);
+  }
+  const added = addedLines(input, path, name === "exec");
+  return lines.every((l) => added.some((a) => a.includes(l) || a.includes(escaped(l))));
+}
+function lineOrigins(db2, file2, text, params) {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  if (lines.length === 0) return [];
+  const longest = lines.reduce((a, b) => b.length > a.length ? b : a);
+  const tail = file2.replace(/^\.\//, "");
+  const like = "%/" + tail.replace(/[\\%_]/g, (c) => "\\" + c);
+  const conditions = [];
+  const bindings = [];
+  if (params.project_id) {
+    conditions.push("s.project_id = ?");
+    bindings.push(params.project_id);
+  }
+  if (params.since) {
+    conditions.push("t.ts >= ?");
+    bindings.push(params.since);
+  }
+  if (params.until) {
+    conditions.push("t.ts <= ?");
+    bindings.push(params.until);
+  }
+  const rows = db2.prepare(`
+    ${TOP}
+    SELECT top.root AS session_id, s.project_id, s.source, t.ts, t.name, t.input_json, f.path
+    FROM file_op f
+    JOIN tool_call t ON t.event_uuid = f.event_uuid AND t.session_id = f.session_id
+    JOIN top ON top.id = t.session_id
+    JOIN session s ON s.id = top.root
+    WHERE f.tool IN ('Edit', 'Write', 'NotebookEdit', 'apply_patch')
+      AND (f.path = ? OR f.path LIKE ? ESCAPE '\\')
+      AND t.name IN ('Edit', 'Write', 'NotebookEdit', 'apply_patch', 'exec')
+      AND (instr(t.input_json, ?) > 0 OR instr(t.input_json, ?) > 0)
+      AND ${notCopiedClause("t.event_uuid", "t.session_id")}
+      ${conditions.map((c) => `AND ${c}`).join(" ")}
+    ORDER BY t.ts`).all(file2, like, longest, escaped(longest), ...bindings);
+  const bySession = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (!wrote(row.name, row.input_json, row.path, lines)) continue;
+    const seen = bySession.get(row.session_id);
+    if (seen) seen.last = row;
+    else bySession.set(row.session_id, { first: row, last: row });
+  }
+  const request = db2.prepare(`SELECT u.ts, u.text FROM user_text u
+    WHERE u.session_id = ? AND u.role = 'user' AND ${REAL_MESSAGE("u")} AND u.ts <= ?
+    ORDER BY u.ts DESC LIMIT 1`);
+  const replyBefore = db2.prepare(`SELECT u.ts, u.text FROM user_text u
+    WHERE u.session_id = ? AND u.role = 'assistant' AND ${REAL_MESSAGE("u")} AND u.ts < ?
+    ORDER BY u.ts DESC LIMIT 1`);
+  const turnOf = (row) => {
+    const req = request.get(row.session_id, row.ts);
+    const reply = req ? replyBefore.get(row.session_id, req.ts) : void 0;
+    return {
+      edited_at: row.ts,
+      tool: row.name,
+      request: req ? { ts: req.ts, text: cutChars(req.text, REQUEST_CHARS) } : null,
+      reply_before: reply ? { ts: reply.ts, text: cutChars(reply.text, REPLY_CHARS) } : null
+    };
+  };
+  return [...bySession.values()].slice(0, params.limit ?? DEFAULT_LIMIT5).map(({ first, last }) => {
+    const firstTurn = turnOf(first);
+    const lastTurn = last === first ? null : turnOf(last);
+    return {
+      session_id: first.session_id,
+      project_id: first.project_id,
+      source: first.source,
+      ...firstTurn,
+      last: lastTurn && lastTurn.request?.ts !== firstTurn.request?.ts ? lastTurn : null
+    };
+  });
+}
+function formatLineOrigins(file2, origins) {
+  const name = JSON.stringify(file2);
+  if (origins.length === 0) {
+    return `${name}: no stored edit wrote this text. Edits are stored up to 2 KB, and text written by shell commands is not matched; git blame and the commits parameter may find the commit's session.`;
+  }
+  const head = origins.length === 1 ? `${name}: 1 session wrote this text` : `${name}: ${origins.length} sessions wrote this text, the first first`;
+  const turn = (t, indent) => [
+    ...t.request ? [`${indent}request ${t.request.ts}: ${t.request.text}`] : [],
+    ...t.reply_before ? [`${indent}reply before it ${t.reply_before.ts}: ${t.reply_before.text}`] : []
+  ];
+  return [
+    head,
+    ...origins.flatMap((o) => [
+      `${o.edited_at}  session:${o.session_id}  project:${o.project_id ?? "?"}  ${o.source}  ${o.tool}`,
+      ...turn(o, "  "),
+      ...o.last ? [`  written again ${o.last.edited_at}  ${o.last.tool}`, ...turn(o.last, "    ")] : []
+    ])
+  ].join("\n");
+}
+
 // src/mcp/instructions.ts
 var SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply, with session ids and timestamps. It keeps sessions whose transcripts were deleted.
 
@@ -31729,8 +31853,10 @@ var LeftOffParamsSchema = external_exports.strictObject({
   until: external_exports.string().optional(),
   limit: external_exports.number().int().min(1).max(10).optional(),
   session_id: external_exports.string().min(1).optional(),
-  commits: external_exports.array(external_exports.string().min(1)).min(1).max(50).optional()
+  commits: external_exports.array(external_exports.string().min(1)).min(1).max(50).optional(),
+  text: external_exports.string().min(1).optional()
 });
+var MIN_TEXT_CHARS = 20;
 var StatsParamsSchema = external_exports.strictObject({
   // min(1): an empty string would otherwise fall through to a wider scope.
   project_id: external_exports.string().min(1).optional(),
@@ -31870,7 +31996,7 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "clens_left_off",
-      description: `Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first. Each comes with when its conversation started and ended, the user's last request, the assistant's last reply (often a status or summary) and the files it edited. Use it for "where did I leave off", "what was I doing on this", "who last changed this file and why"; then clens_session to read more of one. When the limit leaves out a session that was active in the span the list covers, the list ends with how many. In Claude Code and Codex the current conversation is left out of the list; pass session_id "current" for its own record, for example after the conversation was compacted. A subagent's edits count as the session that started it. Files a shell command wrote are read off its text (redirects, tee, sed -i, heredoc and -c/-e scripts); a path set only when it ran ($VAR, $(\u2026)) is missed.`,
+      description: `Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first; or, with file and text, the sessions that wrote that text. Each comes with when its conversation started and ended, the user's last request, the assistant's last reply (often a status or summary) and the files it edited. Use it for "where did I leave off", "what was I doing on this", "who last changed this file and why"; then clens_session to read more of one. When the limit leaves out a session that was active in the span the list covers, the list ends with how many. In Claude Code and Codex the current conversation is left out of the list; pass session_id "current" for its own record, for example after the conversation was compacted. A subagent's edits count as the session that started it. Files a shell command wrote are read off its text (redirects, tee, sed -i, heredoc and -c/-e scripts); a path set only when it ran ($VAR, $(\u2026)) is missed.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -31896,12 +32022,16 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           session_id: {
             type: "string",
-            description: `A session id from another clens result, or "current" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit and commits are then ignored.`
+            description: `A session id from another clens result, or "current" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits and text are then ignored.`
           },
           commits: {
             type: "array",
             items: { type: "string" },
             description: "Commit subjects (git log's %s), 1-50. Returns, for each, the sessions that ran git commit with it, newest first, instead of a list: which of the sessions open at a commit's time made it. project_id, since and until narrow it; file and limit are then ignored. Not found: a commit whose command holds no subject (--no-edit, revert, rebase, -F with a file)."
+          },
+          text: {
+            type: "string",
+            description: `Text from the file, one line or a few, with file. Returns the sessions whose edits of that file wrote it, the first first, instead of a list: each at its first such edit, with the user's request that started that turn and the assistant reply just before the request, which is what the user answered and often holds the reasons. When the same session wrote it again in a later turn, that last turn follows as "written again": it holds the reason when the first attempt was rolled back, the first turn does when later work only carried the text along. Read around a request with clens_session. Lines are trimmed and must all appear in one edit; at least 20 characters in all. project_id, since, until and limit narrow it. An edit's input is stored up to 2 KB, so later lines of a long edit or of a large new file are not found.`
           }
         }
       }
@@ -32014,6 +32144,16 @@ ${m.text}`).join("\n\n");
         const record2 = sessionRecord(getDb(), resolved.id);
         const text = record2 ? formatSessionRecord(record2) : `No session found: ${resolved.id}. A session only just started may not be indexed yet; try again in a few seconds.`;
         return { content: [{ type: "text", text }] };
+      }
+      if (parsed.data.text !== void 0) {
+        const { file: file2, text, commits } = parsed.data;
+        const invalid = (message) => ({ content: [{ type: "text", text: `Invalid params: ${message}` }], isError: true });
+        if (file2 === void 0) return invalid("text needs file, the file the text is in");
+        if (commits !== void 0) return invalid("pass text or commits, not both");
+        if (text.replace(/\s/g, "").length < MIN_TEXT_CHARS) {
+          return invalid("text is too short to tell one edit from another; pass a longer line or a few lines");
+        }
+        return { content: [{ type: "text", text: formatLineOrigins(file2, lineOrigins(getDb(), file2, text, parsed.data)) }] };
       }
       if (parsed.data.commits !== void 0) {
         return { content: [{ type: "text", text: formatCommitSessions(commitSessions(getDb(), parsed.data.commits, parsed.data)) }] };
