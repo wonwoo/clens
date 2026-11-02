@@ -24,7 +24,7 @@ What did I do yesterday?
 Which files did I change and what did I commit before the compaction?
 ```
 
-Status: pre-alpha, not published to npm yet.
+Status: pre-alpha.
 
 ## What it does
 
@@ -66,10 +66,11 @@ The first session indexes your history in the background. A long history takes a
 
 ### Korean, Japanese and Chinese search
 
-For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, run this yourself:
+For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, install the CLI from npm and run it yourself:
 
 ```sh
-node ~/.codex/plugins/cache/clens/clens/<version>/start.mjs install ko
+npm i -g clens
+clens install ko
 ```
 
 Then close every open Claude Code and Codex session and start again: a session that was already running keeps indexing without the new analyzer. Without it, those messages are still found by their characters. English needs nothing.

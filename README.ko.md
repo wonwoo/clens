@@ -24,7 +24,7 @@
 압축 전에 고친 파일이랑 커밋 알려 줘
 ```
 
-아직 초기 버전이라 npm에는 올리지 않았습니다.
+아직 초기 버전입니다.
 
 ## 하는 일
 
@@ -66,10 +66,11 @@ codex plugin add clens@clens
 
 ### 한국어·일본어·중국어 검색
 
-한국어, 일본어, 중국어를 단어 단위로 찾으려면 언어별 분석기를 한 번 받아야 합니다(`ko`, `ja`, `zh`). Claude Code에서는 에이전트에게 `clens install ko`를 실행해 달라고 하면 되고, Codex에서는 아래 명령을 직접 실행하세요.
+한국어, 일본어, 중국어를 단어 단위로 찾으려면 언어별 분석기를 한 번 받아야 합니다(`ko`, `ja`, `zh`). Claude Code에서는 에이전트에게 `clens install ko`를 실행해 달라고 하면 되고, Codex에서는 npm으로 CLI를 설치한 뒤 직접 실행하세요.
 
 ```sh
-node ~/.codex/plugins/cache/clens/clens/<버전>/start.mjs install ko
+npm i -g clens
+clens install ko
 ```
 
 받은 다음에는 열려 있는 Claude Code와 Codex 세션을 모두 닫았다가 다시 여세요. 이미 열려 있던 세션은 분석기 없이 계속 색인합니다. 분석기를 받지 않아도 글자로는 찾을 수 있고, 영어는 따로 받을 게 없습니다.
