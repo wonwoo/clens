@@ -69,7 +69,7 @@ The first session indexes your history in the background. A long history takes a
 For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, install the CLI from npm and run it yourself:
 
 ```sh
-npm i -g clens
+npm i -g @clens/cli
 clens install ko
 ```
 

@@ -69,7 +69,7 @@ codex plugin add clens@clens
 한국어, 일본어, 중국어를 단어 단위로 찾으려면 언어별 분석기를 한 번 받아야 합니다(`ko`, `ja`, `zh`). Claude Code에서는 에이전트에게 `clens install ko`를 실행해 달라고 하면 되고, Codex에서는 npm으로 CLI를 설치한 뒤 직접 실행하세요.
 
 ```sh
-npm i -g clens
+npm i -g @clens/cli
 clens install ko
 ```
 

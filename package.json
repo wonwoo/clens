@@ -1,10 +1,13 @@
 {
-  "name": "clens",
+  "name": "@clens/cli",
   "version": "0.1.0",
   "description": "Search past Claude Code and Codex sessions — local SQLite index served over MCP",
   "license": "MIT",
   "bin": {
     "clens": "plugin/dist/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "plugin/dist"
