@@ -148,7 +148,7 @@ clens stats [--digest]      색인의 행 수나 테이블마다 SHA-256 digest�
 clens mcp                   MCP 서버를 띄웁니다
 ```
 
-`CLENS_HOME`, `CLENS_CODEX_HOME`, `CLENS_INDEX_DIR`로 `~/.claude`, `~/.codex`, `~/.clens` 위치를 바꿀 수 있습니다. 테스트는 이 셋을 임시 폴더로 돌려 놓고 돌기 때문에 실제 폴더는 건드리지 않습니다. 코드를 고칠 때 지켜야 할 규칙과 불변 조건은 [CLAUDE.md](CLAUDE.md)에 있습니다.
+`CLENS_HOME`, `CLENS_CODEX_HOME`, `CLENS_INDEX_DIR`로 `~/.claude`, `~/.codex`, `~/.clens` 위치를 바꿀 수 있습니다. 테스트는 이 셋을 임시 폴더로 돌려 놓고 돌기 때문에 실제 폴더는 건드리지 않습니다. 코드를 고칠 때 지켜야 할 규칙과 불변 조건은 [AGENTS.md](AGENTS.md)에 있습니다.
 
 Claude Code도 Codex도 플러그인을 직접 빌드하지 않고 저장소의 `plugin/`을 그대로 설치합니다. 그래서 `npm run build`가 `src/`를 `plugin/`에 번들로 묶고, 코드를 고치면 빌드 결과도 같이 커밋합니다. 릴리스할 때는 `plugin/.claude-plugin/plugin.json`과 `plugin/.codex-plugin/plugin.json`의 `version`을 올리세요. Claude Code 쪽은 `claude plugin validate plugin`으로 검사할 수 있습니다.
 

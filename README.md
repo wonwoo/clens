@@ -148,7 +148,7 @@ clens stats [--digest]      print the index's row counts, or a SHA-256 digest of
 clens mcp                   run the MCP server
 ```
 
-`CLENS_HOME`, `CLENS_CODEX_HOME` and `CLENS_INDEX_DIR` move `~/.claude`, `~/.codex` and `~/.clens`. Tests point all three at temporary folders, so they never touch your real ones. [CLAUDE.md](CLAUDE.md) holds the rules and invariants to keep when you change the code.
+`CLENS_HOME`, `CLENS_CODEX_HOME` and `CLENS_INDEX_DIR` move `~/.claude`, `~/.codex` and `~/.clens`. Tests point all three at temporary folders, so they never touch your real ones. [AGENTS.md](AGENTS.md) holds the rules and invariants to keep when you change the code.
 
 Both tools install `plugin/` as it is in the repository, since neither builds a plugin, so `npm run build` bundles `src/` into it and a change is committed with what it builds to. A release raises `version` in `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`. `claude plugin validate plugin` checks the Claude Code side.
 
