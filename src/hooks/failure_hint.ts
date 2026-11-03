@@ -13,6 +13,7 @@ import type Database from "better-sqlite3";
 import { workKindClause } from "../analyzer/scope.js";
 import { errorExcerpt } from "../indexer/claude_parser.js";
 import { cutChars, escapeRegExp } from "../mcp/search.js";
+import { execCodeCommands } from "../util/codex_exec.js";
 
 export type FailureKind = "missing" | "network" | "permission";
 
@@ -98,9 +99,9 @@ function toldFile(dir: string, sessionId: string): string {
 }
 
 /** Whether this session was already told about the failure `key`. The index
- *  cannot always say: Codex stores the commands it runs in code mode as `exec`
- *  calls with their output wrapped in JSON, so a session's own failures there
- *  do not key like the one being reported. */
+ *  cannot always say: a Codex exec (code mode) call whose script printed
+ *  nothing of a failed command, and that has no CommandExecution item for it,
+ *  is stored with no excerpt, so it does not key like the one being reported. */
 export function alreadyTold(dir: string, sessionId: string, key: string): boolean {
   try {
     return readFileSync(toldFile(dir, sessionId), "utf8").split("\n").includes(key);
@@ -134,14 +135,19 @@ interface FailedCall {
   project_cwd: string | null;
 }
 
-function commandOf(inputJson: string | null): string {
+function commandOf(inputJson: string | null, word: string | null = null): string {
+  let command = "";
   try {
     const input = JSON.parse(inputJson ?? "{}") as { command?: unknown; cmd?: unknown };
-    const command = typeof input.command === "string" ? input.command : typeof input.cmd === "string" ? input.cmd : "";
-    return cutChars(command.split("\n")[0] ?? "", 80);
+    command = typeof input.command === "string" ? input.command : typeof input.cmd === "string" ? input.cmd : "";
   } catch {
-    return "";
+    // Codex exec (code mode) input is the script itself: its commands are
+    // string literals in it. Of several, the one naming what failed.
+    const commands = execCodeCommands(inputJson ?? "").map((c) => c.cmd);
+    const names = word === null ? null : new RegExp(`(?<![\\w.-])${escapeRegExp(word)}(?![\\w-])`);
+    command = (names === null ? undefined : commands.find((c) => names.test(c))) ?? commands[0] ?? "";
   }
+  return cutChars(command.split("\n")[0] ?? "", 80);
 }
 
 /** The word a reply about this failure would name: the missing command, the
@@ -194,7 +200,7 @@ export function failureHint(db: Database.Database, input: FailureInput, now: num
        FROM tool_call t
        JOIN session s ON s.id = t.session_id
        LEFT JOIN project p ON p.id = s.project_id
-       WHERE t.is_error = 1 AND t.error_excerpt IS NOT NULL AND t.name IN ('Bash', 'exec_command')
+       WHERE t.is_error = 1 AND t.error_excerpt IS NOT NULL AND t.name IN ('Bash', 'exec_command', 'exec')
          AND (s.id = ? OR s.parent_id = ? OR ${workKindClause("s")}) ${inProject}
        ORDER BY t.ts DESC`,
     )
@@ -219,12 +225,14 @@ export function failureHint(db: Database.Database, input: FailureInput, now: num
   );
   const what = key.kind === "missing" ? `\`${key.key.slice("missing:".length)}\` not found` : key.kind === "network" ? "network" : "operation refused";
   const lines = [`clens: this failure (${what}) happened in an earlier session too. What the agent did then:`];
+  const named = key.kind === "permission" ? null : key.key.slice(key.kind.length + 1);
   for (const call of picked) {
     const where = call.project_id !== null && !projects.has(call.project_id) ? ` in ${basename(call.project_cwd ?? call.project_id)}` : "";
-    lines.push(`- ${call.ts.slice(0, 10)}${where}: \`${commandOf(call.input_json)}\` (session ${call.session_id}, around_ts ${call.ts})`);
+    const command = commandOf(call.input_json, named);
+    lines.push(`- ${call.ts.slice(0, 10)}${where}: \`${command}\` (session ${call.session_id}, around_ts ${call.ts})`);
     const until = new Date(Date.parse(call.ts) + REPLY_WITHIN_MS).toISOString();
     const replies = repliesAfter.all(call.session_id, call.ts, until) as { text: string }[];
-    const reply = namedReply(replies, failureWord(key, commandOf(call.input_json)));
+    const reply = namedReply(replies, failureWord(key, command));
     if (reply) lines.push(`  next reply: ${cutChars(reply.replace(/\s+/g, " "), 240)}`);
   }
   lines.push("Read more with clens_session. Ignore this if it does not apply.");

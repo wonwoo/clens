@@ -398,11 +398,13 @@ describe("indexer — a Codex subagent rollout next to its parent", () => {
         { name: "exec", is_error: 0, result_chars: 25 },
       ]);
       // A command that exited after its call returned keeps the output that
-      // reported the exit, which came through write_stdin.
+      // reported the exit, which came through write_stdin. An exec script
+      // that printed nothing keeps its failed command's CommandExecution
+      // item: the exit line, and here no output.
       expect(excerpts).toEqual([
         { call_id: "c2", error_excerpt: "Process exited with code 1" },
         { call_id: "c3", error_excerpt: "Command blocked by PreToolUse hook: pushes need review. Command: git push" },
-        { call_id: "x1", error_excerpt: "Script completed\nOutput:" },
+        { call_id: "x1", error_excerpt: "Process exited with code 1" },
         { call_id: "c4", error_excerpt: "Process exited with code 1" },
       ]);
       expect(okExcerpts).toEqual({ n: 0 });

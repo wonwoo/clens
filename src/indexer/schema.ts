@@ -75,7 +75,14 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // disk to add them.
 // v15: a failed Codex shell call's error_excerpt leaves out its output
 // header but the exit line (failedOutputText in codex_parser.ts).
-export const SCHEMA_VERSION = 15;
+// v16: a Codex exec (code mode) call fails when a command result it printed
+// exited nonzero, its error_excerpt is that result's output and the script
+// error without the script header or the result's JSON (or, when the script
+// printed none of it, the failed command's CommandExecution output), and a
+// script still running when its exec call returned fails that call when a
+// later wait on its cell reports the failure (codeModeOutput in
+// codex_parser.ts).
+export const SCHEMA_VERSION = 16;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population

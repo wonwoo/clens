@@ -684,6 +684,115 @@ describe("parseCodexFileBody — failures inside exec code", () => {
   });
 });
 
+describe("parseCodexFileBody — exec (code mode) results", () => {
+  const at = (seq: number) => `2026-10-23T00:00:${String(seq).padStart(2, "0")}Z`;
+  const meta = JSON.stringify({ timestamp: at(0), type: "session_meta", payload: { id: "s-cm", cwd: "/w/app" } });
+  const exec = (seq: number, callId: string, code: string) =>
+    JSON.stringify({ timestamp: at(seq), type: "response_item", payload: { type: "custom_tool_call", call_id: callId, name: "exec", input: code } });
+  const wait = (seq: number, callId: string, cell: string) =>
+    JSON.stringify({
+      timestamp: at(seq),
+      type: "response_item",
+      payload: { type: "function_call", call_id: callId, name: "wait", arguments: JSON.stringify({ cell_id: cell, yield_time_ms: 10000, max_tokens: 1000 }) },
+    });
+  const out = (seq: number, callId: string, type: string, output: unknown) =>
+    JSON.stringify({ timestamp: at(seq), type: "response_item", payload: { type, call_id: callId, output } });
+  const text = (t: string) => ({ type: "input_text", text: t });
+  const done = (header: string, ...printed: string[]) => [text(`${header}\nWall time 0.8 seconds\nOutput:\n`), ...printed.map(text)];
+  const result = (exit_code: number, output: string) =>
+    JSON.stringify({ chunk_id: "263313", wall_time_seconds: 0.02, exit_code, original_token_count: 8, output });
+  const parse = (lines: string[]) =>
+    parseCodexFileBody({ body: [meta, ...lines].join("\n") + "\n", source_file: "codex-test.jsonl", batch: freshBatch() }).tool_results;
+  const GH = 'const r = await tools.exec_command({cmd:"gh --version"});text(r);';
+
+  it("fails an exec call from the exit code of a command result it printed, and keeps only that output", () => {
+    const r = parse([
+      exec(1, "x1", GH),
+      out(2, "x1", "custom_tool_call_output", done("Script completed", result(127, "zsh:1: command not found: gh\n"))),
+      exec(3, "x2", 'const r = await tools.exec_command({cmd:"ls"});text(r);'),
+      out(4, "x2", "custom_tool_call_output", done("Script completed", result(0, "README.md\n"))),
+    ]);
+    expect(r.get("x1")).toMatchObject({ is_error: 1, error_excerpt: "Process exited with code 127\nzsh:1: command not found: gh" });
+    expect(r.get("x2")).toMatchObject({ is_error: 0, error_excerpt: null });
+  });
+
+  it("keeps a failed script's error, not what its successful commands printed", () => {
+    const r = parse([
+      exec(1, "x1", 'await tools.exec_command({cmd:"git checkout main"}); await tools.exec_command({cmd:"git pull"});'),
+      out(2, "x1", "custom_tool_call_output", done(
+        "Script failed",
+        result(0, "Switched to branch 'main'\n"),
+        "Script error:\nCommand blocked by PreToolUse hook: no pulls. Command: git pull",
+      )),
+    ]);
+    expect(r.get("x1")).toMatchObject({ is_error: 1, error_excerpt: "Command blocked by PreToolUse hook: no pulls. Command: git pull" });
+  });
+
+  it("reads command results the code printed inside other JSON", () => {
+    const settled = JSON.stringify([
+      { status: "fulfilled", value: JSON.parse(result(0, "ok\n")) },
+      { status: "fulfilled", value: JSON.parse(result(2, "ls: x: No such file or directory\n")) },
+    ]);
+    const r = parse([
+      exec(1, "x1", 'text(JSON.stringify(await Promise.allSettled([tools.exec_command({cmd:"true"}), tools.exec_command({cmd:"ls x"})])));'),
+      out(2, "x1", "custom_tool_call_output", done("Script completed", settled)),
+    ]);
+    expect(r.get("x1")).toMatchObject({ is_error: 1, error_excerpt: "Process exited with code 2\nls: x: No such file or directory" });
+  });
+
+  it("takes a failed command's output from its CommandExecution item when the script printed none of it", () => {
+    const ran = JSON.stringify({
+      timestamp: at(2),
+      type: "event_msg",
+      payload: {
+        type: "item_completed",
+        item: { type: "CommandExecution", id: "exec-2", command: ["/bin/zsh", "-lc", "gh --version ."], cwd: "file:///w/app", exit_code: 127, aggregated_output: "zsh:1: command not found: gh\n", status: "failed" },
+      },
+    });
+    const r = parse([
+      exec(1, "x1", 'await tools.exec_command({cmd:"gh --version ."});'),
+      ran,
+      out(3, "x1", "custom_tool_call_output", "Script completed\nWall time 0.9 seconds\nOutput:\n"),
+    ]);
+    expect(r.get("x1")).toMatchObject({ is_error: 1, error_excerpt: "Process exited with code 127\nzsh:1: command not found: gh" });
+  });
+
+  it("does not take printed JSON that is not a command result for one", () => {
+    const r = parse([
+      exec(1, "x1", 'text(JSON.stringify({exit_code: 1, output: "x"}));'),
+      out(2, "x1", "custom_tool_call_output", done("Script completed", '{"exit_code":1,"output":"x"}')),
+    ]);
+    expect(r.get("x1")?.is_error).toBe(0);
+  });
+
+  it("gives a running script's failure, reported by a later wait on its cell, to the exec call", () => {
+    const running = [
+      exec(1, "x1", 'const r = await tools.exec_command({cmd:"sleep 35; gh --version",yield_time_ms:1000});text(r);'),
+      out(2, "x1", "custom_tool_call_output", "Script running with cell ID 3\nWall time 31.0 seconds\nOutput:\n"),
+    ];
+    const failed = parse([...running, wait(3, "w1", "3"), out(4, "w1", "function_call_output", done("Script completed", result(127, "zsh:1: command not found: gh\n")))]);
+    expect(failed.get("x1")).toMatchObject({ is_error: 1, error_excerpt: "Process exited with code 127\nzsh:1: command not found: gh" });
+    expect(failed.get("w1")).toMatchObject({ is_error: 0, error_excerpt: null });
+
+    const passed = parse([...running, wait(3, "w1", "3"), out(4, "w1", "function_call_output", done("Script completed", result(0, "gh version 2.80.0\n")))]);
+    expect([passed.get("x1")?.is_error, passed.get("w1")?.is_error]).toEqual([0, 0]);
+
+    const later = parse([
+      ...running,
+      wait(3, "w1", "3"),
+      out(4, "w1", "function_call_output", "Script running with cell ID 3\nWall time 10.0 seconds\nOutput:\n"),
+      wait(5, "w2", "3"),
+      out(6, "w2", "function_call_output", done("Script completed", result(127, "zsh:1: command not found: gh\n"))),
+    ]);
+    expect([later.get("x1")?.is_error, later.get("w1")?.is_error, later.get("w2")?.is_error]).toEqual([1, 0, 0]);
+  });
+
+  it("marks the wait itself when its cell's exec call is not in the file", () => {
+    const r = parse([wait(1, "w1", "9"), out(2, "w1", "function_call_output", done("Script completed", result(1, "FAIL\n")))]);
+    expect(r.get("w1")).toMatchObject({ is_error: 1, error_excerpt: "Process exited with code 1\nFAIL" });
+  });
+});
+
 describe("parseCodexFileBody — commands still running when their call returned", () => {
   const at = (seq: number) => `2026-09-01T00:00:${String(seq).padStart(2, "0")}Z`;
   const meta = JSON.stringify({ timestamp: at(0), type: "session_meta", payload: { id: "s-run", cwd: "/w/app" } });

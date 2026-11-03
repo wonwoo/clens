@@ -55,6 +55,206 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// src/util/codex_exec.ts
+var CALL_RE = /tools\s*\.\s*exec_command\s*\(\s*\{/y;
+var KEY_RE = /[A-Za-z_$][\w$]*/y;
+var WORD_CHAR_RE = /[\w$.]/;
+function execCodeCommands(code) {
+  return execCodeScan(code).commands;
+}
+function execCodeScan(code) {
+  const out = [];
+  let built = 0;
+  let i = 0;
+  while (i < code.length) {
+    const c = code[i];
+    const skipped = skipNonCode(code, i);
+    if (skipped !== i) {
+      i = skipped;
+    } else if (c === "t" && (i === 0 || !WORD_CHAR_RE.test(code[i - 1]))) {
+      CALL_RE.lastIndex = i;
+      const m = CALL_RE.exec(code);
+      if (m === null) {
+        i += 1;
+        continue;
+      }
+      const obj = readObject(code, i + m[0].length);
+      if (obj.closed && obj.cmd !== null) out.push({ cmd: obj.cmd, workdir: obj.workdir });
+      else if (obj.closed) built += 1;
+      i = obj.end;
+    } else {
+      i += 1;
+    }
+  }
+  return { commands: out, built };
+}
+function skipNonCode(code, i) {
+  const c = code[i];
+  if (c === "/" && code[i + 1] === "/") {
+    const end = code.indexOf("\n", i);
+    return end === -1 ? code.length : end + 1;
+  }
+  if (c === "/" && code[i + 1] === "*") {
+    const end = code.indexOf("*/", i + 2);
+    return end === -1 ? code.length : end + 2;
+  }
+  if (c === '"' || c === "'") return readQuoted(code, i)?.end ?? code.length;
+  if (c === "`") return readTemplate(code, i)?.end ?? code.length;
+  return i;
+}
+function skipSpace(code, i) {
+  for (; ; ) {
+    while (i < code.length && /\s/.test(code[i])) i += 1;
+    if (code[i] === "/" && (code[i + 1] === "/" || code[i + 1] === "*")) i = skipNonCode(code, i);
+    else return i;
+  }
+}
+function readObject(code, start) {
+  let cmd = null;
+  let workdir = null;
+  let i = start;
+  for (; ; ) {
+    i = skipSpace(code, i);
+    if (i >= code.length) return { cmd, workdir, end: code.length, closed: false };
+    if (code[i] === "}") return { cmd, workdir, end: i + 1, closed: true };
+    if (code[i] === ",") {
+      i += 1;
+      continue;
+    }
+    let key2 = null;
+    if (code[i] === '"' || code[i] === "'") {
+      const s = readQuoted(code, i);
+      if (s === null) return { cmd, workdir, end: code.length, closed: false };
+      key2 = s.value;
+      i = s.end;
+    } else {
+      KEY_RE.lastIndex = i;
+      const m = KEY_RE.exec(code);
+      if (m !== null) {
+        key2 = m[0];
+        i += m[0].length;
+      }
+    }
+    i = skipSpace(code, i);
+    if (code[i] !== ":") {
+      i = skipValue(code, i);
+      if (code[i] !== "," && code[i] !== "}") return { cmd, workdir, end: i, closed: false };
+      continue;
+    }
+    i = skipSpace(code, i + 1);
+    const lit = code[i] === '"' || code[i] === "'" ? readQuoted(code, i) : code[i] === "`" ? readTemplate(code, i) : void 0;
+    if (lit === null) return { cmd, workdir, end: code.length, closed: false };
+    if (lit !== void 0) {
+      const after = skipSpace(code, lit.end);
+      if (lit.value !== null && (code[after] === "," || code[after] === "}")) {
+        if (key2 === "cmd") cmd = lit.value;
+        else if (key2 === "workdir") workdir = lit.value;
+        i = after;
+        continue;
+      }
+    }
+    i = skipValue(code, i);
+    if (code[i] !== "," && code[i] !== "}") return { cmd, workdir, end: i, closed: false };
+  }
+}
+function skipValue(code, i) {
+  let depth = 0;
+  while (i < code.length) {
+    const skipped = skipNonCode(code, i);
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    const c = code[i];
+    if (c === "(" || c === "[" || c === "{") depth += 1;
+    else if (c === ")" || c === "]" || c === "}") {
+      if (depth === 0) return i;
+      depth -= 1;
+    } else if (c === "," && depth === 0) return i;
+    i += 1;
+  }
+  return code.length;
+}
+function readQuoted(code, i) {
+  const quote = code[i];
+  let value = "";
+  let j = i + 1;
+  while (j < code.length) {
+    const c = code[j];
+    if (c === quote) return { value, end: j + 1 };
+    if (c === "\\") {
+      const e = unescape(code, j);
+      value += e.text;
+      j = e.end;
+    } else {
+      value += c;
+      j += 1;
+    }
+  }
+  return null;
+}
+function readTemplate(code, i) {
+  let value = "";
+  let j = i + 1;
+  while (j < code.length) {
+    const c = code[j];
+    if (c === "`") return { value, end: j + 1 };
+    if (c === "\\") {
+      const e = unescape(code, j);
+      if (value !== null) value += e.text;
+      j = e.end;
+    } else if (c === "$" && code[j + 1] === "{") {
+      value = null;
+      j = skipPlaceholder(code, j + 2);
+    } else {
+      if (value !== null) value += c;
+      j += 1;
+    }
+  }
+  return null;
+}
+function skipPlaceholder(code, i) {
+  let depth = 0;
+  while (i < code.length) {
+    const skipped = skipNonCode(code, i);
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    const c = code[i];
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      if (depth === 0) return i + 1;
+      depth -= 1;
+    }
+    i += 1;
+  }
+  return code.length;
+}
+function unescape(code, i) {
+  const n = code[i + 1];
+  if (n === void 0) return { text: "", end: i + 1 };
+  const simple = { n: "\n", t: "	", r: "\r", b: "\b", f: "\f", v: "\v" };
+  if (n in simple) return { text: simple[n], end: i + 2 };
+  if (n === "0" && !/[0-9]/.test(code[i + 2] ?? "")) return { text: "\0", end: i + 2 };
+  if (n === "x") {
+    const hex = code.slice(i + 2, i + 4);
+    if (/^[0-9a-fA-F]{2}$/.test(hex)) return { text: String.fromCharCode(parseInt(hex, 16)), end: i + 4 };
+  }
+  if (n === "u") {
+    const braced = /^\{([0-9a-fA-F]{1,6})\}/.exec(code.slice(i + 2, i + 10));
+    if (braced !== null) {
+      const cp = parseInt(braced[1], 16);
+      if (cp <= 1114111) return { text: String.fromCodePoint(cp), end: i + 2 + braced[0].length };
+    }
+    const hex = code.slice(i + 2, i + 6);
+    if (/^[0-9a-fA-F]{4}$/.test(hex)) return { text: String.fromCharCode(parseInt(hex, 16)), end: i + 6 };
+  }
+  if (n === "\r" && code[i + 2] === "\n") return { text: "", end: i + 3 };
+  if (n === "\n" || n === "\r" || n === "\u2028" || n === "\u2029") return { text: "", end: i + 2 };
+  return { text: n, end: i + 2 };
+}
+
 // src/hooks/failure_hint.ts
 var MAX_SESSIONS = 2;
 var OWN_FAILURE_MS = 3e4;
@@ -122,14 +322,17 @@ function rememberTold(dir, sessionId2, key2, now) {
     }
   }
 }
-function commandOf(inputJson) {
+function commandOf(inputJson, word = null) {
+  let command = "";
   try {
     const input2 = JSON.parse(inputJson ?? "{}");
-    const command = typeof input2.command === "string" ? input2.command : typeof input2.cmd === "string" ? input2.cmd : "";
-    return cutChars(command.split("\n")[0] ?? "", 80);
+    command = typeof input2.command === "string" ? input2.command : typeof input2.cmd === "string" ? input2.cmd : "";
   } catch {
-    return "";
+    const commands = execCodeCommands(inputJson ?? "").map((c) => c.cmd);
+    const names = word === null ? null : new RegExp(`(?<![\\w.-])${escapeRegExp(word)}(?![\\w-])`);
+    command = (names === null ? void 0 : commands.find((c) => names.test(c))) ?? commands[0] ?? "";
   }
+  return cutChars(command.split("\n")[0] ?? "", 80);
 }
 function failureWord(key2, command) {
   const value = key2.key.slice(key2.kind.length + 1);
@@ -161,7 +364,7 @@ function failureHint(db, input2, now) {
        FROM tool_call t
        JOIN session s ON s.id = t.session_id
        LEFT JOIN project p ON p.id = s.project_id
-       WHERE t.is_error = 1 AND t.error_excerpt IS NOT NULL AND t.name IN ('Bash', 'exec_command')
+       WHERE t.is_error = 1 AND t.error_excerpt IS NOT NULL AND t.name IN ('Bash', 'exec_command', 'exec')
          AND (s.id = ? OR s.parent_id = ? OR ${workKindClause("s")}) ${inProject}
        ORDER BY t.ts DESC`
   ).all(input2.sessionId, input2.sessionId, ...anyProject ? [] : [...projects]);
@@ -181,12 +384,14 @@ function failureHint(db, input2, now) {
   );
   const what = key2.kind === "missing" ? `\`${key2.key.slice("missing:".length)}\` not found` : key2.kind === "network" ? "network" : "operation refused";
   const lines = [`clens: this failure (${what}) happened in an earlier session too. What the agent did then:`];
+  const named = key2.kind === "permission" ? null : key2.key.slice(key2.kind.length + 1);
   for (const call of picked) {
     const where = call.project_id !== null && !projects.has(call.project_id) ? ` in ${basename(call.project_cwd ?? call.project_id)}` : "";
-    lines.push(`- ${call.ts.slice(0, 10)}${where}: \`${commandOf(call.input_json)}\` (session ${call.session_id}, around_ts ${call.ts})`);
+    const command = commandOf(call.input_json, named);
+    lines.push(`- ${call.ts.slice(0, 10)}${where}: \`${command}\` (session ${call.session_id}, around_ts ${call.ts})`);
     const until = new Date(Date.parse(call.ts) + REPLY_WITHIN_MS).toISOString();
     const replies = repliesAfter.all(call.session_id, call.ts, until);
-    const reply = namedReply(replies, failureWord(key2, commandOf(call.input_json)));
+    const reply = namedReply(replies, failureWord(key2, command));
     if (reply) lines.push(`  next reply: ${cutChars(reply.replace(/\s+/g, " "), 240)}`);
   }
   lines.push("Read more with clens_session. Ignore this if it does not apply.");

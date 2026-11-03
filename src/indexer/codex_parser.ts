@@ -171,6 +171,94 @@ function headerRunningSession(text: string): number | null {
   return m === null ? null : Number(m[1]);
 }
 
+/** An exec (code mode) or wait output as clens reads it. The first part is
+ *  a header, "Script completed", "Script failed" or "Script running with
+ *  cell ID N", then "Wall time … / Output:"; each later part is what the
+ *  code printed, often a tools.exec_command result as JSON
+ *  ({chunk_id, exit_code, output, …}; session_id instead of exit_code while
+ *  the command runs), and on a failed script a "Script error:" part. */
+interface CodeModeOutput {
+  /** The cell a running script goes on in; a later wait names it. */
+  runningCell: string | null;
+  /** A printed command result exited nonzero, or the script failed. */
+  failed: boolean;
+  /** The failed results ("Process exited with code N", then the output)
+   *  and the script error, for a failed call's excerpt; null when the
+   *  script printed none. */
+  failingText: string | null;
+  /** Every printed part without the header and the JSON around a command's
+   *  output, the excerpt when nothing printed tells the failure. */
+  printedText: string;
+}
+
+const CODE_MODE_HEADER = /^Script (completed|failed|running with cell ID (\S+))\n/;
+
+function codeModeOutput(output: unknown): CodeModeOutput | null {
+  const parts = Array.isArray(output) ? output.map((part) => codexOutputText([part])) : [codexOutputText(output)];
+  const header = CODE_MODE_HEADER.exec(parts[0] ?? "");
+  if (header === null) return null;
+  const outputAt = parts[0]!.indexOf("\nOutput:\n");
+  const rest = outputAt === -1 ? [] : [parts[0]!.slice(outputAt + "\nOutput:\n".length), ...parts.slice(1)];
+  const all: string[] = [];
+  const failing: string[] = [];
+  for (const part of rest) {
+    if (part.trim() === "") continue;
+    if (part.startsWith("Script error:")) {
+      const error = part.slice("Script error:".length).replace(/^\n/, "");
+      all.push(error);
+      failing.push(error);
+      continue;
+    }
+    const results = commandResults(part);
+    if (results.length === 0) {
+      all.push(part);
+      continue;
+    }
+    for (const result of results) {
+      const text = result.exit !== null && result.exit !== 0 ? `Process exited with code ${result.exit}\n${result.output}` : result.output;
+      all.push(text);
+      if (result.exit !== null && result.exit !== 0) failing.push(text);
+    }
+  }
+  return {
+    runningCell: header[2] ?? null,
+    failed: header[1] === "failed" || failing.length > 0,
+    failingText: failing.length > 0 ? failing.join("\n") : null,
+    printedText: all.join("\n"),
+  };
+}
+
+/** The tools.exec_command results a printed part holds, each with its exit
+ *  code (null while the command runs) and output: the part itself, or
+ *  results the code printed inside other JSON, such as an array of them or
+ *  Promise.allSettled's {status, value}. None for anything else. */
+function commandResults(part: string): { exit: number | null; output: string }[] {
+  const trimmed = part.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return [];
+  }
+  const found: { exit: number | null; output: string }[] = [];
+  const walk = (value: unknown, depth: number): void => {
+    if (value === null || typeof value !== "object" || depth > 4) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, depth + 1);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.chunk_id === "string" && typeof record.output === "string") {
+      found.push({ exit: typeof record.exit_code === "number" ? record.exit_code : null, output: record.output });
+      return;
+    }
+    for (const item of Object.values(record)) walk(item, depth + 1);
+  };
+  walk(parsed, 0);
+  return found;
+}
+
 /** A failed shell call's output as its error excerpt reads it: the header's
  *  exit line, then what the command printed. The rest of a shell header
  *  (chunk id, wall time, token count) filled most of the excerpt's start and
@@ -422,13 +510,20 @@ interface SessionState {
   /** call_id of an exec call whose output has not come yet → the literal
    *  commands its code runs, and whether it also builds one at run time. */
   openExec: Map<string, { commands: Set<string>; built: boolean }>;
-  /** exec calls one of whose commands exited nonzero while they were open. */
-  failedExec: Set<string>;
+  /** exec calls one of whose commands exited nonzero while they were open
+   *  → each such command's exit line and output, from its CommandExecution
+   *  item, for when the script printed nothing of it. */
+  failedExec: Map<string, string[]>;
   /** A process session number → the exec_command call that started it and
    *  returned while it still ran; a later write_stdin reports its exit. */
   runningProcess: Map<number, string>;
   /** A write_stdin call → the process session number it names. */
   stdinTarget: Map<string, number>;
+  /** A code-mode cell → the exec call whose script returned while it still
+   *  ran; a later wait on that cell reports how it ended. */
+  runningCell: Map<string, string>;
+  /** A wait call → the cell it names. */
+  waitTarget: Map<string, string>;
   /** A direct exec_command call whose output has not come yet → its cmd. */
   openDirect: Map<string, string>;
   /** Every cmd of a direct exec_command call and every literal command of an
@@ -511,9 +606,11 @@ export function parseCodexFileBody(args: {
     pendingOutTok: 0,
     callEvents: new Map(),
     openExec: new Map(),
-    failedExec: new Set(),
+    failedExec: new Map(),
     runningProcess: new Map(),
     stdinTarget: new Map(),
+    runningCell: new Map(),
+    waitTarget: new Map(),
     openDirect: new Map(),
     namedCommands: new Set(),
     historyStart: null,
@@ -710,6 +807,9 @@ function processLine(
         state.callEvents.set(callId, parsed);
         if (name === "exec_command" && typeof input?.cmd === "string") state.openDirect.set(callId, input.cmd);
         if (name === "write_stdin" && typeof input?.session_id === "number") state.stdinTarget.set(callId, input.session_id);
+        if (name === "wait" && (typeof input?.cell_id === "string" || typeof input?.cell_id === "number")) {
+          state.waitTarget.set(callId, String(input.cell_id));
+        }
       }
       events.push(parsed);
     } else if (itemType === "function_call_output" || itemType === "custom_tool_call_output") {
@@ -718,12 +818,36 @@ function processLine(
         const text = codexOutputText(payload.output);
         // exec code says "Script completed" even when a command it ran
         // failed; Codex reported that failure while the call was open.
-        const commandFailed = state.failedExec.delete(callId);
+        const commandFailures = state.failedExec.get(callId);
+        state.failedExec.delete(callId);
+        const commandFailed = commandFailures !== undefined;
         state.openExec.delete(callId);
         state.openDirect.delete(callId);
         let is_error = commandFailed ? 1 : codexOutputError(text);
         const call = state.callEvents.get(callId);
         const callName = call?.tool_calls[0]?.name;
+        const codeMode = callName === "exec" || callName === "wait" ? codeModeOutput(payload.output) : null;
+        let excerptText = failedOutputText(text);
+        if (codeMode !== null) {
+          if (codeMode.failed) is_error = 1;
+          excerptText = codeMode.failingText ?? (commandFailures?.join("\n") || codeMode.printedText);
+          if (callName === "exec" && codeMode.runningCell !== null) state.runningCell.set(codeMode.runningCell, callId);
+        }
+        // A script still running when its exec call returned ends in a later
+        // wait on its cell: how it ended is the exec call's, not the wait's.
+        const cell = state.waitTarget.get(callId);
+        state.waitTarget.delete(callId);
+        const waitedOn = cell === undefined ? undefined : state.runningCell.get(cell);
+        if (codeMode !== null && cell !== undefined && waitedOn !== undefined) {
+          if (codeMode.runningCell === null) {
+            state.runningCell.delete(cell);
+            const started = toolResults.get(waitedOn);
+            if (codeMode.failed && started !== undefined) {
+              toolResults.set(waitedOn, { ...started, is_error: 1, error_excerpt: errorExcerpt(codeMode.failingText ?? codeMode.printedText) });
+            }
+          }
+          is_error = 0;
+        }
         // A command still running when exec_command returned reports its
         // exit through a later write_stdin naming the same process session:
         // the exit is the exec_command call's, not the write_stdin call's.
@@ -747,7 +871,7 @@ function processLine(
           ts: timestamp,
           is_error,
           result_chars: codepointLength(text),
-          error_excerpt: is_error === 1 ? errorExcerpt(failedOutputText(text)) : null,
+          error_excerpt: is_error === 1 ? errorExcerpt(excerptText) : null,
         });
         // Recorded on the call's own event: the driver reads a whole rollout
         // on every change, so the call and its output are parsed together.
@@ -990,9 +1114,10 @@ function readCommandExecution(item: Record<string, unknown>, state: SessionState
   if (typeof command !== "string") return;
   for (const cmd of state.openDirect.values()) if (cmd === command) return;
   const failed = typeof item.exit_code === "number" && item.exit_code !== 0;
+  const failure = `Process exited with code ${String(item.exit_code)}\n${typeof item.aggregated_output === "string" ? item.aggregated_output : ""}`;
   const naming = [...state.openExec].filter(([, open]) => open.commands.has(command)).map(([callId]) => callId);
   if (naming.length > 0) {
-    if (failed) for (const callId of naming) state.failedExec.add(callId);
+    if (failed) for (const callId of naming) addExecFailure(state, callId, failure);
     return;
   }
   if (state.namedCommands.has(command)) return;
@@ -1005,7 +1130,13 @@ function readCommandExecution(item: Record<string, unknown>, state: SessionState
   for (const path of shellCommandFiles(command, cwdOf(item.cwd) ?? state.cwd, batch)) {
     call.file_ops.push({ event_uuid: uuid, session_id, ts, tool: "exec_command", path });
   }
-  if (failed) state.failedExec.add(callId);
+  if (failed) addExecFailure(state, callId, failure);
+}
+
+function addExecFailure(state: SessionState, callId: string, failure: string): void {
+  const failures = state.failedExec.get(callId);
+  if (failures === undefined) state.failedExec.set(callId, [failure]);
+  else failures.push(failure);
 }
 
 /** An MCP call that exec code made (`tools.mcp__clens__clens_search(…)`):

@@ -1635,7 +1635,7 @@ function languageFtsTable(code) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 15;
+var SCHEMA_VERSION = 16;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -3628,6 +3628,68 @@ function headerRunningSession(text) {
   const m = /Process running with session ID (\d+)/.exec(text.slice(0, outputAt));
   return m === null ? null : Number(m[1]);
 }
+var CODE_MODE_HEADER = /^Script (completed|failed|running with cell ID (\S+))\n/;
+function codeModeOutput(output) {
+  const parts = Array.isArray(output) ? output.map((part) => codexOutputText([part])) : [codexOutputText(output)];
+  const header = CODE_MODE_HEADER.exec(parts[0] ?? "");
+  if (header === null) return null;
+  const outputAt = parts[0].indexOf("\nOutput:\n");
+  const rest = outputAt === -1 ? [] : [parts[0].slice(outputAt + "\nOutput:\n".length), ...parts.slice(1)];
+  const all = [];
+  const failing = [];
+  for (const part of rest) {
+    if (part.trim() === "") continue;
+    if (part.startsWith("Script error:")) {
+      const error = part.slice("Script error:".length).replace(/^\n/, "");
+      all.push(error);
+      failing.push(error);
+      continue;
+    }
+    const results = commandResults(part);
+    if (results.length === 0) {
+      all.push(part);
+      continue;
+    }
+    for (const result of results) {
+      const text = result.exit !== null && result.exit !== 0 ? `Process exited with code ${result.exit}
+${result.output}` : result.output;
+      all.push(text);
+      if (result.exit !== null && result.exit !== 0) failing.push(text);
+    }
+  }
+  return {
+    runningCell: header[2] ?? null,
+    failed: header[1] === "failed" || failing.length > 0,
+    failingText: failing.length > 0 ? failing.join("\n") : null,
+    printedText: all.join("\n")
+  };
+}
+function commandResults(part) {
+  const trimmed = part.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return [];
+  }
+  const found = [];
+  const walk = (value, depth) => {
+    if (value === null || typeof value !== "object" || depth > 4) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, depth + 1);
+      return;
+    }
+    const record = value;
+    if (typeof record.chunk_id === "string" && typeof record.output === "string") {
+      found.push({ exit: typeof record.exit_code === "number" ? record.exit_code : null, output: record.output });
+      return;
+    }
+    for (const item of Object.values(record)) walk(item, depth + 1);
+  };
+  walk(parsed, 0);
+  return found;
+}
 function failedOutputText(text) {
   const outputAt = text.indexOf("\nOutput:");
   if (outputAt === -1) return text;
@@ -3839,9 +3901,11 @@ function parseCodexFileBody(args) {
     pendingOutTok: 0,
     callEvents: /* @__PURE__ */ new Map(),
     openExec: /* @__PURE__ */ new Map(),
-    failedExec: /* @__PURE__ */ new Set(),
+    failedExec: /* @__PURE__ */ new Map(),
     runningProcess: /* @__PURE__ */ new Map(),
     stdinTarget: /* @__PURE__ */ new Map(),
+    runningCell: /* @__PURE__ */ new Map(),
+    waitTarget: /* @__PURE__ */ new Map(),
     openDirect: /* @__PURE__ */ new Map(),
     namedCommands: /* @__PURE__ */ new Set(),
     historyStart: null,
@@ -3993,18 +4057,43 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
         state.callEvents.set(callId, parsed);
         if (name === "exec_command" && typeof input?.cmd === "string") state.openDirect.set(callId, input.cmd);
         if (name === "write_stdin" && typeof input?.session_id === "number") state.stdinTarget.set(callId, input.session_id);
+        if (name === "wait" && (typeof input?.cell_id === "string" || typeof input?.cell_id === "number")) {
+          state.waitTarget.set(callId, String(input.cell_id));
+        }
       }
       events.push(parsed);
     } else if (itemType === "function_call_output" || itemType === "custom_tool_call_output") {
       const callId = typeof payload.call_id === "string" ? payload.call_id : null;
       if (callId !== null) {
         const text = codexOutputText(payload.output);
-        const commandFailed = state.failedExec.delete(callId);
+        const commandFailures = state.failedExec.get(callId);
+        state.failedExec.delete(callId);
+        const commandFailed = commandFailures !== void 0;
         state.openExec.delete(callId);
         state.openDirect.delete(callId);
         let is_error = commandFailed ? 1 : codexOutputError(text);
         const call = state.callEvents.get(callId);
         const callName = call?.tool_calls[0]?.name;
+        const codeMode = callName === "exec" || callName === "wait" ? codeModeOutput(payload.output) : null;
+        let excerptText = failedOutputText(text);
+        if (codeMode !== null) {
+          if (codeMode.failed) is_error = 1;
+          excerptText = codeMode.failingText ?? (commandFailures?.join("\n") || codeMode.printedText);
+          if (callName === "exec" && codeMode.runningCell !== null) state.runningCell.set(codeMode.runningCell, callId);
+        }
+        const cell = state.waitTarget.get(callId);
+        state.waitTarget.delete(callId);
+        const waitedOn = cell === void 0 ? void 0 : state.runningCell.get(cell);
+        if (codeMode !== null && cell !== void 0 && waitedOn !== void 0) {
+          if (codeMode.runningCell === null) {
+            state.runningCell.delete(cell);
+            const started = toolResults.get(waitedOn);
+            if (codeMode.failed && started !== void 0) {
+              toolResults.set(waitedOn, { ...started, is_error: 1, error_excerpt: errorExcerpt(codeMode.failingText ?? codeMode.printedText) });
+            }
+          }
+          is_error = 0;
+        }
         const running = headerRunningSession(text);
         const exit = headerExitCode(text);
         if (callName === "exec_command" && running !== null && exit === null) {
@@ -4025,7 +4114,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
           ts: timestamp,
           is_error,
           result_chars: codepointLength(text),
-          error_excerpt: is_error === 1 ? errorExcerpt(failedOutputText(text)) : null
+          error_excerpt: is_error === 1 ? errorExcerpt(excerptText) : null
         });
         const reason = preToolUseReason(text);
         if (reason !== void 0 && call !== void 0) {
@@ -4198,9 +4287,11 @@ function readCommandExecution(item, state, batch) {
   if (typeof command !== "string") return;
   for (const cmd of state.openDirect.values()) if (cmd === command) return;
   const failed = typeof item.exit_code === "number" && item.exit_code !== 0;
+  const failure = `Process exited with code ${String(item.exit_code)}
+${typeof item.aggregated_output === "string" ? item.aggregated_output : ""}`;
   const naming = [...state.openExec].filter(([, open]) => open.commands.has(command)).map(([callId2]) => callId2);
   if (naming.length > 0) {
-    if (failed) for (const callId2 of naming) state.failedExec.add(callId2);
+    if (failed) for (const callId2 of naming) addExecFailure(state, callId2, failure);
     return;
   }
   if (state.namedCommands.has(command)) return;
@@ -4213,7 +4304,12 @@ function readCommandExecution(item, state, batch) {
   for (const path of shellCommandFiles(command, cwdOf(item.cwd) ?? state.cwd, batch)) {
     call.file_ops.push({ event_uuid: uuid, session_id, ts, tool: "exec_command", path });
   }
-  if (failed) state.failedExec.add(callId);
+  if (failed) addExecFailure(state, callId, failure);
+}
+function addExecFailure(state, callId, failure) {
+  const failures = state.failedExec.get(callId);
+  if (failures === void 0) state.failedExec.set(callId, [failure]);
+  else failures.push(failure);
 }
 function pushExecMcpCall(events, uuid, session_id, timestamp, source_file, item, state, batch) {
   const id = item.id;

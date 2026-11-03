@@ -16,7 +16,7 @@ function failed(session: string, ts: string, command: string, excerpt: string, n
   db.prepare("INSERT INTO event (uuid, session_id, ts, role) VALUES (?, ?, ?, 'assistant')").run(uuid, session, ts);
   db.prepare(
     "INSERT INTO tool_call (event_uuid, session_id, ts, name, input_json, is_error, error_excerpt) VALUES (?, ?, ?, ?, ?, 1, ?)",
-  ).run(uuid, session, ts, name, JSON.stringify(name === "Bash" ? { command } : { cmd: command }), excerpt);
+  ).run(uuid, session, ts, name, name === "exec" ? command : JSON.stringify(name === "Bash" ? { command } : { cmd: command }), excerpt);
 }
 function reply(session: string, ts: string, text: string): void {
   const uuid = `r${n++}`;
@@ -115,6 +115,19 @@ describe("failureHint", () => {
     expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "ps -ax", output: ps }, NOW)).toBeNull();
     failed("app1", "2026-10-21T01:00:00Z", "ps -ax", ps, "exec_command");
     expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "ps -ax", output: ps }, NOW)).toContain("app1");
+  });
+
+  it("finds a failure inside Codex exec code, showing the command that failed", () => {
+    failed(
+      "app1",
+      "2026-10-23T01:41:05Z",
+      'const a = await tools.exec_command({cmd:"cat copyright.txt"});text(a);\nconst r = await tools.exec_command({cmd:"gh --version"});text(r);',
+      "Process exited with code 127\nzsh:1: command not found: gh",
+      "exec",
+    );
+    const hint = failureHint(db, ghNow, NOW);
+    expect(hint).toContain("app1");
+    expect(hint).toContain("`gh --version`");
   });
 
   it("finds the project of a cwd no session's project id spells", () => {
