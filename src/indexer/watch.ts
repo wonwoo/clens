@@ -3,7 +3,8 @@
  * currently ~/.claude/projects/ and ~/.codex/sessions/.
  *
  * Uses recursive fs.watch (macOS FSEvents / Windows RCWC) per root.
- * On any JSONL change, debounces 500ms then runs an incremental index.
+ * Runs an incremental index once on start, then on any JSONL change,
+ * debounced 500ms.
  * After each successful index it calls onIndexed, where the caller (the MCP
  * server) replaces its DB handle to get a fresh view.
  */
@@ -79,6 +80,11 @@ export function startWatch(
     retry.unref();
     retries.push(retry);
   }
+
+  // Index once now. Transcripts written while no watcher ran made no event,
+  // and after an update that raised SCHEMA_VERSION the rebuild starts only
+  // when runIndex runs; without this both waited for some session to write.
+  schedule();
 
   return {
     stop() {

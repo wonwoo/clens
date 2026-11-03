@@ -112,10 +112,10 @@ let db: Database.Database | null = null;
 function getDb(): Database.Database {
   if (!db) {
     const path = indexDbPath();
-    // A new install has no index until the watcher's first run, which the
-    // first write to a transcript starts.
+    // A new install has no index until the watcher's first run, which
+    // starts with the watcher.
     if (!existsSync(path)) {
-      throw new Error("clens has no index yet; it builds one in the background once a session writes to its transcript. Try again in a minute.");
+      throw new Error("clens has no index yet; it is building one in the background. Try again in a minute.");
     }
     db = new Database(path, { readonly: true, fileMustExist: true });
     db.pragma("busy_timeout = 30000"); // see schema.ts's applySchema() for why 30s

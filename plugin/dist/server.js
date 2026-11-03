@@ -29834,6 +29834,7 @@ function startWatch(onIndexed, debounceMs = 500, retryMs = 3e4) {
     retry.unref();
     retries.push(retry);
   }
+  schedule();
   return {
     stop() {
       if (timer !== void 0) {
@@ -31870,7 +31871,7 @@ function getDb() {
   if (!db) {
     const path = indexDbPath();
     if (!existsSync4(path)) {
-      throw new Error("clens has no index yet; it builds one in the background once a session writes to its transcript. Try again in a minute.");
+      throw new Error("clens has no index yet; it is building one in the background. Try again in a minute.");
     }
     db = new Database2(path, { readonly: true, fileMustExist: true });
     db.pragma("busy_timeout = 30000");

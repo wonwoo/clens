@@ -46,6 +46,20 @@ async function writeUntilIndexed(file: string): Promise<void> {
   );
 }
 
+/** Start the watcher and let its index-on-start run, then forget that run,
+ *  so a test sees only the calls its own writes cause. */
+async function startSettled(
+  onIndexed: ReturnType<typeof vi.fn>,
+  debounceMs: number,
+  retryMs?: number,
+): Promise<ReturnType<typeof startWatch>> {
+  const handle = startWatch(onIndexed, debounceMs, retryMs);
+  await vi.waitFor(() => expect(onIndexed).toHaveBeenCalledTimes(1), REACT_TIMEOUT);
+  mockedRunIndex.mockClear();
+  onIndexed.mockClear();
+  return handle;
+}
+
 // `vi.clearAllMocks()` clears recorded calls but NOT a queued
 // `mockRejectedValueOnce`. When a test's write went unnoticed, its queued
 // rejection survived into the next test and failed that one too — which is
@@ -71,12 +85,26 @@ afterEach(() => {
 });
 
 describe("startWatch", () => {
+  it("indexes once on start, before any transcript changes", async () => {
+    currentTestDir = makeTmpDir();
+    dirs.push(currentTestDir);
+
+    const onIndexed = vi.fn();
+    const handle = startWatch(onIndexed, 50);
+
+    await vi.waitFor(() => expect(onIndexed).toHaveBeenCalledTimes(1), REACT_TIMEOUT);
+    handle.stop();
+
+    expect(mockedRunIndex).toHaveBeenCalledTimes(1);
+    expect(mockedRunIndex).toHaveBeenCalledWith({ rebuild: false });
+  });
+
   it("calls onIndexed after a JSONL file is written (debounced)", async () => {
     currentTestDir = makeTmpDir();
     dirs.push(currentTestDir);
 
     const onIndexed = vi.fn();
-    const handle = startWatch(onIndexed, 100);
+    const handle = await startSettled(onIndexed, 100);
 
     await writeUntilIndexed(join(currentTestDir, "test.jsonl"));
     await vi.waitFor(() => expect(onIndexed).toHaveBeenCalledTimes(1), REACT_TIMEOUT);
@@ -91,7 +119,7 @@ describe("startWatch", () => {
     dirs.push(currentTestDir);
 
     const onIndexed = vi.fn();
-    const handle = startWatch(onIndexed, 200);
+    const handle = await startSettled(onIndexed, 200);
 
     const file = join(currentTestDir, "rapid.jsonl");
     for (let i = 0; i < 5; i++) {
@@ -136,11 +164,8 @@ describe("startWatch", () => {
     currentTestDir = makeTmpDir();
     dirs.push(currentTestDir);
 
-    await new Promise((r) => setTimeout(r, 50));
-    vi.clearAllMocks();
-
     const onIndexed = vi.fn();
-    const handle = startWatch(onIndexed, 100);
+    const handle = await startSettled(onIndexed, 100);
 
     writeFileSync(join(currentTestDir, "notes.txt"), "hello");
     writeFileSync(join(currentTestDir, "config.json"), "{}");
@@ -156,10 +181,9 @@ describe("startWatch", () => {
     currentTestDir = makeTmpDir();
     dirs.push(currentTestDir);
 
-    mockedRunIndex.mockRejectedValueOnce(new Error("lock busy"));
-
     const onIndexed = vi.fn();
-    const handle = startWatch(onIndexed, 100);
+    const handle = await startSettled(onIndexed, 100);
+    mockedRunIndex.mockRejectedValueOnce(new Error("lock busy"));
 
     await writeUntilIndexed(join(currentTestDir, "fail.jsonl"));
     // onIndexed would fire right after runIndex settles, so give the rejected
@@ -175,8 +199,9 @@ describe("startWatch", () => {
     currentTestDir = makeTmpDir();
     dirs.push(currentTestDir);
 
-    const onIndexed = vi.fn().mockRejectedValueOnce(new Error("cb error"));
-    const handle = startWatch(onIndexed, 100);
+    const onIndexed = vi.fn();
+    const handle = await startSettled(onIndexed, 100);
+    onIndexed.mockRejectedValueOnce(new Error("cb error"));
 
     // Should not throw / unhandledRejection
     await writeUntilIndexed(join(currentTestDir, "crash.jsonl"));
@@ -192,7 +217,7 @@ describe("startWatch", () => {
     currentTestDir = join(parent, "projects");
 
     const onIndexed = vi.fn();
-    const handle = startWatch(onIndexed, 50, 100);
+    const handle = await startSettled(onIndexed, 50, 100);
     mkdirSync(currentTestDir);
     // Written before the dir is watched: no event will come for it.
     writeFileSync(join(currentTestDir, "first.jsonl"), '{"x":1}\n');
