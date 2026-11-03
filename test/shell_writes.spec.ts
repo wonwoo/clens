@@ -485,14 +485,17 @@ describe("shellWrittenFiles — QA round 2 findings", () => {
   });
 
   it("stays fast on more pathological input", () => {
+    // The bound catches a parser gone quadratic or worse (seconds to minutes
+    // on these inputs), not a slow machine: the third input takes about 150ms
+    // here and took 580ms on a CI runner, which failed a 500ms bound.
     const time = (cmd: string) => {
       const t0 = performance.now();
       w(cmd);
       return performance.now() - t0;
     };
-    expect(time(`python3 -c "${"open(a, ".repeat(40000)}"`)).toBeLessThan(500);
-    expect(time("python3 - <<'EOF'\n" + "for p in [".repeat(30000) + "\nEOF")).toBeLessThan(500);
-    expect(time("python3 - <<'EOF'\n" + "for p in [\n".repeat(30000) + "open(p, 'w')\nEOF")).toBeLessThan(500);
-    expect(time("! ".repeat(50000) + "echo")).toBeLessThan(500);
+    expect(time(`python3 -c "${"open(a, ".repeat(40000)}"`)).toBeLessThan(2000);
+    expect(time("python3 - <<'EOF'\n" + "for p in [".repeat(30000) + "\nEOF")).toBeLessThan(2000);
+    expect(time("python3 - <<'EOF'\n" + "for p in [\n".repeat(30000) + "open(p, 'w')\nEOF")).toBeLessThan(2000);
+    expect(time("! ".repeat(50000) + "echo")).toBeLessThan(2000);
   });
 });
