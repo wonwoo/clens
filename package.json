@@ -1,8 +1,16 @@
 {
   "name": "@clens/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Search past Claude Code and Codex sessions — local SQLite index served over MCP",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wonwoo/clens.git"
+  },
+  "homepage": "https://github.com/wonwoo/clens#readme",
+  "bugs": {
+    "url": "https://github.com/wonwoo/clens/issues"
+  },
   "bin": {
     "clens": "plugin/dist/cli.js"
   },
