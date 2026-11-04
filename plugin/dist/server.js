@@ -3654,10 +3654,10 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative, options, skipNormalization) {
+    function resolveComponent(base3, relative, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse4(serialize(base, options), options);
+        base3 = parse4(serialize(base3, options), options);
         relative = parse4(serialize(relative, options), options);
       }
       options = options || {};
@@ -3677,32 +3677,32 @@ var require_fast_uri = __commonJS({
           target.query = relative.query;
         } else {
           if (!relative.path) {
-            target.path = base.path;
+            target.path = base3.path;
             if (relative.query !== void 0) {
               target.query = relative.query;
             } else {
-              target.query = base.query;
+              target.query = base3.query;
             }
           } else {
             if (relative.path[0] === "/") {
               target.path = removeDotSegments(relative.path);
             } else {
-              if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
+              if ((base3.userinfo !== void 0 || base3.host !== void 0 || base3.port !== void 0) && !base3.path) {
                 target.path = "/" + relative.path;
-              } else if (!base.path) {
+              } else if (!base3.path) {
                 target.path = relative.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative.path;
+                target.path = base3.path.slice(0, base3.path.lastIndexOf("/") + 1) + relative.path;
               }
               target.path = removeDotSegments(target.path);
             }
             target.query = relative.query;
           }
-          target.userinfo = base.userinfo;
-          target.host = base.host;
-          target.port = base.port;
+          target.userinfo = base3.userinfo;
+          target.host = base3.host;
+          target.port = base3.port;
         }
-        target.scheme = base.scheme;
+        target.scheme = base3.scheme;
       }
       target.fragment = relative.fragment;
       return target;
@@ -6987,7 +6987,7 @@ var require_polyfills = __commonJS({
         })(fs.rename);
       }
       fs.read = typeof fs.read !== "function" ? fs.read : (function(fs$read) {
-        function read(fd, buffer, offset, length, position, callback_) {
+        function read2(fd, buffer, offset, length, position, callback_) {
           var callback;
           if (callback_ && typeof callback_ === "function") {
             var eagCounter = 0;
@@ -7001,8 +7001,8 @@ var require_polyfills = __commonJS({
           }
           return fs$read.call(fs, fd, buffer, offset, length, position, callback);
         }
-        if (Object.setPrototypeOf) Object.setPrototypeOf(read, fs$read);
-        return read;
+        if (Object.setPrototypeOf) Object.setPrototypeOf(read2, fs$read);
+        return read2;
       })(fs.read);
       fs.readSync = typeof fs.readSync !== "function" ? fs.readSync : /* @__PURE__ */ (function(fs$readSync) {
         return function(fd, buffer, offset, length, position) {
@@ -25538,8 +25538,8 @@ var Protocol = class {
 function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function mergeCapabilities(base, additional) {
-  const result = { ...base };
+function mergeCapabilities(base3, additional) {
+  const result = { ...base3 };
   for (const key in additional) {
     const k = key;
     const addValue = additional[k];
@@ -26424,7 +26424,7 @@ function languageFtsTable(code) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 16;
+var SCHEMA_VERSION = 17;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -26527,6 +26527,7 @@ var SCHEMA_STATEMENTS = [
      is_error    INTEGER DEFAULT 0,
      result_chars INTEGER,
      error_excerpt TEXT,
+     git_branch  TEXT,
      FOREIGN KEY (event_uuid) REFERENCES event(uuid)
    )`,
   `CREATE INDEX IF NOT EXISTS tool_session_idx ON tool_call(session_id)`,
@@ -26694,6 +26695,9 @@ function applySchema(db2) {
     }
     if (!toolCallColumns.some((c) => c.name === "error_excerpt")) {
       db2.exec("ALTER TABLE tool_call ADD COLUMN error_excerpt TEXT");
+    }
+    if (!toolCallColumns.some((c) => c.name === "git_branch")) {
+      db2.exec("ALTER TABLE tool_call ADD COLUMN git_branch TEXT");
     }
     const row = db2.prepare("SELECT v FROM schema_version LIMIT 1").get();
     if (!row) {
@@ -27662,7 +27666,7 @@ function toolResultText(content) {
   return text;
 }
 function walkContent(args) {
-  const { event_uuid, session_id, ts, role, isMeta, cwd, content, batch, out, toolResults } = args;
+  const { event_uuid, session_id, ts, role, isMeta, cwd, gitBranch, content, batch, out, toolResults } = args;
   const summary = {
     has_text: 0,
     has_tool_use: 0,
@@ -27756,7 +27760,8 @@ function walkContent(args) {
         input_json,
         duration_ms: null,
         is_error: 0,
-        result_chars: null
+        result_chars: null,
+        git_branch: gitBranch
       };
       out.tool_calls.push(toolCall);
       if (FILE_OP_TOOLS.has(name)) {
@@ -27975,6 +27980,7 @@ function parseEventLine(line, source_file, seq, batch, toolResults) {
     role: role ?? "",
     isMeta: o.isMeta === true,
     cwd: typeof o.cwd === "string" ? o.cwd : null,
+    gitBranch: typeof o.gitBranch === "string" && o.gitBranch !== "" ? o.gitBranch : null,
     content: message.content,
     batch,
     out: parsed,
@@ -28772,7 +28778,8 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
         input_json,
         duration_ms: null,
         is_error: 0,
-        result_chars: null
+        result_chars: null,
+        git_branch: state.git_branch
       });
       const input = parseObjectLike(args);
       addDerivedToolRows({
@@ -28955,7 +28962,8 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
       input_json,
       duration_ms: null,
       is_error: 0,
-      result_chars: null
+      result_chars: null,
+      git_branch: state.git_branch
     };
     parsed.tool_calls.push(toolCall);
     events.push(parsed);
@@ -28985,7 +28993,8 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
       input_json: cmd !== null ? truncateToolInput(cmd, batch, SHELL_TOOL_INPUT_BYTE_CAP) : null,
       duration_ms: null,
       is_error: 0,
-      result_chars: null
+      result_chars: null,
+      git_branch: state.git_branch
     };
     parsed.tool_calls.push(toolCall);
     events.push(parsed);
@@ -29086,7 +29095,8 @@ function pushExecMcpCall(events, uuid3, session_id, timestamp, source_file, item
     input_json: raw !== null ? truncateToolInput(raw, batch) : null,
     duration_ms: typeof d?.secs === "number" && typeof d.nanos === "number" ? Math.round(d.secs * 1e3 + d.nanos / 1e6) : null,
     is_error: failed ? 1 : 0,
-    result_chars: null
+    result_chars: null,
+    git_branch: state.git_branch
   });
   events.push(parsed);
 }
@@ -29267,8 +29277,8 @@ function prepareStatements(db2) {
         @user_turn_no, @assistant_turn_no, @source_file)`
     ),
     insertToolCall: db2.prepare(
-      `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars)
-       VALUES (@event_uuid, @session_id, @ts, @call_id, @name, @input_json, @duration_ms, @is_error, @result_chars)`
+      `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars, git_branch)
+       VALUES (@event_uuid, @session_id, @ts, @call_id, @name, @input_json, @duration_ms, @is_error, @result_chars, @git_branch)`
     ),
     insertFileOp: db2.prepare(
       `INSERT INTO file_op (event_uuid, session_id, ts, tool, path)
@@ -30061,6 +30071,9 @@ function sessionScopedWhere(scope, sessionIdColumn, tsColumn, eventUuidColumn) {
       };
   }
 }
+var TOP = `WITH RECURSIVE top(id, root) AS (
+    SELECT id, id FROM session WHERE parent_id IS NULL
+    UNION SELECT s.id, t.root FROM session s JOIN top t ON s.parent_id = t.id)`;
 
 // src/mcp/search.ts
 var DEFAULT_LIMIT2 = 20;
@@ -30402,12 +30415,12 @@ function searchText(db2, params, opts, out) {
   const note = partial2 ? "No message contains every word of the query; these contain some of them.\n\n" : "";
   return note + text;
 }
-function searchManyText(db2, base, queries, opts, out) {
+function searchManyText(db2, base3, queries, opts, out) {
   const headers = queries.map((q) => `### query: ${q}
 `);
   const overhead = headers.reduce((n, h) => n + Buffer.byteLength(h), 0) + 2 * (queries.length - 1);
   const per = Math.max(0, Math.floor((out.maxBytes - overhead) / queries.length));
-  return queries.map((query, i) => headers[i] + searchText(db2, { ...base, query }, opts, { ...out, maxBytes: per })).join("\n\n");
+  return queries.map((query, i) => headers[i] + searchText(db2, { ...base3, query }, opts, { ...out, maxBytes: per })).join("\n\n");
 }
 
 // src/mcp/analyzers.ts
@@ -30647,6 +30660,649 @@ Assistant: ${r.assistant_response}`;
 // src/util/temp_dirs.ts
 var TEMP_ROOTS = ["/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/var/folders/", "/private/var/folders/"];
 
+// src/mcp/shell_text.ts
+function commandOf(inputJson) {
+  if (inputJson === null) return null;
+  try {
+    const parsed = JSON.parse(inputJson);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const { command, cmd } = parsed;
+    return typeof command === "string" ? command : typeof cmd === "string" ? cmd : null;
+  } catch {
+    const m = /"(?:command|cmd)":"((?:[^"\\]|\\.)*)/.exec(inputJson);
+    if (m === null) return null;
+    try {
+      return JSON.parse('"' + m[1] + '"');
+    } catch {
+      return m[1];
+    }
+  }
+}
+var JOINED_SHELL_C = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+([\s\S]*?)\s*$/;
+function shellCommands(name, inputJson) {
+  if (name !== "exec") return [commandOf(inputJson)].filter((c) => c !== null);
+  const commands = execCodeCommands(inputJson ?? "").map((c) => c.cmd);
+  const joined = commands.length === 0 && inputJson !== null ? JOINED_SHELL_C.exec(inputJson) : null;
+  return joined === null ? commands : [joined[1]];
+}
+var HEREDOC = /(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_]\w*)\1/;
+var SHELL_C = /(?:^|[\s;&|(])(?:\S*\/)?(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+$/;
+function codePositions(line, stack) {
+  const code = new Array(line.length).fill(false);
+  for (let j = 0; j < line.length; j++) {
+    const top = stack.at(-1);
+    const c = line[j];
+    if (top === "'") {
+      if (c === "'") stack.pop();
+      continue;
+    }
+    if (top === "'c" && c === "'" || top === '"c' && c === '"') {
+      stack.pop();
+      continue;
+    }
+    if (c === "\\") {
+      j += 1;
+      continue;
+    }
+    if (top === '"') {
+      if (c === '"') stack.pop();
+      else if (c === "$" && line[j + 1] === "(") {
+        stack.push("(");
+        j += 1;
+      } else if (c === "`") stack.push("`");
+      continue;
+    }
+    if (c === "#" && top !== "'c" && top !== '"c' && (j === 0 || /[\s;&|(]/.test(line[j - 1]))) break;
+    code[j] = true;
+    if (c === "'" || c === '"') stack.push(SHELL_C.test(line.slice(0, j)) ? c + "c" : c);
+    else if (c === "(") stack.push(c);
+    else if (c === ")" && top === "(") stack.pop();
+    else if (c === "`") {
+      if (top === "`") stack.pop();
+      else stack.push(c);
+    }
+  }
+  return code;
+}
+function codeLines(command) {
+  const lines = command.split("\n");
+  const out = [];
+  const stack = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const code = codePositions(line, stack);
+    const opener = HEREDOC.exec(line);
+    const heredoc = opener !== null && code[opener.index] ? opener : null;
+    if (heredoc === null) {
+      out.push({ line, code, body: null });
+      continue;
+    }
+    const close = lines.findIndex((l, j) => j > i && l.trim() === heredoc[2]);
+    const bodyEnd = close === -1 ? lines.length : close;
+    out.push({ line, code, body: lines.slice(i + 1, bodyEnd).join("\n") });
+    i = bodyEnd;
+  }
+  return out;
+}
+function readShell(text) {
+  const out = [];
+  read(text, 0, false, out, 0);
+  return out;
+}
+var OPERATOR_CHARS = "<>&|-";
+var MAX_NESTING2 = 64;
+function ansiEscape(text, j) {
+  const c = text[j] ?? "";
+  const simple = {
+    a: "\x07",
+    b: "\b",
+    e: "\x1B",
+    E: "\x1B",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "	",
+    v: "\v",
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "?": "?"
+  };
+  if (c in simple) return { char: simple[c], next: j + 1 };
+  const code = (digits, radix, from) => {
+    const m = digits.exec(text.slice(from));
+    const point = m === null ? NaN : parseInt(m[0], radix);
+    return m === null || point > 1114111 ? null : { char: String.fromCodePoint(point), next: from + m[0].length };
+  };
+  if (c === "x") return code(/^[0-9A-Fa-f]{1,2}/, 16, j + 1) ?? { char: "\\x", next: j + 1 };
+  if (c === "u") return code(/^[0-9A-Fa-f]{1,4}/, 16, j + 1) ?? { char: "\\u", next: j + 1 };
+  if (c === "U") return code(/^[0-9A-Fa-f]{1,8}/, 16, j + 1) ?? { char: "\\U", next: j + 1 };
+  if (/[0-7]/.test(c)) return code(/^[0-7]{1,3}/, 8, j);
+  if (c === "c" && j + 1 < text.length) return { char: String.fromCharCode(text.charCodeAt(j + 1) & 31), next: j + 2 };
+  return { char: "\\" + c, next: j + 1 };
+}
+function read(text, from, inSub, out, depth) {
+  let words = [];
+  let starts = [];
+  let end = from;
+  let word = null;
+  let wordStart = 0;
+  let quoted = false;
+  let target = null;
+  let stripTabs = false;
+  let parens = 0;
+  const heredocs = [];
+  const begin = (at) => {
+    if (word !== null) return;
+    word = "";
+    wordStart = at;
+    quoted = false;
+  };
+  const add = (at, chars) => {
+    begin(at);
+    word = (word ?? "") + chars;
+  };
+  const finishWord = (at) => {
+    if (word === null) return;
+    if (target === "heredoc") heredocs.push({ delimiter: word, quoted, stripTabs });
+    else if (target === null) {
+      words.push(word);
+      starts.push(wordStart);
+    }
+    target = null;
+    end = at;
+    word = null;
+  };
+  const finishCommand = () => {
+    if (words.length > 0) out.push({ words, starts, end, source: text });
+    words = [];
+    starts = [];
+  };
+  const skipBodies = (i2) => {
+    for (const h of heredocs) {
+      while (i2 < text.length) {
+        let lineEnd = text.indexOf("\n", i2);
+        if (lineEnd === -1) lineEnd = text.length;
+        let line = text.slice(i2, lineEnd);
+        while (!h.quoted && /(?:^|[^\\])(?:\\\\)*\\$/.test(line) && lineEnd < text.length) {
+          let next = text.indexOf("\n", lineEnd + 1);
+          if (next === -1) next = text.length;
+          line = line.slice(0, -1) + text.slice(lineEnd + 1, next);
+          lineEnd = next;
+        }
+        i2 = lineEnd + 1;
+        if ((h.stripTabs ? line.replace(/^\t+/, "") : line) === h.delimiter) break;
+      }
+    }
+    heredocs.length = 0;
+    return Math.min(i2, text.length);
+  };
+  const backquoted = (i2) => {
+    let inner = "";
+    for (; i2 < text.length && text[i2] !== "`"; i2++) {
+      if (text[i2] === "\\" && /[`\\$]/.test(text[i2 + 1] ?? "")) i2 += 1;
+      inner += text[i2];
+    }
+    return { inner, next: i2 + 1 };
+  };
+  let i = from;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (c === "\\") {
+      if (next !== "\n") {
+        add(i, next ?? "");
+        quoted = true;
+      }
+      i += 2;
+    } else if (c === "'") {
+      begin(i);
+      quoted = true;
+      const close = text.indexOf("'", i + 1);
+      const stop = close === -1 ? text.length : close;
+      add(i, text.slice(i + 1, stop));
+      i = stop + 1;
+    } else if (c === "$" && next === "'") {
+      begin(i);
+      quoted = true;
+      let j = i + 2;
+      while (j < text.length && text[j] !== "'") {
+        if (text[j] === "\\") {
+          const e = ansiEscape(text, j + 1);
+          add(i, e.char);
+          j = e.next;
+        } else {
+          add(i, text[j]);
+          j += 1;
+        }
+      }
+      i = j + 1;
+    } else if (c === '"') {
+      begin(i);
+      quoted = true;
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        const d = text[j];
+        if (d === "\\" && text[j + 1] === "\n") {
+          j += 2;
+        } else if (d === "\\" && /[$`"\\]/.test(text[j + 1] ?? "")) {
+          add(i, text[j + 1]);
+          j += 2;
+        } else if (d === "$" && text[j + 1] === "(") {
+          const stop = depth < MAX_NESTING2 ? read(text, j + 2, true, out, depth + 1) : j + 2;
+          add(i, text.slice(j, stop));
+          j = stop;
+        } else if (d === "`") {
+          const { inner, next: stop } = backquoted(j + 1);
+          if (depth < MAX_NESTING2) read(inner, 0, false, out, depth + 1);
+          add(i, text.slice(j, stop));
+          j = stop;
+        } else {
+          add(i, d);
+          j += 1;
+        }
+      }
+      i = j + 1;
+    } else if ((c === "$" || c === "<" || c === ">") && next === "(") {
+      const stop = depth < MAX_NESTING2 ? read(text, i + 2, true, out, depth + 1) : i + 2;
+      add(i, text.slice(i, stop));
+      i = stop;
+    } else if (c === "$" && next === "{") {
+      const close = text.indexOf("}", i);
+      const stop = close === -1 ? text.length : close + 1;
+      add(i, text.slice(i, stop));
+      i = stop;
+    } else if (c === "`") {
+      const { inner, next: stop } = backquoted(i + 1);
+      if (depth < MAX_NESTING2) read(inner, 0, false, out, depth + 1);
+      add(i, text.slice(i, stop));
+      i = stop;
+    } else if (c === "#" && word === null) {
+      const lineEnd = text.indexOf("\n", i);
+      i = lineEnd === -1 ? text.length : lineEnd;
+    } else if (c === " " || c === "	") {
+      finishWord(i);
+      i += 1;
+    } else if (c === "\n") {
+      finishWord(i);
+      finishCommand();
+      i = skipBodies(i + 1);
+    } else if (c === ")") {
+      finishWord(i);
+      finishCommand();
+      i += 1;
+      if (parens > 0) parens -= 1;
+      else if (inSub) return i;
+    } else if (c === "(") {
+      finishWord(i);
+      finishCommand();
+      parens += 1;
+      i += 1;
+    } else if (c === "<" || c === ">" || c === "&" && next === ">") {
+      const open = word;
+      if (open !== null && !quoted && /^\d+$/.test(open) && wordStart + open.length === i) word = null;
+      else finishWord(i);
+      let op = "";
+      while (i < text.length && OPERATOR_CHARS.includes(text[i])) op += text[i++];
+      if (op === "<<" || op === "<<-") {
+        target = "heredoc";
+        stripTabs = op === "<<-";
+      } else {
+        target = "file";
+      }
+      end = i;
+    } else if (c === ";" || c === "&" || c === "|") {
+      finishWord(i);
+      finishCommand();
+      i += next === c || c === "|" && next === "&" ? 2 : 1;
+    } else {
+      add(i, c);
+      i += 1;
+    }
+  }
+  finishWord(i);
+  finishCommand();
+  return i;
+}
+var RESERVED = /* @__PURE__ */ new Set(["!", "{", "if", "then", "else", "elif", "do", "while", "until"]);
+var CLOSING = /* @__PURE__ */ new Set(["fi", "done", "esac", "}"]);
+var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+var base = (word) => word.slice(word.lastIndexOf("/") + 1);
+function shellScript(argv) {
+  let c = false;
+  for (let j = 1; j < argv.length; j++) {
+    const a = argv[j];
+    if (a === "--") return c ? argv[j + 1] ?? null : null;
+    if (a === "--rcfile" || a === "--init-file") {
+      j += 1;
+    } else if (/^[-+][A-Za-z]+$/.test(a)) {
+      if (a.startsWith("-") && a.includes("c")) c = true;
+      if (/[oO]$/.test(a)) j += 1;
+    } else if (!a.startsWith("--")) {
+      return c ? a : null;
+    }
+  }
+  return null;
+}
+function executedCommands(command, depth = 0) {
+  const out = [];
+  for (const { words: w, starts, end, source } of readShell(command)) {
+    let k = 0;
+    for (; ; ) {
+      const word = w[k];
+      if (word === void 0) break;
+      const program = base(word);
+      if (RESERVED.has(word) || ASSIGNMENT.test(word)) {
+        k += 1;
+      } else if (program === "sudo" || program === "time" || program === "exec" || program === "nohup") {
+        k += 1;
+        while (w[k]?.startsWith("-")) k += 1;
+      } else if (program === "env") {
+        k += 1;
+        while (w[k] !== void 0 && (w[k].startsWith("-") || ASSIGNMENT.test(w[k]))) k += 1;
+      } else if (program === "nice") {
+        k += 1;
+        if (w[k] === "-n") k += 2;
+        else if (/^-\d+$/.test(w[k] ?? "")) k += 1;
+      } else if (program === "timeout") {
+        k += 1;
+        while (w[k]?.startsWith("-")) k += ["-s", "-k", "--signal", "--kill-after"].includes(w[k]) ? 2 : 1;
+        k += 1;
+      } else {
+        break;
+      }
+    }
+    const argv = w.slice(k);
+    if (argv.length === 0 || argv.length === 1 && CLOSING.has(argv[0])) continue;
+    if (SHELLS.has(base(argv[0])) && depth < 4) {
+      const script = shellScript(argv);
+      if (script !== null) {
+        out.push(...executedCommands(script, depth + 1));
+        continue;
+      }
+    }
+    out.push({ argv, text: source.slice(starts[k], end).replace(/\\\n[ \t]*/g, "").trim() });
+  }
+  return out;
+}
+
+// src/mcp/checks.ts
+var ENVIRONMENTS = /* @__PURE__ */ new Set([
+  "dev",
+  "develop",
+  "development",
+  "sandbox",
+  "staging",
+  "stage",
+  "stg",
+  "qa",
+  "test",
+  "cbt",
+  "beta",
+  "preprod",
+  "prod",
+  "production"
+]);
+function whereOfUrl(url2) {
+  let parsed;
+  try {
+    parsed = new URL(url2);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const hostname3 = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const local = hostname3 === "localhost" || hostname3.endsWith(".localhost") || hostname3 === "0.0.0.0" || hostname3 === "::1" || hostname3 === "host.docker.internal" || hostname3.startsWith("127.");
+  if (local) return { where: "local", host: parsed.host };
+  const labels = hostname3.split(".").slice(0, -1).flatMap((l) => l.split("-"));
+  return { where: labels.find((l) => ENVIRONMENTS.has(l)) ?? "other", host: parsed.host };
+}
+var SHELL_TOOLS2 = /* @__PURE__ */ new Set(["Bash", "exec_command", "exec"]);
+var BROWSER_TOOL = /(?:^|__)(?:browser_navigate|navigate_page|navigate)$/;
+var URL_IN_TEXT = /https?:\/\/[^\s'"\\)]+/;
+var HTTP_CLIENTS = /* @__PURE__ */ new Set(["curl", "wget", "http", "https", "xh"]);
+var base2 = (word) => word.slice(word.lastIndexOf("/") + 1);
+var TEST_PROGRAMS = /* @__PURE__ */ new Set(["vitest", "jest", "mocha", "pytest", "py.test", "tox", "nox", "rspec", "phpunit"]);
+var PACKAGE_MANAGERS = /* @__PURE__ */ new Set(["npm", "pnpm", "yarn", "bun"]);
+var JS_RUNNERS2 = /* @__PURE__ */ new Set(["vitest", "jest", "mocha"]);
+var TEST_SUBCOMMANDS = {
+  go: ["test"],
+  cargo: ["test", "nextest"],
+  dotnet: ["test"],
+  swift: ["test"],
+  deno: ["test"],
+  bun: ["test"],
+  mix: ["test"],
+  rails: ["test"],
+  make: ["test", "check"]
+};
+function isTestRun(argv) {
+  const program = base2(argv[0]);
+  const [second, third] = [argv[1], argv[2]];
+  const isTestScript = (word) => word === "test" || (word?.startsWith("test:") ?? false);
+  if (program === "gradle" || program === "gradlew") {
+    return argv.slice(1).some((a) => !a.startsWith("-") && (a === "test" || a === "check" || a.endsWith(":test") || a.endsWith(":check") || a.endsWith("Test")));
+  }
+  if (program === "mvn" || program === "mvnw") return argv.slice(1).some((a) => ["test", "verify", "integration-test"].includes(a));
+  if (PACKAGE_MANAGERS.has(program) && (isTestScript(second) || second === "run" && isTestScript(third))) return true;
+  const runner = program === "npx" || program === "yarn" || program === "bunx" ? 1 : program === "pnpm" && (second === "exec" || second === "dlx") ? 2 : 0;
+  if (runner > 0) {
+    const next = argv[runner];
+    if (next !== void 0 && (JS_RUNNERS2.has(next) || next === "playwright" && argv[runner + 1] === "test")) return true;
+  }
+  if (TEST_PROGRAMS.has(program)) return true;
+  if ((program === "python" || program === "python3") && second === "-m" && third === "pytest") return true;
+  if (second !== void 0 && TEST_SUBCOMMANDS[program]?.includes(second)) return true;
+  if (program === "bundle" && second === "exec") return third === "rspec" || third === "rails" && argv[3] === "test";
+  return false;
+}
+function isGitPushOrMerge(argv) {
+  if (base2(argv[0]) !== "git") return false;
+  const sub = argv[1] === "-C" ? 3 : 1;
+  if (argv[sub] === "push") return true;
+  return argv[sub] === "merge" && !["--abort", "--continue", "--quit"].includes(argv[sub + 1] ?? "");
+}
+function checksOfCall(name, inputJson) {
+  if (BROWSER_TOOL.test(name)) {
+    let url2;
+    try {
+      url2 = JSON.parse(inputJson ?? "")?.url;
+    } catch {
+      return [];
+    }
+    const at = typeof url2 === "string" ? whereOfUrl(url2) : null;
+    return at === null ? [] : [{ kind: "browser", where: at.where, host: at.host, target: url2 }];
+  }
+  if (!SHELL_TOOLS2.has(name)) return [];
+  const checks = [];
+  for (const command of shellCommands(name, inputJson)) {
+    for (const { argv, text } of executedCommands(command)) {
+      if (isTestRun(argv)) {
+        checks.push({ kind: "test", where: "local", host: null, target: text });
+      } else if (HTTP_CLIENTS.has(base2(argv[0]))) {
+        const url2 = argv.slice(1).map((a) => URL_IN_TEXT.exec(a)?.[0]).find((u) => u !== void 0);
+        const at = url2 === void 0 ? null : whereOfUrl(url2);
+        if (at !== null) checks.push({ kind: "api", where: at.where, host: at.host, target: url2 });
+      } else if (isGitPushOrMerge(argv)) {
+        checks.push({ kind: "git", where: "", host: null, target: text });
+      }
+    }
+  }
+  return checks;
+}
+function groupChecks(rows) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const { session_id, ts, is_error, check: check2 } of rows) {
+    if (check2.kind === "git") continue;
+    const key = JSON.stringify([check2.kind, check2.where, check2.host]);
+    const g = groups.get(key) ?? {
+      kind: check2.kind,
+      where: check2.where,
+      host: check2.host,
+      count: 0,
+      failed: 0,
+      last_ts: ts,
+      last_target: "",
+      last_session: ""
+    };
+    g.count += 1;
+    if (is_error === 1) g.failed += 1;
+    g.last_ts = ts;
+    g.last_target = check2.target;
+    g.last_session = session_id;
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => a.last_ts < b.last_ts ? -1 : a.last_ts > b.last_ts ? 1 : 0);
+}
+var TARGET_CHARS = 160;
+var NOUNS = { test: ["run", "runs"], api: ["call", "calls"], browser: ["page", "pages"] };
+function formatCheckGroup(g) {
+  const noun = NOUNS[g.kind][g.count === 1 ? 0 : 1];
+  return `${g.kind} ${g.where}${g.host === null ? "" : ` ${g.host}`}: ${g.count} ${noun}, ${g.failed} failed, last ${g.last_ts}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
+}
+var SESSIONS_SHOWN = 10;
+var GROUPS_SHOWN = 20;
+var GIT_SHOWN = 20;
+var BRANCH_LIMIT_DEFAULT = 3;
+var BRANCH_LIMIT_MAX = 10;
+function callScope(p) {
+  return {
+    from: "session s CROSS JOIN tool_call t ON t.session_id = s.id",
+    where: `s.project_id = ? AND ${workKindClause("s")} AND ${notCopiedClause("t.event_uuid", "t.session_id")}` + (p.since ? " AND t.ts >= ?" : "") + (p.until ? " AND t.ts <= ?" : ""),
+    args: [p.project_id, ...[p.since, p.until].filter((v) => Boolean(v))]
+  };
+}
+function withBranchColumn(run) {
+  try {
+    return run("COALESCE(t.git_branch, s.git_branch)", "t.git_branch");
+  } catch (e) {
+    if (!/no such column: (t\.)?git_branch/.test(e.message)) throw e;
+    return run("s.git_branch", "NULL");
+  }
+}
+function namesBranch(command, branch) {
+  return new RegExp(`(?:^|[\\s:/'"=])${escapeRegExp(branch)}(?:$|[\\s:'"~^])`).test(command);
+}
+function allBranchChecks(db2, p) {
+  return withBranchColumn((callBranch, ownBranch) => {
+    const scope = callScope(p);
+    const sessions = db2.prepare(`
+      ${TOP}
+      SELECT COALESCE(top.root, s.id) AS session_id, min(s.source) AS source, min(t.ts) AS first_ts, max(t.ts) AS last_ts,
+        max(${ownBranch} IS NULL) AS start_branch_only,
+        count(DISTINCT CASE WHEN s.id <> COALESCE(top.root, s.id) THEN s.id END) AS subagents
+      FROM ${scope.from} LEFT JOIN top ON top.id = s.id
+      WHERE ${scope.where} AND ${callBranch} = ?
+      GROUP BY COALESCE(top.root, s.id)
+      ORDER BY first_ts, session_id`).all(...scope.args, p.branch).map((s) => ({ ...s, start_branch_only: s.start_branch_only === 1 }));
+    const calls = db2.prepare(`
+      SELECT t.session_id, t.ts, t.name, t.input_json, t.is_error, ${callBranch} = ? AS on_branch
+      FROM ${scope.from}
+      WHERE ${scope.where}
+        AND (t.name IN ('Bash', 'exec_command', 'exec') OR t.name LIKE '%navigate%')
+        AND (${callBranch} = ? OR instr(t.input_json, ?) > 0)
+      ORDER BY t.ts`).all(p.branch, ...scope.args, p.branch, p.branch);
+    const rows = [];
+    const git = [];
+    for (const c of calls) {
+      for (const check2 of checksOfCall(c.name, c.input_json)) {
+        const row = { session_id: c.session_id, ts: c.ts, is_error: c.is_error, check: check2 };
+        if (check2.kind === "git") {
+          if (c.on_branch === 1 || namesBranch(check2.target, p.branch)) git.push(row);
+        } else if (c.on_branch === 1) {
+          rows.push(row);
+        }
+      }
+    }
+    return { sessions, rows, git };
+  });
+}
+function branchChecks(db2, p) {
+  const all = allBranchChecks(db2, p);
+  const groups = groupChecks(all.rows);
+  return {
+    project_id: p.project_id,
+    branch: p.branch,
+    sessions: all.sessions.slice(-SESSIONS_SHOWN),
+    sessions_total: all.sessions.length,
+    groups: groups.slice(-GROUPS_SHOWN),
+    groups_total: groups.length,
+    git: all.git.slice(-GIT_SHOWN).map((g) => ({ ts: g.ts, session_id: g.session_id, line: g.check.target, failed: g.is_error === 1 })),
+    git_total: all.git.length
+  };
+}
+var CHECKS_NOTE = "A check that did not fail exited 0 or got no result (stopped or still running); clens keeps no output of a call that succeeded, so read the reply after a check with clens_session (its session and time) to know what it returned.";
+function formatBranchChecks(r) {
+  if (r.sessions_total === 0 && r.git_total === 0) {
+    return `No session in ${r.project_id} made a call on branch ${r.branch}, and no git push or merge names it. Pass branches: true for the project's branches.`;
+  }
+  const lines = [`Branch ${r.branch} in ${r.project_id}`];
+  function section(name, header, total, rows, line) {
+    lines.push(...total === 0 ? [`${name}: (none)`] : [header, ...rows.map((row) => `  ${line(row)}`)]);
+  }
+  section(
+    "Sessions on it",
+    `Sessions on it (last ${r.sessions.length} of ${r.sessions_total}), first and last call on it:`,
+    r.sessions_total,
+    r.sessions,
+    (s) => `${s.session_id}  ${s.source}  ${s.first_ts} \u2013 ${s.last_ts}` + (s.subagents > 0 ? `  (+${s.subagents} subagent${s.subagents === 1 ? "" : "s"})` : "") + (s.start_branch_only ? "  (branch from the session's start)" : "")
+  );
+  section("Checks", `Checks (last ${r.groups.length} of ${r.groups_total}, by kind and host):`, r.groups_total, r.groups, formatCheckGroup);
+  section(
+    "Git push and merge on it or naming it",
+    `Git push and merge on it or naming it (last ${r.git.length} of ${r.git_total}):`,
+    r.git_total,
+    r.git,
+    (g) => `${g.ts}  ${cutChars(g.line, TARGET_CHARS)}  (session ${g.session_id})${g.failed ? "  failed" : ""}`
+  );
+  lines.push(CHECKS_NOTE);
+  return lines.join("\n");
+}
+var KIND_ORDER = ["test", "api", "browser"];
+function recentBranches(db2, p) {
+  const limit = Math.min(p.limit ?? BRANCH_LIMIT_DEFAULT, BRANCH_LIMIT_MAX);
+  const found = withBranchColumn((callBranch) => {
+    const scope = callScope(p);
+    return db2.prepare(`
+      SELECT ${callBranch} AS branch, max(t.ts) AS last_ts
+      FROM ${scope.from}
+      WHERE ${scope.where}
+      GROUP BY branch
+      HAVING branch IS NOT NULL AND branch NOT IN ('', 'HEAD')
+      ORDER BY last_ts DESC, branch`).all(...scope.args);
+  });
+  const branches = found.slice(0, limit).map(({ branch, last_ts }) => {
+    const all = allBranchChecks(db2, { project_id: p.project_id, branch, since: p.since, until: p.until });
+    const counts = /* @__PURE__ */ new Map();
+    const groups = groupChecks(all.rows).sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.where < b.where ? -1 : a.where > b.where ? 1 : 0));
+    for (const g of groups) counts.set(`${g.kind} ${g.where}`, (counts.get(`${g.kind} ${g.where}`) ?? 0) + g.count);
+    const checks = [...counts].map(([label, count]) => ({ label, count }));
+    if (all.git.length > 0) checks.push({ label: "git", count: all.git.length });
+    return { branch, last_ts, sessions: all.sessions.length, checks };
+  });
+  return { branches, more: found.length - branches.length };
+}
+function formatRecentBranches(project_id, r) {
+  if (r.branches.length === 0) return `No branch recorded in ${project_id}.`;
+  return [
+    `Branches in ${project_id}, latest first:`,
+    ...r.branches.map((b, i) => {
+      const checks = b.checks.length === 0 ? "none" : b.checks.map((c) => `${c.label} ${c.count}`).join(", ");
+      return `[${i + 1}] ${b.branch}  last ${b.last_ts}  ${b.sessions} session${b.sessions === 1 ? "" : "s"}  checks: ${checks}`;
+    }),
+    ...r.more > 0 ? [`(+${r.more} more branch${r.more === 1 ? "" : "es"}; raise limit, max ${BRANCH_LIMIT_MAX})`] : [],
+    "Pass branch with one of them for its checks."
+  ].join("\n");
+}
+function branchParamsError(p) {
+  if (p.branch === void 0 && p.branches !== true) return null;
+  if (!p.project_id) return "branch and branches need project_id, the project the branch is in";
+  if (p.branch !== void 0 && p.branches === true) return "pass branch or branches, not both";
+  if (p.file !== void 0 || p.text !== void 0 || p.commits !== void 0) return "branch and branches take no file, text or commits";
+  return null;
+}
+
 // src/mcp/left_off.ts
 var DEFAULT_LIMIT4 = 3;
 var MAX_LIMIT4 = 10;
@@ -30658,9 +31314,6 @@ var BARE_COMMAND = (alias) => `(substr(${alias}.text, 1, 1) = '/' AND instr(subs
     AND instr(${alias}.text, ' ') = 0 AND instr(${alias}.text, char(10)) = 0)`;
 var TREE = `WITH RECURSIVE tree(id) AS (
     SELECT ? UNION SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id)`;
-var TOP = `WITH RECURSIVE top(id, root) AS (
-    SELECT id, id FROM session WHERE parent_id IS NULL
-    UNION SELECT s.id, t.root FROM session s JOIN top t ON s.parent_id = t.id)`;
 var REAL_MESSAGE = (alias) => `${alias}.type IN ('user_message', 'assistant_message') AND ${notNoise(alias)} AND NOT ${BARE_COMMAND(alias)}`;
 function leftOffWithMore(db2, params, opts = {}) {
   const limit = Math.min(params.limit ?? DEFAULT_LIMIT4, MAX_LIMIT4);
@@ -30739,8 +31392,8 @@ function leftOffWithMore(db2, params, opts = {}) {
 }
 function shortPath(path, cwd) {
   if (!cwd) return path;
-  const base = cwd.replace(/\/+$/, "") + "/";
-  return path.startsWith(base) ? path.slice(base.length) : path;
+  const base3 = cwd.replace(/\/+$/, "") + "/";
+  return path.startsWith(base3) ? path.slice(base3.length) : path;
 }
 function formatLeftOff(sessions, more) {
   if (sessions.length === 0) return "No sessions found.";
@@ -30784,87 +31437,15 @@ var CHANGE_GIT = /\bgit\s+(?:-C\s+\S+\s+)?(?:commit|merge|push)\b/;
 function isCompact(m) {
   return m.role === "user" && (m.compact === 1 || COMPACT_COMMAND.test(m.text));
 }
-function commandOf(inputJson) {
-  if (inputJson === null) return null;
-  try {
-    const parsed = JSON.parse(inputJson);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const { command, cmd } = parsed;
-    return typeof command === "string" ? command : typeof cmd === "string" ? cmd : null;
-  } catch {
-    const m = /"(?:command|cmd)":"((?:[^"\\]|\\.)*)/.exec(inputJson);
-    if (m === null) return null;
-    try {
-      return JSON.parse('"' + m[1] + '"');
-    } catch {
-      return m[1];
-    }
-  }
-}
-function shellCommands(name, inputJson) {
-  return name === "exec" ? execCodeCommands(inputJson ?? "").map((c) => c.cmd) : [commandOf(inputJson)].filter((c) => c !== null);
-}
 var STATE_CHANGING_GIT = /(?:^|&&|\|\||;)\s*git\s+(?:-C\s+\S+\s+)?(?:commit|checkout|switch|merge|rebase|reset|stash|push|branch)\b/g;
-var HEREDOC = /(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_]\w*)\1/;
 function gitMatches(line) {
   return [...line.matchAll(STATE_CHANGING_GIT)].map((m) => ({ at: m.index + m[0].indexOf("git"), end: m.index + m[0].length }));
 }
-var SHELL_C = /(?:^|[\s;&|(])(?:\S*\/)?(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+$/;
-function codePositions(line, stack) {
-  const code = new Array(line.length).fill(false);
-  for (let j = 0; j < line.length; j++) {
-    const top = stack.at(-1);
-    const c = line[j];
-    if (top === "'") {
-      if (c === "'") stack.pop();
-      continue;
-    }
-    if (top === "'c" && c === "'" || top === '"c' && c === '"') {
-      stack.pop();
-      continue;
-    }
-    if (c === "\\") {
-      j += 1;
-      continue;
-    }
-    if (top === '"') {
-      if (c === '"') stack.pop();
-      else if (c === "$" && line[j + 1] === "(") {
-        stack.push("(");
-        j += 1;
-      } else if (c === "`") stack.push("`");
-      continue;
-    }
-    if (c === "#" && top !== "'c" && top !== '"c' && (j === 0 || /[\s;&|(]/.test(line[j - 1]))) break;
-    code[j] = true;
-    if (c === "'" || c === '"') stack.push(SHELL_C.test(line.slice(0, j)) ? c + "c" : c);
-    else if (c === "(") stack.push(c);
-    else if (c === ")" && top === "(") stack.pop();
-    else if (c === "`") {
-      if (top === "`") stack.pop();
-      else stack.push(c);
-    }
-  }
-  return code;
-}
 function stateChangingGitLines(command) {
-  const lines = command.split("\n");
-  const found = [];
-  const stack = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const code = codePositions(line, stack);
-    const opener = HEREDOC.exec(line);
-    const heredoc = opener !== null && code[opener.index] ? opener : null;
-    const close = heredoc === null ? i : lines.findIndex((l, j) => j > i && l.trim() === heredoc[2]);
-    const bodyEnd = close === -1 ? lines.length : close;
-    if (gitMatches(line).some((m) => code[m.at])) {
-      const subject = firstLine(lines.slice(i + 1, bodyEnd).join("\n"));
-      found.push(heredoc === null || subject === "" ? line : `${line} \u23CE ${subject}`);
-    }
-    i = heredoc === null ? i : bodyEnd;
-  }
-  return found;
+  return codeLines(command).filter(({ line, code }) => gitMatches(line).some((m) => code[m.at])).map(({ line, body }) => {
+    const subject = firstLine(body ?? "");
+    return subject === "" ? line : `${line} \u23CE ${subject}`;
+  });
 }
 function shownGitLine(line) {
   const matches = gitMatches(line);
@@ -30996,6 +31577,11 @@ function sessionRecord(db2, sessionId) {
     SELECT ts, name, input_json FROM tool_call
     WHERE session_id IN tree AND name IN ('Bash', 'exec_command', 'exec') AND input_json LIKE '%git %'
     ORDER BY ts DESC`).all(sessionId).flatMap(({ ts, name, input_json }) => shellCommands(name, input_json).flatMap(stateChangingGitLines).reverse().map((line) => ({ ts, command: line })));
+  const checks = groupChecks(db2.prepare(`
+    ${TREE}
+    SELECT session_id, ts, name, input_json, is_error FROM tool_call
+    WHERE session_id IN tree AND (name IN ('Bash', 'exec_command', 'exec') OR name LIKE '%navigate%')
+    ORDER BY ts`).all(sessionId).flatMap(({ name, input_json, ...call }) => checksOfCall(name, input_json).map((check2) => ({ ...call, check: check2 }))));
   const failedCalls = (excerpt) => db2.prepare(`
     ${TREE}
     SELECT t.ts, t.name, t.input_json, ${excerpt} AS error_excerpt FROM tool_call t
@@ -31060,6 +31646,8 @@ function sessionRecord(db2, sessionId) {
     edits_total: edits.length,
     git: latest(git),
     git_total: git.length,
+    checks: checks.slice(-RECORD_LIST_CAP),
+    checks_total: checks.length,
     failures: latest(failures),
     failures_total: failures.length,
     hook_blocks: latest(hookBlocks),
@@ -31136,6 +31724,7 @@ function formatSessionRecord(r) {
     r.git,
     (g) => `${g.ts}  ${shownGitLine(g.command)}`
   );
+  section("Checks", `Checks (last ${r.checks.length} of ${r.checks_total}):`, r.checks_total, r.checks, formatCheckGroup);
   section(
     "Failed tool calls",
     `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`,
@@ -31335,22 +31924,23 @@ function formatLineOrigins(file2, origins) {
 }
 
 // src/mcp/instructions.ts
-var SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply, with session ids and timestamps. It keeps sessions whose transcripts were deleted.
+var SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply. It keeps sessions whose transcripts were deleted.
 
 USE IT FIRST, without being asked, when the user refers to earlier work rather than the current conversation or code:
 - a past topic, finding or decision: "what did we find about the slow query", "why did we drop the retry logic"
 - something tried before: "did switching the linter help" (check before suggesting it again)
 - where work stopped or what was done: "where did I leave off", "what did I do yesterday" (clens_left_off)
+- if it was tested or deployed: "did we test it on sandbox" (clens_left_off branch)
 - another session or project: "the helper in the other repo"
 - signal words: last time, earlier, before, previously, we decided, we tried, remember when, and the same in the user's language (\uC9C0\uB09C\uBC88, \uC544\uAE4C, \u524D\u56DE, \u4E0A\u6B21); also a request that assumes something already exists
 
 DON'T USE IT for the current code (read the files), for what is still in your context, or for general knowledge. Earlier turns a compaction dropped are not in it: read them with clens_session, session_id "current".
 
 HOW:
-1. clens_search (limit 5-10) with distinctive words the conversation would contain: identifiers, error text, file names, product terms. Keyword search, not semantic; see its query rules.
+1. clens_search (limit 5-10) with distinctive words the conversation would contain: identifiers, error text, file names, product terms. Keyword search; see its query rules.
 2. clens_session with a hit's session_id and ts, to read the conversation around it before answering.
 3. Nothing relevant? Retry before concluding it is absent: the other language, spelling variants, split forms (uploadImages / upload images), OR, another project, a wider time range.
-4. clens_left_off: latest sessions of a project or file, with last request, reply and edits; session_id "current" after compaction. clens_recent: messages in a time window. clens_stats: tool and file counts.
+4. clens_left_off: latest sessions of a project or file, with last request, reply and edits; session_id "current" after compaction. clens_recent: a time window. clens_stats: counts.
 
 Report when and in which session something was said, quote the key line, and keep what the record shows apart from your inference. Use these tools instead of reading ~/.clens/index.db or transcript files.`;
 var SEARCH_DESCRIPTION = `Keyword search (FTS5, not semantic) over the user's past Claude Code and Codex messages, the user's and the assistant's. Returns a short snippet per hit with its session_id, ts, role and score; read the conversation around a hit with clens_session (its session_id + ts). Pass context (1-5) to also get that many messages before and after each hit, often enough to skip that call. Pass queries (2-5) instead of query to run several searches in one call.
@@ -31953,7 +32543,9 @@ var LeftOffParamsSchema = external_exports.strictObject({
   limit: external_exports.number().int().min(1).max(10).optional(),
   session_id: external_exports.string().min(1).optional(),
   commits: external_exports.array(external_exports.string().min(1)).min(1).max(50).optional(),
-  text: external_exports.string().min(1).optional()
+  text: external_exports.string().min(1).optional(),
+  branch: external_exports.string().min(1).optional(),
+  branches: external_exports.boolean().optional()
 });
 var MIN_TEXT_CHARS = 20;
 var StatsParamsSchema = external_exports.strictObject({
@@ -32095,7 +32687,7 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "clens_left_off",
-      description: `Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first; or, with file and text, the sessions that wrote that text. Each comes with when its conversation started and ended, the user's last request, the assistant's last reply (often a status or summary) and the files it edited. Use it for "where did I leave off", "what was I doing on this", "who last changed this file and why"; then clens_session to read more of one. When the limit leaves out a session that was active in the span the list covers, the list ends with how many. In Claude Code and Codex the current conversation is left out of the list; pass session_id "current" for its own record, for example after the conversation was compacted. A subagent's edits count as the session that started it. Files a shell command wrote are read off its text (redirects, tee, sed -i, heredoc and -c/-e scripts); a path set only when it ran ($VAR, $(\u2026)) is missed.`,
+      description: `Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first; or, with file and text, the sessions that wrote that text. Each comes with when its conversation started and ended, the user's last request, the assistant's last reply (often a status or summary) and the files it edited. Use it for "where did I leave off", "what was I doing on this", "who last changed this file and why"; then clens_session to read more of one. With project_id and branch (a git branch name, as \`git branch --show-current\` prints it), returns the checks run while that branch was checked out, in every Claude Code and Codex session of the project, and the git push and merge commands that name it: test runs, HTTP calls (curl, wget, httpie, xh) and browser pages, by host, each with its failures and latest run. Use it for "did we test this", "was it checked on sandbox", "is it deployed to cbt". With branches: true, the project's latest branches with their checks, to find the one the user means. A check that did not fail exited 0 or got no result, which does not say its result was right. When the limit leaves out a session that was active in the span the list covers, the list ends with how many. In Claude Code and Codex the current conversation is left out of the list; pass session_id "current" for its own record, for example after the conversation was compacted. A subagent's edits count as the session that started it. Files a shell command wrote are read off its text (redirects, tee, sed -i, heredoc and -c/-e scripts); a path set only when it ran ($VAR, $(\u2026)) is missed.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -32121,7 +32713,7 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           session_id: {
             type: "string",
-            description: `A session id from another clens result, or "current" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply (and, for a session of one segment, that reply after its latest edit or commit), edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits and text are then ignored.`
+            description: `A session id from another clens result, or "current" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply (and, for a session of one segment, that reply after its latest edit or commit), edited files, git commands, checks (test runs, HTTP calls and browser pages, by host), failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits, text, branch and branches are then ignored.`
           },
           commits: {
             type: "array",
@@ -32131,6 +32723,14 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           text: {
             type: "string",
             description: `Text from the file, one line or a few, with file. Returns the sessions whose edits of that file wrote it, the first first, instead of a list: each at its first such edit, with the user's request that started that turn and the assistant reply just before the request, which is what the user answered and often holds the reasons. When the same session wrote it again in a later turn, that last turn follows as "written again": it holds the reason when the first attempt was rolled back, the first turn does when later work only carried the text along. Read around a request with clens_session. Lines are trimmed and must all appear in one edit; at least 20 characters in all. project_id, since, until and limit narrow it. An edit's input is stored up to 2 KB, so later lines of a long edit or of a large new file are not found.`
+          },
+          branch: {
+            type: "string",
+            description: "A git branch of the project, as git branch --show-current prints it. Returns its checks instead of a list; needs project_id. since and until narrow it; limit is ignored, and file, text and commits are an error with it."
+          },
+          branches: {
+            type: "boolean",
+            description: "true lists the project's latest branches, newest activity first, each with its checks; needs project_id. limit (default 3, max 10), since and until apply."
           }
         }
       }
@@ -32242,6 +32842,15 @@ ${m.text}`).join("\n\n");
         if (!resolved.ok) return { content: [{ type: "text", text: resolved.error }], isError: true };
         const record2 = sessionRecord(getDb(), resolved.id);
         const text = record2 ? formatSessionRecord(record2) : `No session found: ${resolved.id}. A session only just started may not be indexed yet; try again in a few seconds.`;
+        return { content: [{ type: "text", text }] };
+      }
+      const { branch, branches } = parsed.data;
+      if (branch !== void 0 || branches === true) {
+        const invalid = branchParamsError(parsed.data);
+        if (invalid !== null) return { content: [{ type: "text", text: `Invalid params: ${invalid}` }], isError: true };
+        const project_id = parsed.data.project_id;
+        const window = { since: parsed.data.since, until: parsed.data.until };
+        const text = branch !== void 0 ? formatBranchChecks(branchChecks(getDb(), { project_id, branch, ...window })) : formatRecentBranches(project_id, recentBranches(getDb(), { project_id, limit: parsed.data.limit, ...window }));
         return { content: [{ type: "text", text }] };
       }
       if (parsed.data.text !== void 0) {

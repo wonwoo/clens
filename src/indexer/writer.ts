@@ -106,8 +106,8 @@ export function prepareStatements(db: Database.Database): WriterStatements {
         @user_turn_no, @assistant_turn_no, @source_file)`,
     ),
     insertToolCall: db.prepare(
-      `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars)
-       VALUES (@event_uuid, @session_id, @ts, @call_id, @name, @input_json, @duration_ms, @is_error, @result_chars)`,
+      `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars, git_branch)
+       VALUES (@event_uuid, @session_id, @ts, @call_id, @name, @input_json, @duration_ms, @is_error, @result_chars, @git_branch)`,
     ),
     insertFileOp: db.prepare(
       `INSERT INTO file_op (event_uuid, session_id, ts, tool, path)

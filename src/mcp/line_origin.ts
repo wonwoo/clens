@@ -12,8 +12,8 @@
  */
 import type Database from "better-sqlite3";
 
-import { notCopiedClause } from "../analyzer/scope.js";
-import { type LeftOffParams, REAL_MESSAGE, REPLY_CHARS, REQUEST_CHARS, TOP } from "./left_off.js";
+import { notCopiedClause, TOP } from "../analyzer/scope.js";
+import { type LeftOffParams, REAL_MESSAGE, REPLY_CHARS, REQUEST_CHARS } from "./left_off.js";
 import { cutChars } from "./search.js";
 
 /** One edit that wrote the text, with the turn it was made in. */

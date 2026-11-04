@@ -678,6 +678,24 @@ describe("clens_left_off session record", () => {
     expect(r.segments).toHaveLength(20);
   });
 
+  it("lists the session's checks by kind and host after Git, leaving git push to the Git section", () => {
+    call("x1", "old", "2026-09-01T10:04:10Z", "Bash", '{"command":"npm test"}');
+    call("x2", "old", "2026-09-01T10:04:20Z", "Bash", '{"command":"curl -s http://localhost:3000/health"}');
+    call("x3", "old", "2026-09-01T10:04:30Z", "Bash", '{"command":"git push origin main"}');
+    const r = sessionRecord(db, "old")!;
+    expect(r.checks_total).toBe(2);
+    const lines = formatSessionRecord(r).split("\n");
+    const git = lines.indexOf("Git (last 1 of 1):");
+    expect(lines.slice(git, git + 5)).toEqual([
+      "Git (last 1 of 1):",
+      "  2026-09-01T10:04:30Z  git push origin main",
+      "Checks (last 2 of 2):",
+      "  test local: 1 run, 0 failed, last 2026-09-01T10:04:10Z: npm test (session old)",
+      "  api local localhost:3000: 1 call, 0 failed, last 2026-09-01T10:04:20Z: http://localhost:3000/health (session old)",
+    ]);
+    expect(formatSessionRecord(sessionRecord(db, "new")!).split("\n")).toContain("Checks: (none)");
+  });
+
   it("formats a record with its section headers", () => {
     seedMid();
     expect(formatSessionRecord(sessionRecord(db, "mid")!).split("\n")).toEqual([
@@ -690,6 +708,8 @@ describe("clens_left_off session record", () => {
       "  src/login.ts  1 edits, last 2026-09-02T10:03:00Z",
       "Git (last 1 of 1):",
       '  2026-09-02T10:04:50Z  git add -A && git commit -m "fix login"',
+      "Checks (last 1 of 1):",
+      "  test local: 1 run, 1 failed, last 2026-09-02T10:04:52Z: npm test (session mid)",
       "Failed tool calls (last 1 of 1):",
       "  2026-09-02T10:04:52Z  Bash: npm test",
       "    Exit code 1 ⏎ FAIL test/login.spec.ts ⏎ …[truncated]… ⏎ Tests  1 failed",
@@ -700,6 +720,7 @@ describe("clens_left_off session record", () => {
     expect(old).toContain("Last reply: 2026-09-01T10:05:00Z  Cache added; tests pass.");
     expect(formatSessionRecord(sessionRecord(db, "new")!).split("\n")).toContain("Last reply: (none)");
     expect(old).toContain("Git: (none)");
+    expect(old).toContain("Checks: (none)");
     expect(old).toContain("Failed tool calls: (none)");
     expect(old).toContain("Hook blocks: (none)");
   });

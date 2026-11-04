@@ -394,6 +394,24 @@ describe("parseEventLine on synthetic events (Skill/system-reminder/slash-comman
     expect(batch.counters.get("tool_input_truncated")?.count).toBe(1);
   });
 
+  it("stores on each tool call the branch its line carries, and null for a line without one", () => {
+    const line = (uuid: string, ts: string, gitBranch?: string) => JSON.stringify({
+      uuid,
+      sessionId: "s",
+      type: "assistant",
+      timestamp: ts,
+      ...(gitBranch === undefined ? {} : { gitBranch }),
+      message: { role: "assistant", content: [{ type: "tool_use", id: `tu-${uuid}`, name: "Bash", input: { command: "ls" } }] },
+    });
+    const body = [
+      line("b1", "2026-01-01T00:00:00Z", "main"),
+      line("b2", "2026-01-01T00:00:01Z", "feature/x"),
+      line("b3", "2026-01-01T00:00:02Z"),
+    ].join("\n") + "\n";
+    const r = parseFileBody({ body, source_file: "x", batch: freshBatch() });
+    expect(r.events.flatMap((e) => e.tool_calls).map((t) => t.git_branch)).toEqual(["main", "feature/x", null]);
+  });
+
   it("classifies tool_result pseudo-user via has_tool_res=1 + has_text=0 → no user_turn_no", () => {
     const realUser = JSON.stringify({
       uuid: "u-real",

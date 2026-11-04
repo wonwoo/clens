@@ -1,6 +1,40 @@
 #!/usr/bin/env node
 import { createRequire as __clensRequire } from 'node:module'; const require = __clensRequire(import.meta.url);
 
+// src/analyzer/scope.ts
+function workKindClause(alias) {
+  const col = (c) => alias ? `${alias}.${c}` : c;
+  return `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec' AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`;
+}
+var WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
+
+// src/util/temp_dirs.ts
+var TEMP_ROOTS = ["/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/var/folders/", "/private/var/folders/"];
+
+// src/mcp/search.ts
+var SNIPPET_LEAD = 60;
+var SNIPPET_TRAIL = 180;
+var CONTEXT_LINE_CHARS = SNIPPET_LEAD + SNIPPET_TRAIL;
+function cutChars(text, max) {
+  const chars = Array.from(text.trim());
+  return chars.length > max ? chars.slice(0, max).join("") + "\u2026" : chars.join("");
+}
+function notNoise(alias) {
+  const t = `${alias}.text`;
+  return `NOT (substr(${t}, 1, 28) = '[Request interrupted by user'
+    OR trim(${t}) = ''
+    OR substr(${t}, 1, 20) = '[external_agent_tool'
+    OR ${t} = '<EXTERNAL SESSION IMPORTED>'
+    OR ${t} = 'No response requested.'
+    OR substr(${t}, 1, 15) = '<local-command-'
+    OR substr(${t}, 1, 19) = '<task-notification>'
+    OR substr(${t}, 1, 38) = 'Another Claude session sent a message:'
+    OR substr(${t}, 1, 17) = '<teammate-message'
+    OR substr(${t}, 1, 13) = '<bash-stdout>'
+    OR (substr(${t}, 1, 9) = '<command-' AND instr(${t}, '<command-args></command-args>') > 0)
+    OR (${alias}.is_command = 1 AND ${t} LIKE '%<command-%<>%'))`;
+}
+
 // src/util/codex_exec.ts
 var CALL_RE = /tools\s*\.\s*exec_command\s*\(\s*\{/y;
 var KEY_RE = /[A-Za-z_$][\w$]*/y;
@@ -201,74 +235,7 @@ function unescape(code, i) {
   return { text: n, end: i + 2 };
 }
 
-// src/util/temp_dirs.ts
-var TEMP_ROOTS = ["/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/var/folders/", "/private/var/folders/"];
-
-// src/analyzer/scope.ts
-function workKindClause(alias) {
-  const col = (c) => alias ? `${alias}.${c}` : c;
-  return `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec' AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`;
-}
-var WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
-
-// src/mcp/search.ts
-var SNIPPET_LEAD = 60;
-var SNIPPET_TRAIL = 180;
-var CONTEXT_LINE_CHARS = SNIPPET_LEAD + SNIPPET_TRAIL;
-function cutChars(text, max) {
-  const chars = Array.from(text.trim());
-  return chars.length > max ? chars.slice(0, max).join("") + "\u2026" : chars.join("");
-}
-function notNoise(alias) {
-  const t = `${alias}.text`;
-  return `NOT (substr(${t}, 1, 28) = '[Request interrupted by user'
-    OR trim(${t}) = ''
-    OR substr(${t}, 1, 20) = '[external_agent_tool'
-    OR ${t} = '<EXTERNAL SESSION IMPORTED>'
-    OR ${t} = 'No response requested.'
-    OR substr(${t}, 1, 15) = '<local-command-'
-    OR substr(${t}, 1, 19) = '<task-notification>'
-    OR substr(${t}, 1, 38) = 'Another Claude session sent a message:'
-    OR substr(${t}, 1, 17) = '<teammate-message'
-    OR substr(${t}, 1, 13) = '<bash-stdout>'
-    OR (substr(${t}, 1, 9) = '<command-' AND instr(${t}, '<command-args></command-args>') > 0)
-    OR (${alias}.is_command = 1 AND ${t} LIKE '%<command-%<>%'))`;
-}
-
-// src/mcp/left_off.ts
-var EDIT_TOOLS = "('Edit', 'Write', 'NotebookEdit', 'apply_patch', 'Bash', 'exec_command')";
-var REQUEST_CHARS = 500;
-var BARE_COMMAND = (alias) => `(substr(${alias}.text, 1, 1) = '/' AND instr(substr(${alias}.text, 2), '/') = 0
-    AND instr(${alias}.text, ' ') = 0 AND instr(${alias}.text, char(10)) = 0)`;
-var TREE = `WITH RECURSIVE tree(id) AS (
-    SELECT ? UNION SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id)`;
-var REAL_MESSAGE = (alias) => `${alias}.type IN ('user_message', 'assistant_message') AND ${notNoise(alias)} AND NOT ${BARE_COMMAND(alias)}`;
-function shortPath(path, cwd) {
-  if (!cwd) return path;
-  const base = cwd.replace(/\/+$/, "") + "/";
-  return path.startsWith(base) ? path.slice(base.length) : path;
-}
-var RECORD_LIST_CAP = 10;
-var RECORD_LINE_CHARS = 120;
-var FAILED_INPUT_CHARS = 100;
-var RECORD_EDITS_DETAILED = 5;
-var RECORD_MORE_EDITS_CHARS = 1200;
-var RECORD_REPLY_CHARS = 500;
-var SEGMENT_PAUSE_MS = 2 * 60 * 60 * 1e3;
-var RECORD_SEGMENTS_CAP = 20;
-var SEGMENT_REPLY_CHARS = 240;
-var SEGMENT_TOPICS_SHOWN = 6;
-var SEGMENT_TOPIC_REPLIES = 2;
-var CODE_TERM = /`([^`\n]{2,40})`/g;
-var NOT_A_TOPIC = /^(?:[0-9a-f]{7,40}|[\d.,%:\s-]+)$/;
-var SHORT_REPLY_CHARS = 20;
-var CLAUDE_CODE_NOTICE = /^(?:API Error|Prompt is too long|You've hit your |Please run \/login)/;
-var COMPACT_COMMAND = /^\/compact(?:\s|$)/;
-var COMPACT_ROW = (alias) => `${alias}.event_uuid IN (SELECT event_uuid FROM slash_command WHERE name = 'compact')`;
-var CHANGE_GIT = /\bgit\s+(?:-C\s+\S+\s+)?(?:commit|merge|push)\b/;
-function isCompact(m) {
-  return m.role === "user" && (m.compact === 1 || COMPACT_COMMAND.test(m.text));
-}
+// src/mcp/shell_text.ts
 function commandOf(inputJson) {
   if (inputJson === null) return null;
   try {
@@ -286,14 +253,14 @@ function commandOf(inputJson) {
     }
   }
 }
+var JOINED_SHELL_C = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+([\s\S]*?)\s*$/;
 function shellCommands(name, inputJson) {
-  return name === "exec" ? execCodeCommands(inputJson ?? "").map((c) => c.cmd) : [commandOf(inputJson)].filter((c) => c !== null);
+  if (name !== "exec") return [commandOf(inputJson)].filter((c) => c !== null);
+  const commands = execCodeCommands(inputJson ?? "").map((c) => c.cmd);
+  const joined = commands.length === 0 && inputJson !== null ? JOINED_SHELL_C.exec(inputJson) : null;
+  return joined === null ? commands : [joined[1]];
 }
-var STATE_CHANGING_GIT = /(?:^|&&|\|\||;)\s*git\s+(?:-C\s+\S+\s+)?(?:commit|checkout|switch|merge|rebase|reset|stash|push|branch)\b/g;
 var HEREDOC = /(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_]\w*)\1/;
-function gitMatches(line) {
-  return [...line.matchAll(STATE_CHANGING_GIT)].map((m) => ({ at: m.index + m[0].indexOf("git"), end: m.index + m[0].length }));
-}
 var SHELL_C = /(?:^|[\s;&|(])(?:\S*\/)?(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+$/;
 function codePositions(line, stack) {
   const code = new Array(line.length).fill(false);
@@ -332,24 +299,487 @@ function codePositions(line, stack) {
   }
   return code;
 }
-function stateChangingGitLines(command) {
+function codeLines(command) {
   const lines = command.split("\n");
-  const found = [];
+  const out = [];
   const stack = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     const code = codePositions(line, stack);
     const opener = HEREDOC.exec(line);
     const heredoc = opener !== null && code[opener.index] ? opener : null;
-    const close = heredoc === null ? i : lines.findIndex((l, j) => j > i && l.trim() === heredoc[2]);
-    const bodyEnd = close === -1 ? lines.length : close;
-    if (gitMatches(line).some((m) => code[m.at])) {
-      const subject = firstLine(lines.slice(i + 1, bodyEnd).join("\n"));
-      found.push(heredoc === null || subject === "" ? line : `${line} \u23CE ${subject}`);
+    if (heredoc === null) {
+      out.push({ line, code, body: null });
+      continue;
     }
-    i = heredoc === null ? i : bodyEnd;
+    const close = lines.findIndex((l, j) => j > i && l.trim() === heredoc[2]);
+    const bodyEnd = close === -1 ? lines.length : close;
+    out.push({ line, code, body: lines.slice(i + 1, bodyEnd).join("\n") });
+    i = bodyEnd;
   }
-  return found;
+  return out;
+}
+function readShell(text) {
+  const out = [];
+  read(text, 0, false, out, 0);
+  return out;
+}
+var OPERATOR_CHARS = "<>&|-";
+var MAX_NESTING = 64;
+function ansiEscape(text, j) {
+  const c = text[j] ?? "";
+  const simple = {
+    a: "\x07",
+    b: "\b",
+    e: "\x1B",
+    E: "\x1B",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "	",
+    v: "\v",
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "?": "?"
+  };
+  if (c in simple) return { char: simple[c], next: j + 1 };
+  const code = (digits, radix, from) => {
+    const m = digits.exec(text.slice(from));
+    const point = m === null ? NaN : parseInt(m[0], radix);
+    return m === null || point > 1114111 ? null : { char: String.fromCodePoint(point), next: from + m[0].length };
+  };
+  if (c === "x") return code(/^[0-9A-Fa-f]{1,2}/, 16, j + 1) ?? { char: "\\x", next: j + 1 };
+  if (c === "u") return code(/^[0-9A-Fa-f]{1,4}/, 16, j + 1) ?? { char: "\\u", next: j + 1 };
+  if (c === "U") return code(/^[0-9A-Fa-f]{1,8}/, 16, j + 1) ?? { char: "\\U", next: j + 1 };
+  if (/[0-7]/.test(c)) return code(/^[0-7]{1,3}/, 8, j);
+  if (c === "c" && j + 1 < text.length) return { char: String.fromCharCode(text.charCodeAt(j + 1) & 31), next: j + 2 };
+  return { char: "\\" + c, next: j + 1 };
+}
+function read(text, from, inSub, out, depth) {
+  let words = [];
+  let starts = [];
+  let end = from;
+  let word = null;
+  let wordStart = 0;
+  let quoted = false;
+  let target = null;
+  let stripTabs = false;
+  let parens = 0;
+  const heredocs = [];
+  const begin = (at) => {
+    if (word !== null) return;
+    word = "";
+    wordStart = at;
+    quoted = false;
+  };
+  const add = (at, chars) => {
+    begin(at);
+    word = (word ?? "") + chars;
+  };
+  const finishWord = (at) => {
+    if (word === null) return;
+    if (target === "heredoc") heredocs.push({ delimiter: word, quoted, stripTabs });
+    else if (target === null) {
+      words.push(word);
+      starts.push(wordStart);
+    }
+    target = null;
+    end = at;
+    word = null;
+  };
+  const finishCommand = () => {
+    if (words.length > 0) out.push({ words, starts, end, source: text });
+    words = [];
+    starts = [];
+  };
+  const skipBodies = (i2) => {
+    for (const h of heredocs) {
+      while (i2 < text.length) {
+        let lineEnd = text.indexOf("\n", i2);
+        if (lineEnd === -1) lineEnd = text.length;
+        let line = text.slice(i2, lineEnd);
+        while (!h.quoted && /(?:^|[^\\])(?:\\\\)*\\$/.test(line) && lineEnd < text.length) {
+          let next = text.indexOf("\n", lineEnd + 1);
+          if (next === -1) next = text.length;
+          line = line.slice(0, -1) + text.slice(lineEnd + 1, next);
+          lineEnd = next;
+        }
+        i2 = lineEnd + 1;
+        if ((h.stripTabs ? line.replace(/^\t+/, "") : line) === h.delimiter) break;
+      }
+    }
+    heredocs.length = 0;
+    return Math.min(i2, text.length);
+  };
+  const backquoted = (i2) => {
+    let inner = "";
+    for (; i2 < text.length && text[i2] !== "`"; i2++) {
+      if (text[i2] === "\\" && /[`\\$]/.test(text[i2 + 1] ?? "")) i2 += 1;
+      inner += text[i2];
+    }
+    return { inner, next: i2 + 1 };
+  };
+  let i = from;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (c === "\\") {
+      if (next !== "\n") {
+        add(i, next ?? "");
+        quoted = true;
+      }
+      i += 2;
+    } else if (c === "'") {
+      begin(i);
+      quoted = true;
+      const close = text.indexOf("'", i + 1);
+      const stop = close === -1 ? text.length : close;
+      add(i, text.slice(i + 1, stop));
+      i = stop + 1;
+    } else if (c === "$" && next === "'") {
+      begin(i);
+      quoted = true;
+      let j = i + 2;
+      while (j < text.length && text[j] !== "'") {
+        if (text[j] === "\\") {
+          const e = ansiEscape(text, j + 1);
+          add(i, e.char);
+          j = e.next;
+        } else {
+          add(i, text[j]);
+          j += 1;
+        }
+      }
+      i = j + 1;
+    } else if (c === '"') {
+      begin(i);
+      quoted = true;
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        const d = text[j];
+        if (d === "\\" && text[j + 1] === "\n") {
+          j += 2;
+        } else if (d === "\\" && /[$`"\\]/.test(text[j + 1] ?? "")) {
+          add(i, text[j + 1]);
+          j += 2;
+        } else if (d === "$" && text[j + 1] === "(") {
+          const stop = depth < MAX_NESTING ? read(text, j + 2, true, out, depth + 1) : j + 2;
+          add(i, text.slice(j, stop));
+          j = stop;
+        } else if (d === "`") {
+          const { inner, next: stop } = backquoted(j + 1);
+          if (depth < MAX_NESTING) read(inner, 0, false, out, depth + 1);
+          add(i, text.slice(j, stop));
+          j = stop;
+        } else {
+          add(i, d);
+          j += 1;
+        }
+      }
+      i = j + 1;
+    } else if ((c === "$" || c === "<" || c === ">") && next === "(") {
+      const stop = depth < MAX_NESTING ? read(text, i + 2, true, out, depth + 1) : i + 2;
+      add(i, text.slice(i, stop));
+      i = stop;
+    } else if (c === "$" && next === "{") {
+      const close = text.indexOf("}", i);
+      const stop = close === -1 ? text.length : close + 1;
+      add(i, text.slice(i, stop));
+      i = stop;
+    } else if (c === "`") {
+      const { inner, next: stop } = backquoted(i + 1);
+      if (depth < MAX_NESTING) read(inner, 0, false, out, depth + 1);
+      add(i, text.slice(i, stop));
+      i = stop;
+    } else if (c === "#" && word === null) {
+      const lineEnd = text.indexOf("\n", i);
+      i = lineEnd === -1 ? text.length : lineEnd;
+    } else if (c === " " || c === "	") {
+      finishWord(i);
+      i += 1;
+    } else if (c === "\n") {
+      finishWord(i);
+      finishCommand();
+      i = skipBodies(i + 1);
+    } else if (c === ")") {
+      finishWord(i);
+      finishCommand();
+      i += 1;
+      if (parens > 0) parens -= 1;
+      else if (inSub) return i;
+    } else if (c === "(") {
+      finishWord(i);
+      finishCommand();
+      parens += 1;
+      i += 1;
+    } else if (c === "<" || c === ">" || c === "&" && next === ">") {
+      const open = word;
+      if (open !== null && !quoted && /^\d+$/.test(open) && wordStart + open.length === i) word = null;
+      else finishWord(i);
+      let op = "";
+      while (i < text.length && OPERATOR_CHARS.includes(text[i])) op += text[i++];
+      if (op === "<<" || op === "<<-") {
+        target = "heredoc";
+        stripTabs = op === "<<-";
+      } else {
+        target = "file";
+      }
+      end = i;
+    } else if (c === ";" || c === "&" || c === "|") {
+      finishWord(i);
+      finishCommand();
+      i += next === c || c === "|" && next === "&" ? 2 : 1;
+    } else {
+      add(i, c);
+      i += 1;
+    }
+  }
+  finishWord(i);
+  finishCommand();
+  return i;
+}
+var RESERVED = /* @__PURE__ */ new Set(["!", "{", "if", "then", "else", "elif", "do", "while", "until"]);
+var CLOSING = /* @__PURE__ */ new Set(["fi", "done", "esac", "}"]);
+var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+var base = (word) => word.slice(word.lastIndexOf("/") + 1);
+function shellScript(argv) {
+  let c = false;
+  for (let j = 1; j < argv.length; j++) {
+    const a = argv[j];
+    if (a === "--") return c ? argv[j + 1] ?? null : null;
+    if (a === "--rcfile" || a === "--init-file") {
+      j += 1;
+    } else if (/^[-+][A-Za-z]+$/.test(a)) {
+      if (a.startsWith("-") && a.includes("c")) c = true;
+      if (/[oO]$/.test(a)) j += 1;
+    } else if (!a.startsWith("--")) {
+      return c ? a : null;
+    }
+  }
+  return null;
+}
+function executedCommands(command, depth = 0) {
+  const out = [];
+  for (const { words: w, starts, end, source: source2 } of readShell(command)) {
+    let k = 0;
+    for (; ; ) {
+      const word = w[k];
+      if (word === void 0) break;
+      const program = base(word);
+      if (RESERVED.has(word) || ASSIGNMENT.test(word)) {
+        k += 1;
+      } else if (program === "sudo" || program === "time" || program === "exec" || program === "nohup") {
+        k += 1;
+        while (w[k]?.startsWith("-")) k += 1;
+      } else if (program === "env") {
+        k += 1;
+        while (w[k] !== void 0 && (w[k].startsWith("-") || ASSIGNMENT.test(w[k]))) k += 1;
+      } else if (program === "nice") {
+        k += 1;
+        if (w[k] === "-n") k += 2;
+        else if (/^-\d+$/.test(w[k] ?? "")) k += 1;
+      } else if (program === "timeout") {
+        k += 1;
+        while (w[k]?.startsWith("-")) k += ["-s", "-k", "--signal", "--kill-after"].includes(w[k]) ? 2 : 1;
+        k += 1;
+      } else {
+        break;
+      }
+    }
+    const argv = w.slice(k);
+    if (argv.length === 0 || argv.length === 1 && CLOSING.has(argv[0])) continue;
+    if (SHELLS.has(base(argv[0])) && depth < 4) {
+      const script = shellScript(argv);
+      if (script !== null) {
+        out.push(...executedCommands(script, depth + 1));
+        continue;
+      }
+    }
+    out.push({ argv, text: source2.slice(starts[k], end).replace(/\\\n[ \t]*/g, "").trim() });
+  }
+  return out;
+}
+
+// src/mcp/checks.ts
+var ENVIRONMENTS = /* @__PURE__ */ new Set([
+  "dev",
+  "develop",
+  "development",
+  "sandbox",
+  "staging",
+  "stage",
+  "stg",
+  "qa",
+  "test",
+  "cbt",
+  "beta",
+  "preprod",
+  "prod",
+  "production"
+]);
+function whereOfUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const local = hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "0.0.0.0" || hostname === "::1" || hostname === "host.docker.internal" || hostname.startsWith("127.");
+  if (local) return { where: "local", host: parsed.host };
+  const labels = hostname.split(".").slice(0, -1).flatMap((l) => l.split("-"));
+  return { where: labels.find((l) => ENVIRONMENTS.has(l)) ?? "other", host: parsed.host };
+}
+var SHELL_TOOLS = /* @__PURE__ */ new Set(["Bash", "exec_command", "exec"]);
+var BROWSER_TOOL = /(?:^|__)(?:browser_navigate|navigate_page|navigate)$/;
+var URL_IN_TEXT = /https?:\/\/[^\s'"\\)]+/;
+var HTTP_CLIENTS = /* @__PURE__ */ new Set(["curl", "wget", "http", "https", "xh"]);
+var base2 = (word) => word.slice(word.lastIndexOf("/") + 1);
+var TEST_PROGRAMS = /* @__PURE__ */ new Set(["vitest", "jest", "mocha", "pytest", "py.test", "tox", "nox", "rspec", "phpunit"]);
+var PACKAGE_MANAGERS = /* @__PURE__ */ new Set(["npm", "pnpm", "yarn", "bun"]);
+var JS_RUNNERS = /* @__PURE__ */ new Set(["vitest", "jest", "mocha"]);
+var TEST_SUBCOMMANDS = {
+  go: ["test"],
+  cargo: ["test", "nextest"],
+  dotnet: ["test"],
+  swift: ["test"],
+  deno: ["test"],
+  bun: ["test"],
+  mix: ["test"],
+  rails: ["test"],
+  make: ["test", "check"]
+};
+function isTestRun(argv) {
+  const program = base2(argv[0]);
+  const [second, third] = [argv[1], argv[2]];
+  const isTestScript = (word) => word === "test" || (word?.startsWith("test:") ?? false);
+  if (program === "gradle" || program === "gradlew") {
+    return argv.slice(1).some((a) => !a.startsWith("-") && (a === "test" || a === "check" || a.endsWith(":test") || a.endsWith(":check") || a.endsWith("Test")));
+  }
+  if (program === "mvn" || program === "mvnw") return argv.slice(1).some((a) => ["test", "verify", "integration-test"].includes(a));
+  if (PACKAGE_MANAGERS.has(program) && (isTestScript(second) || second === "run" && isTestScript(third))) return true;
+  const runner = program === "npx" || program === "yarn" || program === "bunx" ? 1 : program === "pnpm" && (second === "exec" || second === "dlx") ? 2 : 0;
+  if (runner > 0) {
+    const next = argv[runner];
+    if (next !== void 0 && (JS_RUNNERS.has(next) || next === "playwright" && argv[runner + 1] === "test")) return true;
+  }
+  if (TEST_PROGRAMS.has(program)) return true;
+  if ((program === "python" || program === "python3") && second === "-m" && third === "pytest") return true;
+  if (second !== void 0 && TEST_SUBCOMMANDS[program]?.includes(second)) return true;
+  if (program === "bundle" && second === "exec") return third === "rspec" || third === "rails" && argv[3] === "test";
+  return false;
+}
+function isGitPushOrMerge(argv) {
+  if (base2(argv[0]) !== "git") return false;
+  const sub = argv[1] === "-C" ? 3 : 1;
+  if (argv[sub] === "push") return true;
+  return argv[sub] === "merge" && !["--abort", "--continue", "--quit"].includes(argv[sub + 1] ?? "");
+}
+function checksOfCall(name, inputJson) {
+  if (BROWSER_TOOL.test(name)) {
+    let url;
+    try {
+      url = JSON.parse(inputJson ?? "")?.url;
+    } catch {
+      return [];
+    }
+    const at = typeof url === "string" ? whereOfUrl(url) : null;
+    return at === null ? [] : [{ kind: "browser", where: at.where, host: at.host, target: url }];
+  }
+  if (!SHELL_TOOLS.has(name)) return [];
+  const checks = [];
+  for (const command of shellCommands(name, inputJson)) {
+    for (const { argv, text } of executedCommands(command)) {
+      if (isTestRun(argv)) {
+        checks.push({ kind: "test", where: "local", host: null, target: text });
+      } else if (HTTP_CLIENTS.has(base2(argv[0]))) {
+        const url = argv.slice(1).map((a) => URL_IN_TEXT.exec(a)?.[0]).find((u) => u !== void 0);
+        const at = url === void 0 ? null : whereOfUrl(url);
+        if (at !== null) checks.push({ kind: "api", where: at.where, host: at.host, target: url });
+      } else if (isGitPushOrMerge(argv)) {
+        checks.push({ kind: "git", where: "", host: null, target: text });
+      }
+    }
+  }
+  return checks;
+}
+function groupChecks(rows) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const { session_id, ts, is_error, check } of rows) {
+    if (check.kind === "git") continue;
+    const key = JSON.stringify([check.kind, check.where, check.host]);
+    const g = groups.get(key) ?? {
+      kind: check.kind,
+      where: check.where,
+      host: check.host,
+      count: 0,
+      failed: 0,
+      last_ts: ts,
+      last_target: "",
+      last_session: ""
+    };
+    g.count += 1;
+    if (is_error === 1) g.failed += 1;
+    g.last_ts = ts;
+    g.last_target = check.target;
+    g.last_session = session_id;
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => a.last_ts < b.last_ts ? -1 : a.last_ts > b.last_ts ? 1 : 0);
+}
+var TARGET_CHARS = 160;
+var NOUNS = { test: ["run", "runs"], api: ["call", "calls"], browser: ["page", "pages"] };
+function formatCheckGroup(g) {
+  const noun = NOUNS[g.kind][g.count === 1 ? 0 : 1];
+  return `${g.kind} ${g.where}${g.host === null ? "" : ` ${g.host}`}: ${g.count} ${noun}, ${g.failed} failed, last ${g.last_ts}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
+}
+
+// src/mcp/left_off.ts
+var EDIT_TOOLS = "('Edit', 'Write', 'NotebookEdit', 'apply_patch', 'Bash', 'exec_command')";
+var REQUEST_CHARS = 500;
+var BARE_COMMAND = (alias) => `(substr(${alias}.text, 1, 1) = '/' AND instr(substr(${alias}.text, 2), '/') = 0
+    AND instr(${alias}.text, ' ') = 0 AND instr(${alias}.text, char(10)) = 0)`;
+var TREE = `WITH RECURSIVE tree(id) AS (
+    SELECT ? UNION SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id)`;
+var REAL_MESSAGE = (alias) => `${alias}.type IN ('user_message', 'assistant_message') AND ${notNoise(alias)} AND NOT ${BARE_COMMAND(alias)}`;
+function shortPath(path, cwd) {
+  if (!cwd) return path;
+  const base3 = cwd.replace(/\/+$/, "") + "/";
+  return path.startsWith(base3) ? path.slice(base3.length) : path;
+}
+var RECORD_LIST_CAP = 10;
+var RECORD_LINE_CHARS = 120;
+var FAILED_INPUT_CHARS = 100;
+var RECORD_EDITS_DETAILED = 5;
+var RECORD_MORE_EDITS_CHARS = 1200;
+var RECORD_REPLY_CHARS = 500;
+var SEGMENT_PAUSE_MS = 2 * 60 * 60 * 1e3;
+var RECORD_SEGMENTS_CAP = 20;
+var SEGMENT_REPLY_CHARS = 240;
+var SEGMENT_TOPICS_SHOWN = 6;
+var SEGMENT_TOPIC_REPLIES = 2;
+var CODE_TERM = /`([^`\n]{2,40})`/g;
+var NOT_A_TOPIC = /^(?:[0-9a-f]{7,40}|[\d.,%:\s-]+)$/;
+var SHORT_REPLY_CHARS = 20;
+var CLAUDE_CODE_NOTICE = /^(?:API Error|Prompt is too long|You've hit your |Please run \/login)/;
+var COMPACT_COMMAND = /^\/compact(?:\s|$)/;
+var COMPACT_ROW = (alias) => `${alias}.event_uuid IN (SELECT event_uuid FROM slash_command WHERE name = 'compact')`;
+var CHANGE_GIT = /\bgit\s+(?:-C\s+\S+\s+)?(?:commit|merge|push)\b/;
+function isCompact(m) {
+  return m.role === "user" && (m.compact === 1 || COMPACT_COMMAND.test(m.text));
+}
+var STATE_CHANGING_GIT = /(?:^|&&|\|\||;)\s*git\s+(?:-C\s+\S+\s+)?(?:commit|checkout|switch|merge|rebase|reset|stash|push|branch)\b/g;
+function gitMatches(line) {
+  return [...line.matchAll(STATE_CHANGING_GIT)].map((m) => ({ at: m.index + m[0].indexOf("git"), end: m.index + m[0].length }));
+}
+function stateChangingGitLines(command) {
+  return codeLines(command).filter(({ line, code }) => gitMatches(line).some((m) => code[m.at])).map(({ line, body: body2 }) => {
+    const subject = firstLine(body2 ?? "");
+    return subject === "" ? line : `${line} \u23CE ${subject}`;
+  });
 }
 function shownGitLine(line) {
   const matches = gitMatches(line);
@@ -481,6 +911,11 @@ function sessionRecord(db, sessionId2) {
     SELECT ts, name, input_json FROM tool_call
     WHERE session_id IN tree AND name IN ('Bash', 'exec_command', 'exec') AND input_json LIKE '%git %'
     ORDER BY ts DESC`).all(sessionId2).flatMap(({ ts, name, input_json }) => shellCommands(name, input_json).flatMap(stateChangingGitLines).reverse().map((line) => ({ ts, command: line })));
+  const checks = groupChecks(db.prepare(`
+    ${TREE}
+    SELECT session_id, ts, name, input_json, is_error FROM tool_call
+    WHERE session_id IN tree AND (name IN ('Bash', 'exec_command', 'exec') OR name LIKE '%navigate%')
+    ORDER BY ts`).all(sessionId2).flatMap(({ name, input_json, ...call }) => checksOfCall(name, input_json).map((check) => ({ ...call, check }))));
   const failedCalls = (excerpt) => db.prepare(`
     ${TREE}
     SELECT t.ts, t.name, t.input_json, ${excerpt} AS error_excerpt FROM tool_call t
@@ -545,6 +980,8 @@ function sessionRecord(db, sessionId2) {
     edits_total: edits.length,
     git: latest(git),
     git_total: git.length,
+    checks: checks.slice(-RECORD_LIST_CAP),
+    checks_total: checks.length,
     failures: latest(failures),
     failures_total: failures.length,
     hook_blocks: latest(hookBlocks),
@@ -621,6 +1058,7 @@ function formatSessionRecord(r) {
     r.git,
     (g) => `${g.ts}  ${shownGitLine(g.command)}`
   );
+  section("Checks", `Checks (last ${r.checks.length} of ${r.checks_total}):`, r.checks_total, r.checks, formatCheckGroup);
   section(
     "Failed tool calls",
     `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`,

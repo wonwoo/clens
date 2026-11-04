@@ -5,7 +5,7 @@
  *   clens_search   — FTS5 full-text search over past messages, one or several queries
  *   clens_recent   — recent messages by date/project, with an optional LIKE keyword filter
  *   clens_session  — the conversation around one message
- *   clens_left_off — where work stopped: a project's or file's latest sessions, or one session's work record
+ *   clens_left_off — where work stopped: a project's or file's latest sessions, one session's work record, or a branch's checks
  *   clens_stats    — aggregate usage stats for a session, a project or every project
  *                    (tools/skills/agents/health/timeline/files, hook blocks, tool output size)
  *
@@ -43,6 +43,7 @@ import { sessionContext } from "./session.js";
 import {
   leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord, commitSessions, formatCommitSessions,
 } from "./left_off.js";
+import { branchChecks, branchParamsError, formatBranchChecks, formatRecentBranches, recentBranches } from "./checks.js";
 import { formatLineOrigins, lineOrigins } from "./line_origin.js";
 import { SEARCH_DESCRIPTION, SERVER_INSTRUCTIONS, STATS_DESCRIPTION } from "./instructions.js";
 import { formatStats, projectStats, STATS_SECTIONS } from "./stats.js";
@@ -93,6 +94,8 @@ const LeftOffParamsSchema = z.strictObject({
   session_id: z.string().min(1).optional(),
   commits: z.array(z.string().min(1)).min(1).max(50).optional(),
   text: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  branches: z.boolean().optional(),
 });
 
 /** Fewer non-space characters than this match too many edits to tell one apart. */
@@ -264,6 +267,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Where work stopped: the latest sessions of a project, or the sessions that edited a given file, newest first; or, with file and text, the sessions that wrote that text. " +
         "Each comes with when its conversation started and ended, the user's last request, the assistant's last reply (often a status or summary) and the files it edited. " +
         "Use it for \"where did I leave off\", \"what was I doing on this\", \"who last changed this file and why\"; then clens_session to read more of one. " +
+        "With project_id and branch (a git branch name, as `git branch --show-current` prints it), returns the checks run while that branch was checked out, in every Claude Code and Codex session of the project, and the git push and merge commands that name it: test runs, HTTP calls (curl, wget, httpie, xh) and browser pages, by host, each with its failures and latest run. Use it for \"did we test this\", \"was it checked on sandbox\", \"is it deployed to cbt\". With branches: true, the project's latest branches with their checks, to find the one the user means. A check that did not fail exited 0 or got no result, which does not say its result was right. " +
         "When the limit leaves out a session that was active in the span the list covers, the list ends with how many. " +
         "In Claude Code and Codex the current conversation is left out of the list; pass session_id \"current\" for its own record, for example after the conversation was compacted. A subagent's edits count as the session that started it. Files a shell command wrote are read off its text (redirects, tee, sed -i, heredoc and -c/-e scripts); a path set only when it ran ($VAR, $(…)) is missed.",
       inputSchema: {
@@ -292,7 +296,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           session_id: {
             type: "string",
             description:
-              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply (and, for a session of one segment, that reply after its latest edit or commit), edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits and text are then ignored.",
+              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply (and, for a session of one segment, that reply after its latest edit or commit), edited files, git commands, checks (test runs, HTTP calls and browser pages, by host), failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits, text, branch and branches are then ignored.",
           },
           commits: {
             type: "array",
@@ -304,6 +308,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "string",
             description:
               "Text from the file, one line or a few, with file. Returns the sessions whose edits of that file wrote it, the first first, instead of a list: each at its first such edit, with the user's request that started that turn and the assistant reply just before the request, which is what the user answered and often holds the reasons. When the same session wrote it again in a later turn, that last turn follows as \"written again\": it holds the reason when the first attempt was rolled back, the first turn does when later work only carried the text along. Read around a request with clens_session. Lines are trimmed and must all appear in one edit; at least 20 characters in all. project_id, since, until and limit narrow it. An edit's input is stored up to 2 KB, so later lines of a long edit or of a large new file are not found.",
+          },
+          branch: {
+            type: "string",
+            description:
+              "A git branch of the project, as git branch --show-current prints it. Returns its checks instead of a list; needs project_id. since and until narrow it; limit is ignored, and file, text and commits are an error with it.",
+          },
+          branches: {
+            type: "boolean",
+            description:
+              "true lists the project's latest branches, newest activity first, each with its checks; needs project_id. limit (default 3, max 10), since and until apply.",
           },
         },
       },
@@ -432,6 +446,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const text = record
           ? formatSessionRecord(record)
           : `No session found: ${resolved.id}. A session only just started may not be indexed yet; try again in a few seconds.`;
+        return { content: [{ type: "text", text }] };
+      }
+      const { branch, branches } = parsed.data;
+      if (branch !== undefined || branches === true) {
+        const invalid = branchParamsError(parsed.data);
+        if (invalid !== null) return { content: [{ type: "text", text: `Invalid params: ${invalid}` }], isError: true };
+        // branchParamsError has made sure project_id is set.
+        const project_id = parsed.data.project_id!;
+        const window = { since: parsed.data.since, until: parsed.data.until };
+        const text = branch !== undefined
+          ? formatBranchChecks(branchChecks(getDb(), { project_id, branch, ...window }))
+          : formatRecentBranches(project_id, recentBranches(getDb(), { project_id, limit: parsed.data.limit, ...window }));
         return { content: [{ type: "text", text }] };
       }
       if (parsed.data.text !== undefined) {

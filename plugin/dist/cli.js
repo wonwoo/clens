@@ -1635,7 +1635,7 @@ function languageFtsTable(code) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 16;
+var SCHEMA_VERSION = 17;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -1738,6 +1738,7 @@ var SCHEMA_STATEMENTS = [
      is_error    INTEGER DEFAULT 0,
      result_chars INTEGER,
      error_excerpt TEXT,
+     git_branch  TEXT,
      FOREIGN KEY (event_uuid) REFERENCES event(uuid)
    )`,
   `CREATE INDEX IF NOT EXISTS tool_session_idx ON tool_call(session_id)`,
@@ -1905,6 +1906,9 @@ function applySchema(db) {
     }
     if (!toolCallColumns.some((c) => c.name === "error_excerpt")) {
       db.exec("ALTER TABLE tool_call ADD COLUMN error_excerpt TEXT");
+    }
+    if (!toolCallColumns.some((c) => c.name === "git_branch")) {
+      db.exec("ALTER TABLE tool_call ADD COLUMN git_branch TEXT");
     }
     const row = db.prepare("SELECT v FROM schema_version LIMIT 1").get();
     if (!row) {
@@ -2913,7 +2917,7 @@ function toolResultText(content) {
   return text;
 }
 function walkContent(args) {
-  const { event_uuid, session_id, ts, role, isMeta, cwd, content, batch, out, toolResults } = args;
+  const { event_uuid, session_id, ts, role, isMeta, cwd, gitBranch, content, batch, out, toolResults } = args;
   const summary = {
     has_text: 0,
     has_tool_use: 0,
@@ -3007,7 +3011,8 @@ function walkContent(args) {
         input_json,
         duration_ms: null,
         is_error: 0,
-        result_chars: null
+        result_chars: null,
+        git_branch: gitBranch
       };
       out.tool_calls.push(toolCall);
       if (FILE_OP_TOOLS.has(name)) {
@@ -3226,6 +3231,7 @@ function parseEventLine(line, source_file, seq, batch, toolResults) {
     role: role ?? "",
     isMeta: o.isMeta === true,
     cwd: typeof o.cwd === "string" ? o.cwd : null,
+    gitBranch: typeof o.gitBranch === "string" && o.gitBranch !== "" ? o.gitBranch : null,
     content: message.content,
     batch,
     out: parsed,
@@ -4020,7 +4026,8 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
         input_json,
         duration_ms: null,
         is_error: 0,
-        result_chars: null
+        result_chars: null,
+        git_branch: state.git_branch
       });
       const input = parseObjectLike(args);
       addDerivedToolRows({
@@ -4203,7 +4210,8 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
       input_json,
       duration_ms: null,
       is_error: 0,
-      result_chars: null
+      result_chars: null,
+      git_branch: state.git_branch
     };
     parsed.tool_calls.push(toolCall);
     events.push(parsed);
@@ -4233,7 +4241,8 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
       input_json: cmd !== null ? truncateToolInput(cmd, batch, SHELL_TOOL_INPUT_BYTE_CAP) : null,
       duration_ms: null,
       is_error: 0,
-      result_chars: null
+      result_chars: null,
+      git_branch: state.git_branch
     };
     parsed.tool_calls.push(toolCall);
     events.push(parsed);
@@ -4334,7 +4343,8 @@ function pushExecMcpCall(events, uuid, session_id, timestamp, source_file, item,
     input_json: raw !== null ? truncateToolInput(raw, batch) : null,
     duration_ms: typeof d?.secs === "number" && typeof d.nanos === "number" ? Math.round(d.secs * 1e3 + d.nanos / 1e6) : null,
     is_error: failed ? 1 : 0,
-    result_chars: null
+    result_chars: null,
+    git_branch: state.git_branch
   });
   events.push(parsed);
 }
@@ -4515,8 +4525,8 @@ function prepareStatements(db) {
         @user_turn_no, @assistant_turn_no, @source_file)`
     ),
     insertToolCall: db.prepare(
-      `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars)
-       VALUES (@event_uuid, @session_id, @ts, @call_id, @name, @input_json, @duration_ms, @is_error, @result_chars)`
+      `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars, git_branch)
+       VALUES (@event_uuid, @session_id, @ts, @call_id, @name, @input_json, @duration_ms, @is_error, @result_chars, @git_branch)`
     ),
     insertFileOp: db.prepare(
       `INSERT INTO file_op (event_uuid, session_id, ts, tool, path)

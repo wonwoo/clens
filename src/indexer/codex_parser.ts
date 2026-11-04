@@ -763,6 +763,7 @@ function processLine(
         duration_ms: null,
         is_error: 0,
         result_chars: null,
+        git_branch: state.git_branch,
       });
       const input = parseObjectLike(args);
       addDerivedToolRows({
@@ -994,6 +995,7 @@ function processLine(
       duration_ms: null,
       is_error: 0,
       result_chars: null,
+      git_branch: state.git_branch,
     };
     parsed.tool_calls.push(toolCall);
     events.push(parsed);
@@ -1033,6 +1035,7 @@ function processLine(
       duration_ms: null,
       is_error: 0,
       result_chars: null,
+      git_branch: state.git_branch,
     };
     parsed.tool_calls.push(toolCall);
     events.push(parsed);
@@ -1182,6 +1185,7 @@ function pushExecMcpCall(
     duration_ms: typeof d?.secs === "number" && typeof d.nanos === "number" ? Math.round(d.secs * 1000 + d.nanos / 1e6) : null,
     is_error: failed ? 1 : 0,
     result_chars: null,
+    git_branch: state.git_branch,
   });
   events.push(parsed);
 }

@@ -41,6 +41,10 @@ export interface ToolCallRow {
   /** Code points of the result's text; NULL until a result is seen, and
    *  where the source does not measure it. */
   result_chars: number | null;
+  /** The git branch checked out when the call ran: Claude Code's gitBranch
+   *  on the call's own line, Codex's session_meta branch (a branch switch
+   *  inside a rollout is not followed). NULL when the source names none. */
+  git_branch: string | null;
 }
 
 export interface FileOpRow {

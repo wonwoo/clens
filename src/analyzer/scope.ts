@@ -129,3 +129,10 @@ export function sessionScopedWhere(
       };
   }
 }
+
+/** A WITH clause naming top(id, root): each session reachable from a
+ *  session with no parent, mapped to that top session. A subagent whose
+ *  parent is not indexed has no row. UNION, not UNION ALL, so a cycle ends. */
+export const TOP = `WITH RECURSIVE top(id, root) AS (
+    SELECT id, id FROM session WHERE parent_id IS NULL
+    UNION SELECT s.id, t.root FROM session s JOIN top t ON s.parent_id = t.id)`;

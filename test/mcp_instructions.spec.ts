@@ -11,6 +11,10 @@ describe("text sent to the agent", () => {
     expect(STATS_DESCRIPTION.length).toBeLessThanOrEqual(2048);
   });
 
+  it("sends the agent to a branch's checks when asked whether work was tested or deployed", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("(clens_left_off branch)");
+  });
+
   it("tells the agent to fetch the current session's record after compaction", () => {
     expect(SERVER_INSTRUCTIONS).toContain('session_id "current" after compaction');
   });

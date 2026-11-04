@@ -82,7 +82,11 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // script still running when its exec call returned fails that call when a
 // later wait on its cell reports the failure (codeModeOutput in
 // codex_parser.ts).
-export const SCHEMA_VERSION = 16;
+// v17: tool_call.git_branch, the branch checked out when the call ran (the
+// checks on a branch, src/mcp/checks.ts), added in place like result_chars
+// in v5; the version-mismatch rebuild re-reads every transcript still on
+// disk to fill it, and a session whose transcript is gone keeps NULL.
+export const SCHEMA_VERSION = 17;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population
@@ -203,6 +207,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      is_error    INTEGER DEFAULT 0,
      result_chars INTEGER,
      error_excerpt TEXT,
+     git_branch  TEXT,
      FOREIGN KEY (event_uuid) REFERENCES event(uuid)
    )`,
   `CREATE INDEX IF NOT EXISTS tool_session_idx ON tool_call(session_id)`,
@@ -393,6 +398,10 @@ export function applySchema(db: Database.Database): void {
     // v13 upgrade, the same way: error_excerpt follows result_chars.
     if (!toolCallColumns.some((c) => c.name === "error_excerpt")) {
       db.exec("ALTER TABLE tool_call ADD COLUMN error_excerpt TEXT");
+    }
+    // v17 upgrade, the same way: git_branch follows error_excerpt.
+    if (!toolCallColumns.some((c) => c.name === "git_branch")) {
+      db.exec("ALTER TABLE tool_call ADD COLUMN git_branch TEXT");
     }
     const row = db.prepare("SELECT v FROM schema_version LIMIT 1").get() as
       | { v: number }

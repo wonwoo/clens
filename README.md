@@ -106,7 +106,7 @@ clens reads the transcripts Claude Code keeps in `~/.claude/projects/` and Codex
 |---|---|
 | `clens_search` | Finds past messages by word |
 | `clens_session` | Reads one session's conversation around a point |
-| `clens_left_off` | Shows a project's or a file's latest sessions and where they stopped |
+| `clens_left_off` | Shows a project's or a file's latest sessions and where they stopped, and the checks run on a branch |
 | `clens_recent` | Lists the messages in a time window, in order |
 | `clens_stats` | Counts tools, files, hook blocks and context use |
 

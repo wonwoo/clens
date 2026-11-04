@@ -67,6 +67,21 @@ describe("parseCodexFileBody", () => {
     });
   });
 
+  it("stores on each tool call the branch the rollout's session_meta names, and null when it names none", () => {
+    const rollout = (git?: Record<string, unknown>) => [
+      { timestamp: "2026-07-01T00:00:00Z", type: "session_meta", payload: { id: "sess-b", cwd: "/repo", ...(git ? { git } : {}) } },
+      {
+        timestamp: "2026-07-01T00:00:01Z",
+        type: "response_item",
+        payload: { type: "function_call", call_id: "call-b", name: "exec_command", arguments: "{\"cmd\":\"npm test\"}" },
+      },
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+    const branches = (body: string) => parseCodexFileBody({ body, source_file: "codex-test.jsonl", batch: freshBatch() })
+      .events.flatMap((e) => e.tool_calls).map((t) => [t.name, t.git_branch]);
+    expect(branches(rollout({ branch: "feature/y", commit_hash: "abc" }))).toEqual([["exec_command", "feature/y"]]);
+    expect(branches(rollout())).toEqual([["exec_command", null]]);
+  });
+
   it("parses response_item custom_tool_call/custom_tool_call_output (freeform tools such as apply_patch)", () => {
     const patch = "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-old\n+new\n*** End Patch\n";
     const body = [

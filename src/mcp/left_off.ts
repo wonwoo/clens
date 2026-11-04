@@ -9,9 +9,14 @@
 
 import type Database from "better-sqlite3";
 
-import { execCodeCommands } from "../util/codex_exec.js";
+import { TOP } from "../analyzer/scope.js";
 import { TEMP_ROOTS } from "../util/temp_dirs.js";
+import { checksOfCall, formatCheckGroup, groupChecks, type CheckGroup } from "./checks.js";
 import { cutChars, escapeRegExp, notNoise } from "./search.js";
+import { codeLines, commandOf, shellCommands } from "./shell_text.js";
+
+// The specs import commandOf from here, where it was first written.
+export { commandOf } from "./shell_text.js";
 
 export interface LeftOffParams {
   project_id?: string;
@@ -55,13 +60,10 @@ const BARE_COMMAND = (alias: string) =>
     AND instr(${alias}.text, ' ') = 0 AND instr(${alias}.text, char(10)) = 0)`;
 
 /** A subagent's edits are its parent's work. TREE is a session and every
- *  subagent under it; TOP maps each session to the one at the top of its
- *  tree. UNION, not UNION ALL, so a cycle ends. */
+ *  subagent under it (TOP, in scope.ts, maps each session to the top of its
+ *  tree). UNION, not UNION ALL, so a cycle ends. */
 const TREE = `WITH RECURSIVE tree(id) AS (
     SELECT ? UNION SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id)`;
-export const TOP = `WITH RECURSIVE top(id, root) AS (
-    SELECT id, id FROM session WHERE parent_id IS NULL
-    UNION SELECT s.id, t.root FROM session s JOIN top t ON s.parent_id = t.id)`;
 
 /** A conversation message worth reading. */
 export const REAL_MESSAGE = (alias: string) =>
@@ -315,6 +317,11 @@ export interface SessionRecord {
    *  one shell call can give several. */
   git: { ts: string; command: string }[];
   git_total: number;
+  /** Test runs, HTTP calls and browser pages by kind and host, ordered by
+   *  their latest check, oldest first; the latest RECORD_LIST_CAP. Git
+   *  push and merge are left to git. */
+  checks: CheckGroup[];
+  checks_total: number;
   /** error: the start and end of the call's output, on one line; null when
    *  the source keeps no output text or the index predates it. */
   failures: { ts: string; tool: string; input: string; error: string | null }[];
@@ -323,94 +330,15 @@ export interface SessionRecord {
   hook_blocks_total: number;
 }
 
-/** The command of a shell input: a Claude Code Bash input's `command` or a
- *  Codex exec_command input's `cmd`. The parser keeps a shell input up to
- *  64 KB and cuts a longer one, which leaves it invalid JSON, so the command
- *  is then read off the front of the text, where it always sits. */
-export function commandOf(inputJson: string | null): string | null {
-  if (inputJson === null) return null;
-  try {
-    const parsed = JSON.parse(inputJson) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const { command, cmd } = parsed as { command?: unknown; cmd?: unknown };
-    return typeof command === "string" ? command : typeof cmd === "string" ? cmd : null;
-  } catch {
-    const m = /"(?:command|cmd)":"((?:[^"\\]|\\.)*)/.exec(inputJson);
-    if (m === null) return null;
-    try {
-      return JSON.parse('"' + m[1]! + '"') as string;
-    } catch {
-      // The cut fell inside an escape such as \u00.
-      return m[1]!;
-    }
-  }
-}
-
-/** The shell commands one call ran: a Bash or exec_command input's command,
- *  or the commands Codex exec code runs through tools.exec_command. */
-function shellCommands(name: string, inputJson: string | null): string[] {
-  return name === "exec"
-    ? execCodeCommands(inputJson ?? "").map((c) => c.cmd)
-    : [commandOf(inputJson)].filter((c): c is string => c !== null);
-}
-
 /** git followed by a subcommand that changes state, at the start of a line
  *  or after &&, || or ;. Used only through matchAll, which copies it. */
 const STATE_CHANGING_GIT =
   /(?:^|&&|\|\||;)\s*git\s+(?:-C\s+\S+\s+)?(?:commit|checkout|switch|merge|rebase|reset|stash|push|branch)\b/g;
-/** A heredoc opener (<<EOF, <<'EOF', <<-"EOF"), not a here-string (<<<). */
-const HEREDOC = /(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_]\w*)\1/;
 
 /** Each state-changing git command in one line: where its `git` starts and
  *  where its subcommand ends. */
 function gitMatches(line: string): { at: number; end: number }[] {
   return [...line.matchAll(STATE_CHANGING_GIT)].map((m) => ({ at: m.index + m[0].indexOf("git"), end: m.index + m[0].length }));
-}
-
-/** A shell run with -c (or -lc, -ec, …) before the string it runs:
- *  `/bin/zsh -lc '…'`, as older Codex wraps every command. */
-const SHELL_C = /(?:^|[\s;&|(])(?:\S*\/)?(?:ba|z|da|k)?sh\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*c[A-Za-z]*\s+$/;
-
-/** Which positions of `line` are shell code, not the inside of a '…' or "…"
- *  string or a comment. `stack` holds the quotes and $( ), ( ) and `…` still
- *  open from the lines before, and is updated; code in a $( ) or `…` inside
- *  "…" is code again, and so is the string a `sh -c` runs ('c or "c). */
-function codePositions(line: string, stack: string[]): boolean[] {
-  const code = new Array<boolean>(line.length).fill(false);
-  for (let j = 0; j < line.length; j++) {
-    const top = stack.at(-1);
-    const c = line[j]!;
-    if (top === "'") {
-      if (c === "'") stack.pop();
-      continue;
-    }
-    if ((top === "'c" && c === "'") || (top === '"c' && c === '"')) {
-      stack.pop();
-      continue;
-    }
-    if (c === "\\") {
-      j += 1;
-      continue;
-    }
-    if (top === '"') {
-      if (c === '"') stack.pop();
-      else if (c === "$" && line[j + 1] === "(") {
-        stack.push("(");
-        j += 1;
-      } else if (c === "`") stack.push("`");
-      continue;
-    }
-    if (c === "#" && top !== "'c" && top !== '"c' && (j === 0 || /[\s;&|(]/.test(line[j - 1]!))) break;
-    code[j] = true;
-    if (c === "'" || c === '"') stack.push(SHELL_C.test(line.slice(0, j)) ? c + "c" : c);
-    else if (c === "(") stack.push(c);
-    else if (c === ")" && top === "(") stack.pop();
-    else if (c === "`") {
-      if (top === "`") stack.pop();
-      else stack.push(c);
-    }
-  }
-  return code;
 }
 
 /** Every line of `command` that runs a state-changing git command, in order.
@@ -421,23 +349,12 @@ function codePositions(line: string, stack: string[]): boolean[] {
  *  `git commit -m "$(cat <<'EOF'` does, the body's first line, the commit
  *  subject, is added after " ⏎ ". */
 function stateChangingGitLines(command: string): string[] {
-  const lines = command.split("\n");
-  const found: string[] = [];
-  const stack: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!.trim();
-    const code = codePositions(line, stack);
-    const opener = HEREDOC.exec(line);
-    const heredoc = opener !== null && code[opener.index] ? opener : null;
-    const close = heredoc === null ? i : lines.findIndex((l, j) => j > i && l.trim() === heredoc[2]);
-    const bodyEnd = close === -1 ? lines.length : close;
-    if (gitMatches(line).some((m) => code[m.at])) {
-      const subject = firstLine(lines.slice(i + 1, bodyEnd).join("\n"));
-      found.push(heredoc === null || subject === "" ? line : `${line} ⏎ ${subject}`);
-    }
-    i = heredoc === null ? i : bodyEnd;
-  }
-  return found;
+  return codeLines(command)
+    .filter(({ line, code }) => gitMatches(line).some((m) => code[m.at]))
+    .map(({ line, body }) => {
+      const subject = firstLine(body ?? "");
+      return subject === "" ? line : `${line} ⏎ ${subject}`;
+    });
 }
 
 /** A git line as printed: cut to RECORD_LINE_CHARS, but started at its git
@@ -583,8 +500,8 @@ function lastChange(turns: Turn[], end: number, changes: number[]): SessionSegme
 }
 
 /** One session's work record: its requests, and the edits, state-changing
- *  git commands, failed tool calls and hook blocks of it and every subagent
- *  under it. Null when the session is not in the index. */
+ *  git commands, checks, failed tool calls and hook blocks of it and every
+ *  subagent under it. Null when the session is not in the index. */
 export function sessionRecord(db: Database.Database, sessionId: string): SessionRecord | null {
   const s = db.prepare("SELECT id, project_id, kind, source, cwd FROM session WHERE id = ?").get(sessionId) as
     | { id: string; project_id: string | null; kind: string | null; source: string; cwd: string | null }
@@ -622,6 +539,12 @@ export function sessionRecord(db: Database.Database, sessionId: string): Session
     // past the stored input's 64 KB cut is not seen.
     .flatMap(({ ts, name, input_json }) =>
       shellCommands(name, input_json).flatMap(stateChangingGitLines).reverse().map((line) => ({ ts, command: line })));
+  const checks = groupChecks((db.prepare(`
+    ${TREE}
+    SELECT session_id, ts, name, input_json, is_error FROM tool_call
+    WHERE session_id IN tree AND (name IN ('Bash', 'exec_command', 'exec') OR name LIKE '%navigate%')
+    ORDER BY ts`).all(sessionId) as { session_id: string; ts: string; name: string; input_json: string | null; is_error: number }[])
+    .flatMap(({ name, input_json, ...call }) => checksOfCall(name, input_json).map((check) => ({ ...call, check }))));
   // A call a hook blocked is listed under hook blocks, with its reason.
   const failedCalls = (excerpt: string) => db.prepare(`
     ${TREE}
@@ -696,6 +619,8 @@ export function sessionRecord(db: Database.Database, sessionId: string): Session
     edits_total: edits.length,
     git: latest(git),
     git_total: git.length,
+    checks: checks.slice(-RECORD_LIST_CAP),
+    checks_total: checks.length,
     failures: latest(failures),
     failures_total: failures.length,
     hook_blocks: latest(hookBlocks),
@@ -768,6 +693,7 @@ export function formatSessionRecord(r: SessionRecord): string {
   }
   section("Git", `Git (last ${r.git.length} of ${r.git_total}):`, r.git_total, r.git,
     (g) => `${g.ts}  ${shownGitLine(g.command)}`);
+  section("Checks", `Checks (last ${r.checks.length} of ${r.checks_total}):`, r.checks_total, r.checks, formatCheckGroup);
   section("Failed tool calls", `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`, r.failures_total, r.failures,
     (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `\n    ${f.error}`}`);
   section("Hook blocks", `Hook blocks (last ${r.hook_blocks.length} of ${r.hook_blocks_total}):`, r.hook_blocks_total, r.hook_blocks,

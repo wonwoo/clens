@@ -106,7 +106,7 @@ clens는 Claude Code가 `~/.claude/projects/`에, Codex가 `~/.codex/sessions/`�
 |---|---|
 | `clens_search` | 단어로 지난 메시지를 찾습니다 |
 | `clens_session` | 세션 하나의 대화를 앞뒤로 읽습니다 |
-| `clens_left_off` | 프로젝트나 파일의 최근 세션과 멈춘 곳을 보여 줍니다 |
+| `clens_left_off` | 프로젝트나 파일의 최근 세션과 멈춘 곳, 브랜치에서 한 확인(테스트, API 호출, 화면 확인, 배포)을 보여 줍니다 |
 | `clens_recent` | 기간 안의 메시지를 시간 순서대로 보여 줍니다 |
 | `clens_stats` | 도구, 파일, 훅, 컨텍스트 사용량을 셉니다 |
 

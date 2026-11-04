@@ -232,12 +232,14 @@ function walkContent(args: {
   isMeta: boolean;
   /** The line's working directory, where a Bash command on it starts. */
   cwd: string | null;
+  /** The line's gitBranch, the branch checked out when it was written. */
+  gitBranch: string | null;
   content: unknown;
   batch: AnomalyBatch;
   out: ParsedEvent;
   toolResults: Map<string, ToolResultInfo>;
 }): BlockSummary {
-  const { event_uuid, session_id, ts, role, isMeta, cwd, content, batch, out, toolResults } = args;
+  const { event_uuid, session_id, ts, role, isMeta, cwd, gitBranch, content, batch, out, toolResults } = args;
   const summary: BlockSummary = {
     has_text: 0,
     has_tool_use: 0,
@@ -347,6 +349,7 @@ function walkContent(args: {
         duration_ms: null,
         is_error: 0,
         result_chars: null,
+        git_branch: gitBranch,
       };
       out.tool_calls.push(toolCall);
 
@@ -646,6 +649,7 @@ export function parseEventLine(
     role: role ?? "",
     isMeta: o.isMeta === true,
     cwd: typeof o.cwd === "string" ? o.cwd : null,
+    gitBranch: typeof o.gitBranch === "string" && o.gitBranch !== "" ? o.gitBranch : null,
     content: message.content,
     batch,
     out: parsed,

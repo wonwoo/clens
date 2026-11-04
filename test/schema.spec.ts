@@ -238,6 +238,7 @@ describe("schema.ts — v5 upgrade of an existing index", () => {
     expect(columns(upgraded)).toEqual(columns(fresh));
     expect(columns(upgraded)).toContain("result_chars INTEGER");
     expect(columns(upgraded)).toContain("error_excerpt TEXT");
+    expect(columns(upgraded)).toContain("git_branch TEXT");
     applySchema(upgraded);
     expect(columns(upgraded)).toEqual(columns(fresh));
     fresh.close();
