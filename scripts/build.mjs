@@ -24,6 +24,7 @@ await build({ ...common, entryPoints: ["src/mcp/server.ts"], outfile: "plugin/di
 await build({ ...common, entryPoints: ["src/cli.ts"], outfile: "plugin/dist/cli.js" });
 await build({ ...common, entryPoints: ["src/hooks/compact.ts"], outfile: "plugin/hooks/compact.mjs" });
 await build({ ...common, entryPoints: ["src/hooks/tool_failure.ts"], outfile: "plugin/hooks/tool_failure.mjs" });
+await build({ ...common, entryPoints: ["src/hooks/hold_guidance.ts"], outfile: "plugin/hooks/hold_guidance.mjs" });
 chmodSync("plugin/dist/cli.js", 0o755);
 
 const root = JSON.parse(readFileSync("package.json", "utf8"));

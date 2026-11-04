@@ -63,6 +63,11 @@ export function hintsSeenDir(): string {
   return join(clensHome(), "hints-seen");
 }
 
+/** The ledger of what users set aside (src/mcp/ledger.ts): one JSON event per line. */
+export function ledgerPath(): string {
+  return join(clensHome(), "ledger.jsonl");
+}
+
 export function indexLockPath(): string {
   return join(clensHome(), "index.db.lock");
 }

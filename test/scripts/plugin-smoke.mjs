@@ -6,9 +6,10 @@
  *
  * Installs from plugin/package-lock.json as Claude Code does (`npm ci
  * --ignore-scripts`), indexes fixture sessions with `start.mjs index`,
- * starts the server with `start.mjs mcp` and searches it, runs the
- * compaction hook for one session, runs the tool-failure hook on a `gh`
- * that another session found missing, and asks which session wrote a line.
+ * starts the server with `start.mjs mcp` and searches it, records an item
+ * in the ledger and lists it, runs the compaction hook for one session and
+ * Codex's hold guidance hook, runs the tool-failure hook on a `gh` that
+ * another session found missing, and asks which session wrote a line.
  * Needs `npm run build` first and the npm registry. Touches nothing outside
  * a temporary folder.
  *
@@ -78,7 +79,7 @@ try {
   await client.connect(new StdioClientTransport({ command: "node", args: [join(plugin, "start.mjs"), "mcp"], cwd: plugin, env }));
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort().join(",");
-  check("tools", names === "clens_left_off,clens_recent,clens_search,clens_session,clens_stats", names);
+  check("tools", names === "clens_hold,clens_left_off,clens_pending,clens_recent,clens_search,clens_session,clens_stats", names);
   const found = await client.callTool({ name: "clens_search", arguments: { query: "brainstorming", project_id: "-fixture-cwd", limit: 3 } });
   const text = found.content?.[0]?.text ?? "";
   check("search", !found.isError && text.includes("session:test"), text);
@@ -87,6 +88,20 @@ try {
   check("line origin", !wrote.isError && wroteText.includes("session:why") && wroteText.includes("request 2026-06-22T02:00:10") && wroteText.includes("shall I?"), wroteText);
   const noFile = await client.callTool({ name: "clens_left_off", arguments: { text: KEY_LINE } });
   check("line origin (no file)", noFile.isError === true && (noFile.content?.[0]?.text ?? "").includes("text needs file"), JSON.stringify(noFile));
+  const held = await client.callTool({
+    name: "clens_hold",
+    arguments: { project_id: "-fixture-cwd", item: "Add a due date to tasks", status: "held", words: "let's park it" },
+  });
+  const heldText = held.content?.[0]?.text ?? "";
+  const pending = await client.callTool({ name: "clens_pending", arguments: { project_id: "-fixture-cwd" } });
+  const pendingText = pending.content?.[0]?.text ?? "";
+  check(
+    "hold and pending",
+    !held.isError && heldText.startsWith("Recorded ") && !pending.isError &&
+      pendingText.includes("Ledger for -fixture-cwd: 1 held, 0 dropped, 0 done") &&
+      pendingText.includes("Add a due date to tasks") && pendingText.includes(`words: "let's park it"`),
+    `${heldText}\n${pendingText}`,
+  );
 
   const hook = execFileSync("node", [join(plugin, "hooks", "compact.mjs")], {
     env,
@@ -94,6 +109,12 @@ try {
     encoding: "utf8",
   });
   check("compact hook", hook.includes('"additionalContext":"clens work record of this session'), hook.slice(0, 500));
+  const guidance = execFileSync("node", [join(plugin, "hooks", "hold_guidance.mjs")], {
+    env,
+    input: JSON.stringify({ source: "startup" }),
+    encoding: "utf8",
+  });
+  check("hold guidance hook", guidance.includes('"hookEventName":"SessionStart"') && guidance.includes("call clens_hold"), guidance.slice(0, 500));
 
   const failure = execFileSync("node", [join(plugin, "hooks", "tool_failure.mjs")], {
     env,

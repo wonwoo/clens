@@ -7356,14 +7356,14 @@ var require_graceful_fs = __commonJS({
         return close;
       })(fs.close);
       fs.closeSync = (function(fs$closeSync) {
-        function closeSync(fd) {
+        function closeSync2(fd) {
           fs$closeSync.apply(fs, arguments);
           resetQueue();
         }
-        Object.defineProperty(closeSync, previousSymbol, {
+        Object.defineProperty(closeSync2, previousSymbol, {
           value: fs$closeSync
         });
-        return closeSync;
+        return closeSync2;
       })(fs.closeSync);
       if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || "")) {
         process.on("exit", function() {
@@ -26374,6 +26374,9 @@ function codexSessionsDir() {
 function indexDbPath() {
   return join(clensHome(), "index.db");
 }
+function ledgerPath() {
+  return join(clensHome(), "ledger.jsonl");
+}
 function indexLockPath() {
   return join(clensHome(), "index.db.lock");
 }
@@ -31924,6 +31927,11 @@ function formatLineOrigins(file2, origins) {
 }
 
 // src/mcp/instructions.ts
+var HOLD_GUIDANCE = `LEDGER: clens also keeps a ledger of what the user sets aside, so held work is not forgotten and dropped ideas are not proposed again. Record it without being asked: when the user decides that something proposed or discussed will not be done now, call clens_hold once per item, then go on with the request.
+- held: kept for later, to think about, to wait for something, to do after other work ("\uB098\uC911\uC5D0", "\uC77C\uB2E8 \uB300\uAE30", "\uB2E4\uC2DC \uC0DD\uAC01\uD574\uBCFC\uAC8C", "\uBC31\uB85C\uADF8\uC5D0 \uB0A8\uACA8", "let's park it")
+- dropped: will not be done ("\uD328\uC2A4", "\uC548 \uD574\uB3C4 \uB3FC", "\uD544\uC694 \uC5C6\uC74C", "isn't worth it")
+Judge by meaning in any language, not by these words. Not for: waiting on a step of the current task ("\uC7AC\uC2DC\uC791\uD560\uAC8C \uB300\uAE30"), holding back a routine step (commit, push, deploy), questions, or picking one option (the others are not set aside unless the user says so).
+When you finish an item clens_pending listed as held, record it done with its id.`;
 var SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply. It keeps sessions whose transcripts were deleted.
 
 USE IT FIRST, without being asked, when the user refers to earlier work rather than the current conversation or code:
@@ -31942,7 +31950,9 @@ HOW:
 3. Nothing relevant? Retry before concluding it is absent: the other language, spelling variants, split forms (uploadImages / upload images), OR, another project, a wider time range.
 4. clens_left_off: latest sessions of a project or file, with last request, reply and edits; session_id "current" after compaction. clens_recent: a time window. clens_stats: counts.
 
-Report when and in which session something was said, quote the key line, and keep what the record shows apart from your inference. Use these tools instead of reading ~/.clens/index.db or transcript files.`;
+Report when and in which session something was said, quote the key line, and keep what the record shows apart from your inference. Use these tools instead of reading ~/.clens/index.db or transcript files.
+
+${HOLD_GUIDANCE}`;
 var SEARCH_DESCRIPTION = `Keyword search (FTS5, not semantic) over the user's past Claude Code and Codex messages, the user's and the assistant's. Returns a short snippet per hit with its session_id, ts, role and score; read the conversation around a hit with clens_session (its session_id + ts). Pass context (1-5) to also get that many messages before and after each hit, often enough to skip that call. Pass queries (2-5) instead of query to run several searches in one call.
 
 Query rules:
@@ -31965,6 +31975,181 @@ Scope: pass project_id for one project, session_id for one session, or neither f
 Pass sections to get only what the question needs and keep the answer short. Long lists end with a "(+N more)" line. For one plugin's or one family's skills, slash commands and agents, pass name ("ecc:"), so none falls past the cut.
 
 For Claude Code and Codex sessions it also reports hook blocks (which hook stopped which tool, with the latest reasons) and tool output size per tool (characters of text each tool's results added to the conversation; images are not counted). Sessions whose transcripts were deleted before clens began recording these have neither, so totals over older history count less than happened.`;
+var HOLD_DESCRIPTION = `Record in clens's ledger an item the user set aside in this conversation, or change one recorded earlier. Call it when the user decides that something proposed or discussed will not be done now, once per item, then go on with the request.
+
+New item: pass project_id, item (what was set aside, in one line that makes sense without this conversation), status held (kept for later) or dropped (will not be done), words (the user's own words that set it aside, quoted) and, for a held item, waits_for when the user said what it waits for.
+
+Change an item: pass project_id, its id (from clens_pending or an earlier clens_hold) and status: done when it was just done, held or dropped when the user changed their mind, removed when it should not have been recorded. words and waits_for are optional then; item cannot change.
+
+project_id is the working directory path with every slash replaced by a dash.`;
+var PENDING_DESCRIPTION = `List clens's ledger: what the user set aside in conversations, recorded with clens_hold. Pass project_id (the working directory path with every slash replaced by a dash) for one project; omit it for every project. Items are grouped as held, dropped and done, newest first, each with its id, date, item, the user's words, what it waits for and the session that recorded it. Items marked removed are left out. The ledger holds only what agents recorded since this version of clens was installed; it is not built from past transcripts.`;
+
+// src/mcp/ledger.ts
+import { appendFileSync, closeSync, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync3, readSync, statSync as statSync2 } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { dirname as dirname4 } from "node:path";
+var HOLD_STATUSES = ["held", "dropped", "done", "removed"];
+var ID = /^[0-9a-f]{8}$/;
+function appendLedgerEvent(path, event) {
+  mkdirSync2(dirname4(path), { recursive: true });
+  const prefix = endsWithoutNewline(path) ? "\n" : "";
+  appendFileSync(path, prefix + JSON.stringify(event) + "\n");
+}
+function endsWithoutNewline(path) {
+  let size;
+  try {
+    size = statSync2(path).size;
+  } catch (e) {
+    if (e.code === "ENOENT") return false;
+    throw e;
+  }
+  if (size === 0) return false;
+  const fd = openSync(path, "r");
+  try {
+    const last = Buffer.alloc(1);
+    readSync(fd, last, 0, 1, size - 1);
+    return last[0] !== 10;
+  } finally {
+    closeSync(fd);
+  }
+}
+function parseEvent(line) {
+  let v;
+  try {
+    v = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const o = v;
+  const optionalString = (key) => !(key in o) || typeof o[key] === "string";
+  if (typeof o.id !== "string" || !ID.test(o.id) || typeof o.ts !== "string" || typeof o.project_id !== "string" || !("session_id" in o) || o.session_id !== null && typeof o.session_id !== "string" || !HOLD_STATUSES.includes(o.status) || !optionalString("item") || !optionalString("words") || !optionalString("waits_for")) {
+    return null;
+  }
+  return o;
+}
+function readLedger(path) {
+  let text;
+  try {
+    text = readFileSync3(path, "utf8");
+  } catch (e) {
+    if (e.code === "ENOENT") return { items: [], unreadable: 0 };
+    throw e;
+  }
+  const byId = /* @__PURE__ */ new Map();
+  let unreadable = 0;
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    const e = parseEvent(line);
+    if (e === null) {
+      unreadable++;
+      continue;
+    }
+    const known = byId.get(e.id);
+    if (known) {
+      known.status = e.status;
+      known.updated = e.ts;
+      if (e.words !== void 0) known.words = e.words;
+      if (e.waits_for !== void 0) known.waits_for = e.waits_for;
+      continue;
+    }
+    if (e.item === void 0 || e.words === void 0) {
+      unreadable++;
+      continue;
+    }
+    byId.set(e.id, {
+      id: e.id,
+      project_id: e.project_id,
+      item: e.item,
+      status: e.status,
+      words: e.words,
+      waits_for: e.waits_for ?? null,
+      session_id: e.session_id,
+      created: e.ts,
+      updated: e.ts
+    });
+  }
+  return { items: [...byId.values()], unreadable };
+}
+var MAX_ID_DRAWS = 10;
+function recordHold(path, params, ctx) {
+  const ts = ctx.now.toISOString();
+  const session_id = ctx.sessionId ?? null;
+  const { project_id, status, words, waits_for } = params;
+  if (params.id !== void 0) {
+    if (params.item !== void 0) return { ok: false, error: "item cannot change; record a new item instead" };
+    const id2 = params.id;
+    const known = readLedger(path).items.find((i) => i.id === id2);
+    if (!known) return { ok: false, error: `no item ${id2} in the ledger` };
+    if (known.project_id !== project_id) {
+      return { ok: false, error: `item ${id2} belongs to project ${known.project_id}, not ${project_id}` };
+    }
+    appendLedgerEvent(path, { id: id2, ts, project_id, session_id, status, words, waits_for });
+    return { ok: true, text: `Changed ${id2} to ${status}: ${known.item}` };
+  }
+  if (status !== "held" && status !== "dropped") {
+    return { ok: false, error: "a new item is held or dropped; pass the id of a recorded item to mark it done or removed" };
+  }
+  const item = params.item;
+  if (item === void 0 || words === void 0) {
+    return { ok: false, error: "item and words are needed to record a new item" };
+  }
+  const newId = ctx.newId ?? (() => randomBytes(4).toString("hex"));
+  const taken = new Set(readLedger(path).items.map((i) => i.id));
+  let id;
+  for (let draw = 0; draw < MAX_ID_DRAWS && id === void 0; draw++) {
+    const candidate = newId();
+    if (!taken.has(candidate)) id = candidate;
+  }
+  if (id === void 0) return { ok: false, error: "could not pick a new id" };
+  appendLedgerEvent(path, { id, ts, project_id, session_id, status, item, words, waits_for });
+  return { ok: true, text: `Recorded ${id} as ${status}: ${item}` };
+}
+var DEFAULT_PENDING_MAX_BYTES = 16384;
+var MORE_LINE_RESERVE = 64;
+var GROUPS = ["held", "dropped", "done"];
+function formatPending(ledger, params) {
+  const { project_id } = params;
+  const unreadableLine = ledger.unreadable > 0 ? `(${ledger.unreadable} unreadable lines in the ledger file were skipped)` : null;
+  const kept = ledger.items.filter(
+    (i) => i.status !== "removed" && (project_id === void 0 || i.project_id === project_id)
+  );
+  if (kept.length === 0) {
+    const nothing = project_id === void 0 ? "Nothing in the ledger." : `Nothing in the ledger for ${project_id}.`;
+    return unreadableLine === null ? nothing : `${nothing}
+${unreadableLine}`;
+  }
+  const groups = GROUPS.map(
+    (status) => kept.filter((i) => i.status === status).sort((a, b) => a.updated === b.updated ? a.id < b.id ? -1 : 1 : a.updated < b.updated ? 1 : -1)
+  );
+  const [held, dropped, done] = groups.map((g) => g.length);
+  const lines = [`Ledger for ${project_id ?? "every project"}: ${held} held, ${dropped} dropped, ${done} done`];
+  const itemLines = (i) => {
+    let detail = `  words: "${i.words}"`;
+    if (i.waits_for !== null) detail += `; waits for: ${i.waits_for}`;
+    if (i.updated !== i.created) detail += `; changed: ${i.updated}`;
+    detail += `; session: ${i.session_id ?? "unknown"}`;
+    if (project_id === void 0) detail += `; project: ${i.project_id}`;
+    return [`- ${i.id}  ${i.created}  ${i.item}`, detail];
+  };
+  const cap = params.maxBytes ?? DEFAULT_PENDING_MAX_BYTES;
+  const reserve = MORE_LINE_RESERVE + (unreadableLine === null ? 0 : Buffer.byteLength(unreadableLine, "utf8") + 1);
+  let used = Buffer.byteLength(lines[0], "utf8");
+  let written = 0;
+  fill: for (const [g, group] of groups.entries()) {
+    for (const [n, i] of group.entries()) {
+      const next = n === 0 ? [`${GROUPS[g]}:`, ...itemLines(i)] : itemLines(i);
+      const bytes = next.reduce((sum, l) => sum + 1 + Buffer.byteLength(l, "utf8"), 0);
+      if (used + bytes + reserve > cap) break fill;
+      lines.push(...next);
+      used += bytes;
+      written++;
+    }
+  }
+  if (written < kept.length) lines.push(`(+${kept.length - written} more items not shown)`);
+  if (unreadableLine !== null) lines.push(unreadableLine);
+  return lines.join("\n");
+}
 
 // src/analyzer/identity.ts
 function analyzeIdentity(db2, scope) {
@@ -32474,7 +32659,7 @@ function formatStats(facts) {
 }
 
 // src/mcp/current_session.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 import { join as join5 } from "node:path";
 var CURRENT_SESSION = "current";
 function resolveSessionId(value, currentSessionId) {
@@ -32496,7 +32681,7 @@ function codexSessionFromMeta(meta3) {
 }
 function detectCurrentSessionId(pid, env) {
   try {
-    const parsed = JSON.parse(readFileSync3(join5(sessionsDir(), `${pid}.json`), "utf8"));
+    const parsed = JSON.parse(readFileSync4(join5(sessionsDir(), `${pid}.json`), "utf8"));
     if (typeof parsed === "object" && parsed !== null) {
       const { sessionId, pid: filePid } = parsed;
       if (typeof sessionId === "string" && sessionId.length > 0 && filePid === pid) return sessionId;
@@ -32555,6 +32740,18 @@ var StatsParamsSchema = external_exports.strictObject({
   since: external_exports.string().optional(),
   sections: external_exports.array(external_exports.enum(STATS_SECTIONS)).min(1).optional(),
   name: external_exports.string().min(1).optional()
+});
+var HoldParamsSchema = external_exports.strictObject({
+  project_id: external_exports.string().min(1),
+  id: external_exports.string().regex(/^[0-9a-f]{8}$/).optional(),
+  item: external_exports.string().min(1).max(300).optional(),
+  status: external_exports.enum(HOLD_STATUSES),
+  words: external_exports.string().min(1).max(500).optional(),
+  waits_for: external_exports.string().min(1).max(200).optional()
+});
+var PendingParamsSchema = external_exports.strictObject({
+  project_id: external_exports.string().min(1).optional(),
+  maxBytes: external_exports.number().int().min(256).max(1e6).optional()
 });
 var db = null;
 function getDb() {
@@ -32764,6 +32961,58 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           }
         }
       }
+    },
+    {
+      name: "clens_hold",
+      description: HOLD_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: {
+            type: "string",
+            description: "The working directory path with every slash replaced by a dash."
+          },
+          id: {
+            type: "string",
+            description: "An item's id from clens_pending or an earlier clens_hold, to change that item."
+          },
+          item: {
+            type: "string",
+            description: "What was set aside, in one line that makes sense without this conversation. New items only."
+          },
+          status: {
+            type: "string",
+            enum: [...HOLD_STATUSES],
+            description: "held or dropped for a new item; done, held, dropped or removed for an item passed by id."
+          },
+          words: {
+            type: "string",
+            description: "The user's own words that set it aside or changed it, quoted."
+          },
+          waits_for: {
+            type: "string",
+            description: "What a held item waits for, when the user said so."
+          }
+        },
+        required: ["project_id", "status"]
+      }
+    },
+    {
+      name: "clens_pending",
+      description: PENDING_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: {
+            type: "string",
+            description: "A working directory path with every slash replaced by a dash; omit it for every project."
+          },
+          maxBytes: {
+            type: "number",
+            description: "Cap on the answer's size in bytes (default 16384)."
+          }
+        }
+      }
     }
   ]
 }));
@@ -32890,6 +33139,32 @@ ${m.text}`).join("\n\n");
     } catch (e) {
       const err = e;
       return { content: [{ type: "text", text: `Stats error: ${err.message ?? String(e)}` }], isError: true };
+    }
+  }
+  if (req.params.name === "clens_hold") {
+    const parsed = HoldParamsSchema.safeParse(req.params.arguments);
+    if (!parsed.success) {
+      return { content: [{ type: "text", text: `Invalid params: ${parsed.error.message}` }], isError: true };
+    }
+    try {
+      const result = recordHold(ledgerPath(), parsed.data, { sessionId: currentSessionId, now: /* @__PURE__ */ new Date() });
+      if (!result.ok) return { content: [{ type: "text", text: result.error }], isError: true };
+      return { content: [{ type: "text", text: result.text }] };
+    } catch (e) {
+      const err = e;
+      return { content: [{ type: "text", text: `Ledger error: ${err.message ?? String(e)}` }], isError: true };
+    }
+  }
+  if (req.params.name === "clens_pending") {
+    const parsed = PendingParamsSchema.safeParse(req.params.arguments ?? {});
+    if (!parsed.success) {
+      return { content: [{ type: "text", text: `Invalid params: ${parsed.error.message}` }], isError: true };
+    }
+    try {
+      return { content: [{ type: "text", text: formatPending(readLedger(ledgerPath()), parsed.data) }] };
+    } catch (e) {
+      const err = e;
+      return { content: [{ type: "text", text: `Ledger error: ${err.message ?? String(e)}` }], isError: true };
     }
   }
   return { content: [{ type: "text", text: `Unknown tool: ${req.params.name}` }], isError: true };

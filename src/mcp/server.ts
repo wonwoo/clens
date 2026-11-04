@@ -8,6 +8,8 @@
  *   clens_left_off — where work stopped: a project's or file's latest sessions, one session's work record, or a branch's checks
  *   clens_stats    — aggregate usage stats for a session, a project or every project
  *                    (tools/skills/agents/health/timeline/files, hook blocks, tool output size)
+ *   clens_hold     — record in the ledger (~/.clens/ledger.jsonl) an item the user set aside, or change one
+ *   clens_pending  — list the ledger: held, dropped and done items
  *
  * Register in .mcp.json:
  *   {
@@ -32,7 +34,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { indexDbPath, watchLockPath } from "../util/paths.js";
+import { indexDbPath, ledgerPath, watchLockPath } from "../util/paths.js";
 import { startWatch, type WatchHandle } from "../indexer/watch.js";
 import { acquireLock } from "../indexer/driver.js";
 import { ensureLanguageAdaptersLoaded } from "../indexer/lang/init.js";
@@ -45,7 +47,10 @@ import {
 } from "./left_off.js";
 import { branchChecks, branchParamsError, formatBranchChecks, formatRecentBranches, recentBranches } from "./checks.js";
 import { formatLineOrigins, lineOrigins } from "./line_origin.js";
-import { SEARCH_DESCRIPTION, SERVER_INSTRUCTIONS, STATS_DESCRIPTION } from "./instructions.js";
+import {
+  HOLD_DESCRIPTION, PENDING_DESCRIPTION, SEARCH_DESCRIPTION, SERVER_INSTRUCTIONS, STATS_DESCRIPTION,
+} from "./instructions.js";
+import { formatPending, HOLD_STATUSES, readLedger, recordHold } from "./ledger.js";
 import { formatStats, projectStats, STATS_SECTIONS } from "./stats.js";
 import { codexSessionFromMeta, detectCurrentSessionId, resolveSessionId } from "./current_session.js";
 
@@ -108,6 +113,20 @@ const StatsParamsSchema = z.strictObject({
   since: z.string().optional(),
   sections: z.array(z.enum(STATS_SECTIONS)).min(1).optional(),
   name: z.string().min(1).optional(),
+});
+
+const HoldParamsSchema = z.strictObject({
+  project_id: z.string().min(1),
+  id: z.string().regex(/^[0-9a-f]{8}$/).optional(),
+  item: z.string().min(1).max(300).optional(),
+  status: z.enum(HOLD_STATUSES),
+  words: z.string().min(1).max(500).optional(),
+  waits_for: z.string().min(1).max(200).optional(),
+});
+
+const PendingParamsSchema = z.strictObject({
+  project_id: z.string().min(1).optional(),
+  maxBytes: z.number().int().min(256).max(1_000_000).optional(),
 });
 
 let db: Database.Database | null = null;
@@ -352,6 +371,58 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: "clens_hold",
+      description: HOLD_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: {
+            type: "string",
+            description: "The working directory path with every slash replaced by a dash.",
+          },
+          id: {
+            type: "string",
+            description: "An item's id from clens_pending or an earlier clens_hold, to change that item.",
+          },
+          item: {
+            type: "string",
+            description: "What was set aside, in one line that makes sense without this conversation. New items only.",
+          },
+          status: {
+            type: "string",
+            enum: [...HOLD_STATUSES],
+            description: "held or dropped for a new item; done, held, dropped or removed for an item passed by id.",
+          },
+          words: {
+            type: "string",
+            description: "The user's own words that set it aside or changed it, quoted.",
+          },
+          waits_for: {
+            type: "string",
+            description: "What a held item waits for, when the user said so.",
+          },
+        },
+        required: ["project_id", "status"],
+      },
+    },
+    {
+      name: "clens_pending",
+      description: PENDING_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: {
+            type: "string",
+            description: "A working directory path with every slash replaced by a dash; omit it for every project.",
+          },
+          maxBytes: {
+            type: "number",
+            description: "Cap on the answer's size in bytes (default 16384).",
+          },
+        },
+      },
+    },
   ],
 }));
 
@@ -498,6 +569,36 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     } catch (e) {
       const err = e as { message?: string };
       return { content: [{ type: "text", text: `Stats error: ${err.message ?? String(e)}` }], isError: true };
+    }
+  }
+
+  // The ledger is its own file, not the index: the index connection stays
+  // read-only, and a rebuild never touches what agents recorded.
+  if (req.params.name === "clens_hold") {
+    const parsed = HoldParamsSchema.safeParse(req.params.arguments);
+    if (!parsed.success) {
+      return { content: [{ type: "text", text: `Invalid params: ${parsed.error.message}` }], isError: true };
+    }
+    try {
+      const result = recordHold(ledgerPath(), parsed.data, { sessionId: currentSessionId, now: new Date() });
+      if (!result.ok) return { content: [{ type: "text", text: result.error }], isError: true };
+      return { content: [{ type: "text", text: result.text }] };
+    } catch (e) {
+      const err = e as { message?: string };
+      return { content: [{ type: "text", text: `Ledger error: ${err.message ?? String(e)}` }], isError: true };
+    }
+  }
+
+  if (req.params.name === "clens_pending") {
+    const parsed = PendingParamsSchema.safeParse(req.params.arguments ?? {});
+    if (!parsed.success) {
+      return { content: [{ type: "text", text: `Invalid params: ${parsed.error.message}` }], isError: true };
+    }
+    try {
+      return { content: [{ type: "text", text: formatPending(readLedger(ledgerPath()), parsed.data) }] };
+    } catch (e) {
+      const err = e as { message?: string };
+      return { content: [{ type: "text", text: `Ledger error: ${err.message ?? String(e)}` }], isError: true };
     }
   }
 

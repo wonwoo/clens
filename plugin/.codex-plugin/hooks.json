@@ -1,5 +1,5 @@
 {
-  "description": "Right after Codex compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure.",
+  "description": "Right after Codex compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure. At the start of a session, tell the agent to record in clens's ledger what the user sets aside.",
   "hooks": {
     "SessionStart": [
       {
@@ -10,6 +10,16 @@
             "command": "node \"${PLUGIN_ROOT}/hooks/compact.mjs\"",
             "timeout": 30,
             "additionalContextLimit": 10000
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/hold_guidance.mjs\"",
+            "timeout": 10
           }
         ]
       }

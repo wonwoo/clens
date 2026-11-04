@@ -1,15 +1,30 @@
-// Sent to the client in the initialize response. Claude Code shows server
-// instructions in the system prompt even while the tools themselves are
-// deferred (only their names visible), so this is what tells the agent WHEN
-// to reach for clens; the per-tool descriptions only say how each one works.
+// SERVER_INSTRUCTIONS is sent to the client in the initialize response.
+// Claude Code shows server instructions in the system prompt even while the
+// tools themselves are deferred (only their names visible), so this is what
+// tells the agent WHEN to reach for clens; the per-tool descriptions only say
+// how each one works.
 // Without it users had to name the tool in every request, and agents went to
 // the raw index or transcripts instead. Keep every claim here true of the
 // current code: agents act on it literally.
 //
-// Claude Code passes at most 2,048 characters of server instructions and of
-// each tool description (CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH) and cuts
-// the rest, so each stays under that: when and how to use clens here, the
-// query rules in the clens_search description.
+// Claude Code cuts server instructions and each tool description at
+// CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH characters: 4,096 by default in
+// 2.1.318, 2,048 in older releases. What every client must see stays in the
+// first 2,048 characters (when and how to use clens here, the query rules in
+// the clens_search description), and the ledger paragraph (HOLD_GUIDANCE)
+// comes last, so an older release loses only that.
+//
+// What the agent is told about the ledger (src/mcp/ledger.ts): record what
+// the user sets aside without being asked. Claude Code reads it as the last
+// paragraph of SERVER_INSTRUCTIONS. Codex does not pass server instructions
+// to the model, so its SessionStart hook (src/hooks/hold_guidance.ts) prints
+// the same text.
+export const HOLD_GUIDANCE = `LEDGER: clens also keeps a ledger of what the user sets aside, so held work is not forgotten and dropped ideas are not proposed again. Record it without being asked: when the user decides that something proposed or discussed will not be done now, call clens_hold once per item, then go on with the request.
+- held: kept for later, to think about, to wait for something, to do after other work ("나중에", "일단 대기", "다시 생각해볼게", "백로그에 남겨", "let's park it")
+- dropped: will not be done ("패스", "안 해도 돼", "필요 없음", "isn't worth it")
+Judge by meaning in any language, not by these words. Not for: waiting on a step of the current task ("재시작할게 대기"), holding back a routine step (commit, push, deploy), questions, or picking one option (the others are not set aside unless the user says so).
+When you finish an item clens_pending listed as held, record it done with its id.`;
+
 export const SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply. It keeps sessions whose transcripts were deleted.
 
 USE IT FIRST, without being asked, when the user refers to earlier work rather than the current conversation or code:
@@ -28,7 +43,9 @@ HOW:
 3. Nothing relevant? Retry before concluding it is absent: the other language, spelling variants, split forms (uploadImages / upload images), OR, another project, a wider time range.
 4. clens_left_off: latest sessions of a project or file, with last request, reply and edits; session_id "current" after compaction. clens_recent: a time window. clens_stats: counts.
 
-Report when and in which session something was said, quote the key line, and keep what the record shows apart from your inference. Use these tools instead of reading ~/.clens/index.db or transcript files.`;
+Report when and in which session something was said, quote the key line, and keep what the record shows apart from your inference. Use these tools instead of reading ~/.clens/index.db or transcript files.
+
+${HOLD_GUIDANCE}`;
 
 export const SEARCH_DESCRIPTION = `Keyword search (FTS5, not semantic) over the user's past Claude Code and Codex messages, the user's and the assistant's. Returns a short snippet per hit with its session_id, ts, role and score; read the conversation around a hit with clens_session (its session_id + ts). Pass context (1-5) to also get that many messages before and after each hit, often enough to skip that call. Pass queries (2-5) instead of query to run several searches in one call.
 
@@ -55,3 +72,13 @@ Scope: pass project_id for one project, session_id for one session, or neither f
 Pass sections to get only what the question needs and keep the answer short. Long lists end with a "(+N more)" line. For one plugin's or one family's skills, slash commands and agents, pass name ("ecc:"), so none falls past the cut.
 
 For Claude Code and Codex sessions it also reports hook blocks (which hook stopped which tool, with the latest reasons) and tool output size per tool (characters of text each tool's results added to the conversation; images are not counted). Sessions whose transcripts were deleted before clens began recording these have neither, so totals over older history count less than happened.`;
+
+export const HOLD_DESCRIPTION = `Record in clens's ledger an item the user set aside in this conversation, or change one recorded earlier. Call it when the user decides that something proposed or discussed will not be done now, once per item, then go on with the request.
+
+New item: pass project_id, item (what was set aside, in one line that makes sense without this conversation), status held (kept for later) or dropped (will not be done), words (the user's own words that set it aside, quoted) and, for a held item, waits_for when the user said what it waits for.
+
+Change an item: pass project_id, its id (from clens_pending or an earlier clens_hold) and status: done when it was just done, held or dropped when the user changed their mind, removed when it should not have been recorded. words and waits_for are optional then; item cannot change.
+
+project_id is the working directory path with every slash replaced by a dash.`;
+
+export const PENDING_DESCRIPTION = `List clens's ledger: what the user set aside in conversations, recorded with clens_hold. Pass project_id (the working directory path with every slash replaced by a dash) for one project; omit it for every project. Items are grouped as held, dropped and done, newest first, each with its id, date, item, the user's words, what it waits for and the session that recorded it. Items marked removed are left out. The ledger holds only what agents recorded since this version of clens was installed; it is not built from past transcripts.`;
