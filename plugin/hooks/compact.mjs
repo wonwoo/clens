@@ -598,6 +598,8 @@ function formatSessionRecord(r) {
     (q) => `${q.ts}  ${cutChars(q.text, REQUEST_CHARS)}`
   );
   lines.push(r.last_reply === null ? "Last reply: (none)" : `Last reply: ${r.last_reply.ts}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
+  const change = r.segments_total === 1 ? r.segments[0]?.last_change : null;
+  if (change) lines.push(`Last change (request ${change.request} of ${r.segments[0].requests}): ${cutChars(change.reply, SEGMENT_REPLY_CHARS)}`);
   section(
     "Edited",
     `Edited (${r.edits_total} files):`,

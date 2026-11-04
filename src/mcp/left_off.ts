@@ -753,6 +753,10 @@ export function formatSessionRecord(r: SessionRecord): string {
   lines.push(r.last_reply === null
     ? "Last reply: (none)"
     : `Last reply: ${r.last_reply.ts}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
+  // A session of one segment shows no Segments section, so its last change,
+  // which side questions after the work push out of the last reply, goes here.
+  const change = r.segments_total === 1 ? r.segments[0]?.last_change : null;
+  if (change) lines.push(`Last change (request ${change.request} of ${r.segments[0]!.requests}): ${cutChars(change.reply, SEGMENT_REPLY_CHARS)}`);
   section("Edited", `Edited (${r.edits_total} files):`, r.edits_total, r.edits,
     (e) => `${shortPath(e.path, r.cwd)}  ${e.count} edits, last ${e.last_ts}`);
   if (r.more_edits.length > 0) {

@@ -292,7 +292,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           session_id: {
             type: "string",
             description:
-              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply, edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits and text are then ignored.",
+              "A session id from another clens result, or \"current\" for this conversation (Claude Code and Codex). Returns that one session's record instead of a list: its segments (the conversation cut at compactions and pauses over 2 hours, each with its span, request count, first request, the code terms its replies mention most, the reply after its latest edit or commit when a later request followed, and last reply), its latest requests, its last reply (and, for a session of one segment, that reply after its latest edit or commit), edited files, git commands, failed tool calls (with the start and end of their output) and hook blocks. project_id, file, since, until, limit, commits and text are then ignored.",
           },
           commits: {
             type: "array",

@@ -513,6 +513,23 @@ describe("clens_left_off session record", () => {
     expect(lines.filter((l) => l.startsWith("    Last change"))).toHaveLength(2);
   });
 
+  it("shows the last change of a session that is one segment under its last reply", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('one', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("g1", "one", "2026-09-10T09:00:00.000Z", "user", "move the keyword log to Kafka");
+    edit("g1e", "one", "2026-09-10T09:00:30.000Z", "Edit", "/w/app/src/KeywordProducer.kt");
+    call("g1g", "one", "2026-09-10T09:00:40.000Z", "Bash", JSON.stringify({ command: "git commit -m 'keyword log to Kafka'" }));
+    msg("g2", "one", "2026-09-10T09:01:00.000Z", "assistant", "Committed the Kafka producer as abc1234; nothing pushed.");
+    // Side questions after the work, within two hours: still one segment.
+    msg("g3", "one", "2026-09-10T10:00:00.000Z", "user", "is the eval tool good enough?");
+    msg("g4", "one", "2026-09-10T10:01:00.000Z", "assistant", "For a rough check, yes; the source models are hardcoded.");
+    const r = sessionRecord(db, "one")!;
+    expect(r.segments_total).toBe(1);
+    const lines = formatSessionRecord(r).split("\n");
+    const at = lines.findIndex((l) => l.startsWith("Last reply:"));
+    expect(lines[at + 1]).toBe("Last change (request 1 of 2): Committed the Kafka producer as abc1234; nothing pushed.");
+    expect(lines.join("\n")).not.toContain("Segments");
+  });
+
   it("shows no last change that is the last reply: the requests after it got no reply or only short ones", () => {
     db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('rep', '-w-app', 'interactive', '/w/app', 'claude')");
     msg("r1", "rep", "2026-09-10T09:00:00.000Z", "user", "fix the login bug");
