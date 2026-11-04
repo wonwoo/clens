@@ -150,7 +150,7 @@ clens mcp                   run the MCP server
 
 `CLENS_HOME`, `CLENS_CODEX_HOME` and `CLENS_INDEX_DIR` move `~/.claude`, `~/.codex` and `~/.clens`. Tests point all three at temporary folders, so they never touch your real ones. [AGENTS.md](AGENTS.md) holds the rules and invariants to keep when you change the code.
 
-Both tools install `plugin/` as it is in the repository, since neither builds a plugin, so `npm run build` bundles `src/` into it and a change is committed with what it builds to. A release raises `version` in `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`. `claude plugin validate plugin` checks the Claude Code side.
+Both tools install `plugin/` as it is in the repository, since neither builds a plugin, so `npm run build` bundles `src/` into it and a change is committed with what it builds to. A release raises `version` in `package.json` (`npm version <x.y.z> --no-git-tag-version`), `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`, rebuilds, pushes, then pushes the tag `v<x.y.z>`: the Release workflow checks that every version matches the tag and publishes `@clens/cli` to npm from that commit. `claude plugin validate plugin` checks the Claude Code side.
 
 ## License
 

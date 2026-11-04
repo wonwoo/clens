@@ -1,0 +1,48 @@
+name: Release
+
+# Pushing a tag vX.Y.Z publishes @clens/cli X.Y.Z to npm from that commit,
+# the same commit both tools install the plugin from. npm trusts this
+# workflow through OIDC (trusted publishing), so no token or one-time
+# password is involved; it is set up once in the package's settings on
+# npmjs.com with this file's name, release.yml.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          # Trusted publishing needs Node 22.14 or later and npm 11.5.1 or later.
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: npm supports trusted publishing
+        run: |
+          npm --version
+          npx --yes semver@7.7.2 -r '>=11.5.1' "$(npm --version)" >/dev/null || npm install -g npm@11
+      - name: The tag matches every version field
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for f in package.json plugin/package.json plugin/.claude-plugin/plugin.json plugin/.codex-plugin/plugin.json; do
+            v="$(node -p "require('./$f').version")"
+            echo "$f $v"
+            test "$v" = "$tag"
+          done
+      - run: npm ci
+      - run: npm test
+      - name: plugin/ matches the source
+        run: |
+          git status --porcelain -- plugin
+          test -z "$(git status --porcelain -- plugin)"
+      - name: The plugin runs from its own folder
+        run: node test/scripts/plugin-smoke.mjs
+      - run: npm publish
