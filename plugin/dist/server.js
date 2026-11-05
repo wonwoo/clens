@@ -29800,7 +29800,7 @@ function writableEvents(db2, source, source_file, events, batch) {
   return kept;
 }
 var FTS_OPTIMIZE_INTERVAL_MS = 60 * 60 * 1e3;
-function optimizeFtsIfDue(db2, now, rebuilt) {
+function optimizeFtsIfDue(db2, now, rebuilt, vacuumMinFreeBytes) {
   const last = db2.prepare("SELECT value FROM maintenance WHERE key = 'fts_optimized_at'").get();
   if (!rebuilt && last && now - Number(last.value) < FTS_OPTIMIZE_INTERVAL_MS) return;
   const tables = ["user_text_fts", "user_text_fts_trigram", ...listKnownLanguageCodes().map(languageFtsTable)];
@@ -29810,6 +29810,22 @@ function optimizeFtsIfDue(db2, now, rebuilt) {
       "INSERT INTO maintenance (key, value) VALUES ('fts_optimized_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
     ).run(String(now));
   })();
+  vacuumIfLoose(db2, vacuumMinFreeBytes);
+}
+var VACUUM_MIN_FREE_BYTES = 100 * 1024 * 1024;
+function vacuumIfLoose(db2, minFreeBytes) {
+  const free = db2.pragma("freelist_count", { simple: true }) * db2.pragma("page_size", { simple: true });
+  if (free >= minFreeBytes) {
+    try {
+      db2.exec("VACUUM");
+    } catch (err) {
+      console.error("clens: VACUUM failed:", err.message);
+    }
+  }
+  const busyTimeout = db2.pragma("busy_timeout", { simple: true });
+  db2.pragma("busy_timeout = 5000");
+  db2.pragma("wal_checkpoint(TRUNCATE)");
+  db2.pragma(`busy_timeout = ${busyTimeout}`);
 }
 async function runIndex(opts = {}) {
   await ensureLanguageAdaptersLoaded();
@@ -29892,7 +29908,9 @@ async function runIndex(opts = {}) {
       events += eventsInserted;
       parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
     }
-    if (filesParsed > 0 && !lock.lost) optimizeFtsIfDue(db2, now, needsRebuild);
+    if (filesParsed > 0 && !lock.lost) {
+      optimizeFtsIfDue(db2, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
+    }
     db2.close();
     return {
       files_total: discovered.length,

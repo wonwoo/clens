@@ -46,6 +46,9 @@ export interface IndexOptions {
   /** Override "now" for tests (controls when the FTS tables are next
    *  optimized). */
   now?: number;
+  /** Override the free space that makes an optimize VACUUM the file, for
+   *  tests. Default VACUUM_MIN_FREE_BYTES. */
+  vacuumMinFreeBytes?: number;
 }
 
 export interface IndexResult {
@@ -399,7 +402,7 @@ function writableEvents(
  *  880-row session 13 times slower (3.5 s against 0.27 s). */
 const FTS_OPTIMIZE_INTERVAL_MS = 60 * 60 * 1000;
 
-function optimizeFtsIfDue(db: Database.Database, now: number, rebuilt: boolean): void {
+function optimizeFtsIfDue(db: Database.Database, now: number, rebuilt: boolean, vacuumMinFreeBytes: number): void {
   const last = db.prepare("SELECT value FROM maintenance WHERE key = 'fts_optimized_at'").get() as
     | { value: string }
     | undefined;
@@ -412,6 +415,36 @@ function optimizeFtsIfDue(db: Database.Database, now: number, rebuilt: boolean):
       "INSERT INTO maintenance (key, value) VALUES ('fts_optimized_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(String(now));
   })();
+  vacuumIfLoose(db, vacuumMinFreeBytes);
+}
+
+/** SQLite never gives free pages back to the disk, so the file keeps the
+ *  largest size it reached. A rebuild deletes and re-inserts every row and
+ *  then optimizes, which leaves the most free pages: 180 MB of 1.48 GB after
+ *  the v18 rebuild, where a VACUUM took the file to 1.27 GB in 4 s. Normal
+ *  indexing reuses free pages, so only a large surplus is worth the VACUUM. */
+const VACUUM_MIN_FREE_BYTES = 100 * 1024 * 1024;
+
+/** VACUUM writes the whole file through the WAL (1.28 GB on that index), and
+ *  only a checkpoint gives it back. The checkpoint waits for open reads, and
+ *  a search server holding one kept it waiting the whole 30 s busy_timeout
+ *  on top of a 13 s VACUUM, so it waits 5 s at most: the lock refresh cannot
+ *  run while this blocks, and another process takes over a lock left 60 s.
+ *  One that gives up leaves the WAL for the next optimize's checkpoint. A
+ *  failed VACUUM (a full disk) only leaves the file as large as it was. */
+function vacuumIfLoose(db: Database.Database, minFreeBytes: number): void {
+  const free = (db.pragma("freelist_count", { simple: true }) as number) * (db.pragma("page_size", { simple: true }) as number);
+  if (free >= minFreeBytes) {
+    try {
+      db.exec("VACUUM");
+    } catch (err) {
+      console.error("clens: VACUUM failed:", (err as Error).message);
+    }
+  }
+  const busyTimeout = db.pragma("busy_timeout", { simple: true }) as number;
+  db.pragma("busy_timeout = 5000");
+  db.pragma("wal_checkpoint(TRUNCATE)");
+  db.pragma(`busy_timeout = ${busyTimeout}`);
 }
 
 /**
@@ -527,7 +560,9 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
       parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
     }
 
-    if (filesParsed > 0 && !lock.lost) optimizeFtsIfDue(db, now, needsRebuild);
+    if (filesParsed > 0 && !lock.lost) {
+      optimizeFtsIfDue(db, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
+    }
     db.close();
     return {
       files_total: discovered.length,

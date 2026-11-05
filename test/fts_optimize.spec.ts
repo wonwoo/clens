@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -126,4 +126,51 @@ describe("indexer — FTS upkeep", () => {
     db.close();
     expect(hits.n).toBe(111);
   });
+
+  const freePages = () => query<{ n: number }>("SELECT freelist_count AS n FROM pragma_freelist_count").n;
+  const walBytes = () => {
+    const wal = join(clens, "index.db-wal");
+    return existsSync(wal) ? statSync(wal).size : 0;
+  };
+
+  it("VACUUMs after the optimize when the free pages reach the threshold, and empties the WAL", async () => {
+    const file = join(proj, `${SESSION}.jsonl`);
+    write(file, 400, false);
+    await runIndex({ now: T0 });
+    // A rebuild deletes and re-inserts every row: it leaves free pages.
+    await runIndex({ now: T0 + 1000, rebuild: true, vacuumMinFreeBytes: Number.MAX_SAFE_INTEGER });
+    const loose = freePages();
+    const looseSize = statSync(join(clens, "index.db")).size;
+    expect(loose).toBeGreaterThan(0);
+
+    await runIndex({ now: T0 + 2000, rebuild: true, vacuumMinFreeBytes: 1 });
+    expect(freePages()).toBe(0);
+    expect(statSync(join(clens, "index.db")).size).toBeLessThan(looseSize);
+    expect(walBytes()).toBe(0);
+    expect(query<{ n: number }>("SELECT count(*) AS n FROM user_text_fts_trigram WHERE user_text_fts_trigram MATCH 'watcher'").n).toBe(200);
+  });
+
+  it("leaves the file as it is while the free pages are under the threshold", async () => {
+    const file = join(proj, `${SESSION}.jsonl`);
+    write(file, 400, false);
+    await runIndex({ now: T0 });
+    await runIndex({ now: T0 + 1000, rebuild: true });
+    expect(freePages()).toBeGreaterThan(0);
+  });
+
+  it("finishes while another connection holds a read open, waiting at most 5 s for the checkpoint", async () => {
+    const file = join(proj, `${SESSION}.jsonl`);
+    write(file, 400, false);
+    await runIndex({ now: T0 });
+    const reader = new Database(join(clens, "index.db"), { readonly: true });
+    const rows = reader.prepare("SELECT text FROM user_text").iterate();
+    rows.next();
+    const t = Date.now();
+    await runIndex({ now: T0 + 1000, rebuild: true, vacuumMinFreeBytes: 1 });
+    const elapsed = Date.now() - t;
+    rows.return?.();
+    reader.close();
+    expect(elapsed).toBeLessThan(10_000);
+    expect(query<{ n: number }>("SELECT count(*) AS n FROM session").n).toBe(1);
+  }, 20_000);
 });
