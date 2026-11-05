@@ -21,7 +21,9 @@ beforeAll(() => {
   mkdirSync(bin);
   mkdirSync(join(dir, "app"));
   log = join(dir, "log");
-  const logger = '#!/bin/sh\n{ printf "%s" "${0##*/}"; for a in "$@"; do printf "\\037%s" "$a"; done; printf "\\n"; } >> "$LOG"\n';
+  // One write per line: commands bash runs at once (diff <(a) <(b)) would
+  // otherwise mix their lines in the log.
+  const logger = '#!/bin/sh\ns=$(printf "\\037"); line=${0##*/}\nfor a in "$@"; do line="$line$s$a"; done\nprintf "%s\\n" "$line" >> "$LOG"\n';
   for (const name of LOGGED) writeFileSync(join(bin, name), logger);
   writeFileSync(join(dir, "gradlew"), logger);
   // timeout may be missing (macOS) or real; either way it runs the rest.
