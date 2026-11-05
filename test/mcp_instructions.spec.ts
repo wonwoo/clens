@@ -30,6 +30,14 @@ describe("text sent to the agent", () => {
     expect(HOLD_GUIDANCE).toContain("picking one option");
   });
 
+  // "도커 빼고" while cleaning a disk was recorded as dropped: the rule asked
+  // only whether something would not be done, not whether it outlives the task.
+  it("keeps what only shapes the task at hand out of the ledger, and records work the user asks to note", () => {
+    expect(HOLD_GUIDANCE).toContain("What only shapes the task at hand ends with it and is not recorded");
+    expect(HOLD_GUIDANCE).toContain("record it as held");
+    expect(HOLD_DESCRIPTION).toContain("Not for what only shapes the task at hand");
+  });
+
   it("sends the agent to a branch's checks when asked whether work was tested or deployed", () => {
     expect(SERVER_INSTRUCTIONS).toContain("(clens_left_off branch)");
   });

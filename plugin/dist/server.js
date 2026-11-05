@@ -31984,10 +31984,11 @@ function formatLineOrigins(file2, origins) {
 }
 
 // src/mcp/instructions.ts
-var HOLD_GUIDANCE = `LEDGER: clens also keeps a ledger of what the user sets aside, so held work is not forgotten and dropped ideas are not proposed again. Record it without being asked: when the user decides that something proposed or discussed will not be done now, call clens_hold once per item, then go on with the request.
-- held: kept for later, to think about, to wait for something, to do after other work ("\uB098\uC911\uC5D0", "\uC77C\uB2E8 \uB300\uAE30", "\uB2E4\uC2DC \uC0DD\uAC01\uD574\uBCFC\uAC8C", "\uBC31\uB85C\uADF8\uC5D0 \uB0A8\uACA8", "let's park it")
-- dropped: will not be done ("\uD328\uC2A4", "\uC548 \uD574\uB3C4 \uB3FC", "\uD544\uC694 \uC5C6\uC74C", "isn't worth it")
-Judge by meaning in any language, not by these words. Not for: waiting on a step of the current task ("\uC7AC\uC2DC\uC791\uD560\uAC8C \uB300\uAE30"), holding back a routine step (commit, push, deploy), questions, or picking one option (the others are not set aside unless the user says so).
+var HOLD_GUIDANCE = `LEDGER: clens also keeps a ledger of what the user sets aside, so held work is not forgotten in later sessions and dropped ideas are not proposed again. It is for work and ideas that stand on their own, apart from this conversation. Record without being asked when the user sets one aside: call clens_hold once per item, then go on with the request.
+- held: put off, to come back to later ("\uB098\uC911\uC5D0", "\uC77C\uB2E8 \uB300\uAE30", "\uB2E4\uC2DC \uC0DD\uAC01\uD574\uBCFC\uAC8C", "\uBC31\uB85C\uADF8\uC5D0 \uB0A8\uACA8", "let's park it")
+- dropped: weighed and rejected, so it should not be proposed again ("\uD328\uC2A4", "\uC548 \uD574\uB3C4 \uB3FC", "\uD544\uC694 \uC5C6\uC74C", "isn't worth it")
+Judge by meaning in any language, not by these words. What only shapes the task at hand ends with it and is not recorded: what to leave out of it ("\uB3C4\uCEE4 \uBE7C\uACE0", "skip the tests this time"), picking one option (the others are not set aside unless the user says so), waiting on or holding back one of its steps ("\uC7AC\uC2DC\uC791\uD560\uAC8C \uB300\uAE30", commit, push, deploy), and questions.
+When the user asks you to note work for later ("\uAE30\uC5B5\uD574 \uB46C", "\uC801\uC5B4 \uB46C", "remember this"), record it as held. A preference or fact to remember is not work; leave it out of the ledger.
 When you finish an item clens_pending listed as held, record it done with its id.`;
 var SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply. It keeps sessions whose transcripts were deleted.
 
@@ -32032,7 +32033,7 @@ Scope: pass project_id for one project, session_id for one session, or neither f
 Pass sections to get only what the question needs and keep the answer short. Long lists end with a "(+N more)" line. For one plugin's or one family's skills, slash commands and agents, pass name ("ecc:"), so none falls past the cut.
 
 For Claude Code and Codex sessions it also reports hook blocks (which hook stopped which tool, with the latest reasons) and tool output size per tool (characters of text each tool's results added to the conversation; images are not counted). Sessions whose transcripts were deleted before clens began recording these have neither, so totals over older history count less than happened.`;
-var HOLD_DESCRIPTION = `Record in clens's ledger an item the user set aside in this conversation, or change one recorded earlier. Call it when the user decides that something proposed or discussed will not be done now, once per item, then go on with the request.
+var HOLD_DESCRIPTION = `Record in clens's ledger an item the user set aside in this conversation, or change one recorded earlier. Call it, once per item, when the user puts off or rejects work or an idea that stands on its own apart from this conversation, or asks you to note work for later; then go on with the request. Not for what only shapes the task at hand, such as what to leave out of it.
 
 New item: pass project_id, item (what was set aside, in one line that makes sense without this conversation), status held (kept for later) or dropped (will not be done), words (the user's own words that set it aside, quoted) and, for a held item, waits_for when the user said what it waits for.
 
