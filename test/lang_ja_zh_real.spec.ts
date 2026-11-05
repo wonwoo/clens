@@ -54,6 +54,13 @@ describe("indexer/lang/ja.ts — real lindera-wasm (ipadic) analyzer", () => {
     expect(tokens).not.toContain("に");
   });
 
+  it("indexes a conjugated verb by its base form, the form a search for it would use", async () => {
+    const adapter = createJapaneseAdapter(await buildJapaneseTokenizer());
+    expect(adapter.tokenize("制限しました")).toEqual(["制限", "する"]);
+    expect(adapter.tokenize("制限する")).toEqual(["制限", "する"]);
+    expect(adapter.tokenize("書いた")).toEqual(["書く"]);
+  });
+
   it("keeps long compound proper nouns as a single token", async () => {
     const adapter = createJapaneseAdapter(await buildJapaneseTokenizer());
     const tokens = adapter.tokenize("関西国際空港限定トートバッグ");

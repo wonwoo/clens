@@ -98,6 +98,28 @@ describe("indexer/lang/ja.ts — createJapaneseAdapter content-word extraction",
     expect(adapter.tokenize("形態素解析のテストです")).toEqual(["形態素", "解析", "テスト"]);
   });
 
+  it("keeps each word's base form, so a conjugated verb matches its dictionary form", () => {
+    const adapter = createJapaneseAdapter({
+      tokenize: () => [
+        { surface: "制限", partOfSpeech: "名詞", baseForm: "制限" },
+        { surface: "し", partOfSpeech: "動詞", baseForm: "する" },
+        { surface: "まし", partOfSpeech: "助動詞", baseForm: "ます" },
+        { surface: "た", partOfSpeech: "助動詞", baseForm: "た" },
+      ],
+    });
+    expect(adapter.tokenize("制限しました")).toEqual(["制限", "する"]);
+  });
+
+  it("keeps the surface form of a word with no base form (missing or ipadic's \"*\")", () => {
+    const adapter = createJapaneseAdapter({
+      tokenize: () => [
+        { surface: "テスト", partOfSpeech: "名詞" },
+        { surface: "ケース", partOfSpeech: "名詞", baseForm: "*" },
+      ],
+    });
+    expect(adapter.tokenize("テストケース")).toEqual(["テスト", "ケース"]);
+  });
+
   // Since detectJapanese() now also fires for ambiguous Han-only text (see
   // the "ambiguous Han-only text" describe block below), genuine Chinese
   // text can reach this tokenizer too. Real ipadic tags Chinese-only

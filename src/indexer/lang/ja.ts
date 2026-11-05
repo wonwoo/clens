@@ -58,7 +58,15 @@ function isContentTag(pos: string): boolean {
 const MAX_TOKENIZE_LENGTH = 20_000;
 
 export interface LinderaTokenizerLike {
-  tokenize(text: string): { surface: string; partOfSpeech: string }[];
+  tokenize(text: string): { surface: string; partOfSpeech: string; baseForm?: string }[];
+}
+
+// ipadic gives a conjugated word's dictionary form (し → する, 書い → 書く);
+// indexing that form lets a search for the verb find it however it was
+// conjugated, since the search terms go through this same adapter. A word
+// with no dictionary entry has none (undefined, or "*" in ipadic's data).
+function indexForm(t: { surface: string; baseForm?: string }): string {
+  return t.baseForm && t.baseForm !== "*" ? t.baseForm : t.surface;
 }
 
 /** Builds a LanguageAdapter around an already-constructed Lindera Tokenizer
@@ -75,7 +83,7 @@ export function createJapaneseAdapter(tokenizer: LinderaTokenizerLike): Language
         return tokenizer
           .tokenize(text)
           .filter((t) => isContentTag(t.partOfSpeech))
-          .map((t) => t.surface)
+          .map(indexForm)
           .filter(Boolean);
       } catch {
         // Belt-and-suspenders: the length cap above is the known trigger

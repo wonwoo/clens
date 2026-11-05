@@ -26427,7 +26427,7 @@ function languageFtsTable(code) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 17;
+var SCHEMA_VERSION = 18;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -29503,6 +29503,9 @@ function isContentTag2(pos) {
   return pos !== "\u52A9\u8A5E" && pos !== "\u52A9\u52D5\u8A5E" && pos !== "UNK";
 }
 var MAX_TOKENIZE_LENGTH2 = 2e4;
+function indexForm(t) {
+  return t.baseForm && t.baseForm !== "*" ? t.baseForm : t.surface;
+}
 function createJapaneseAdapter(tokenizer) {
   return {
     code: "ja",
@@ -29510,7 +29513,7 @@ function createJapaneseAdapter(tokenizer) {
     tokenize(text) {
       if (!detectJapanese(text) || text.length > MAX_TOKENIZE_LENGTH2) return [];
       try {
-        return tokenizer.tokenize(text).filter((t) => isContentTag2(t.partOfSpeech)).map((t) => t.surface).filter(Boolean);
+        return tokenizer.tokenize(text).filter((t) => isContentTag2(t.partOfSpeech)).map(indexForm).filter(Boolean);
       } catch {
         return [];
       }

@@ -86,7 +86,11 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // checks on a branch, src/mcp/checks.ts), added in place like result_chars
 // in v5; the version-mismatch rebuild re-reads every transcript still on
 // disk to fill it, and a session whose transcript is gone keeps NULL.
-export const SCHEMA_VERSION = 17;
+// v18: the Japanese layer indexes each word's dictionary form (lang/ja.ts),
+// so a search for a verb finds it conjugated; the version-mismatch rebuild
+// re-reads every transcript still on disk, and a session whose transcript is
+// gone keeps the forms it was indexed with.
+export const SCHEMA_VERSION = 18;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population
