@@ -67,12 +67,7 @@ The first session indexes your history in the background. A long history takes a
 
 ### Korean, Japanese and Chinese search
 
-For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. In Claude Code, ask the agent to run `clens install ko`. In Codex, install the CLI from npm and run it yourself:
-
-```sh
-npm i -g @clens/cli
-clens install ko
-```
+For word-level search in Korean, Japanese or Chinese, install that language's analyzer once: `ko`, `ja` or `zh`. Run `/clens:install ko` in Claude Code or `$clens:install ko` in Codex, or ask the agent to install the Korean analyzer. It downloads the analyzer and rebuilds the index, which takes a few minutes with a long history; in Codex, approve the command when the sandbox blocks it.
 
 Then close every open Claude Code and Codex session and start again: a session that was already running keeps indexing without the new analyzer. Without it, those messages are still found by their characters. English needs nothing.
 
@@ -96,6 +91,8 @@ If you set clens up by hand before (`claude mcp add`, `codex mcp add`, a compact
 `/clens:reflect` turns what you had to correct or explain in this session into proposed edits to CLAUDE.md or AGENTS.md and to skills. Each proposal comes with the earlier sessions where the same thing happened, and only what you pick is written. A rule that a hook or a script would enforce better than a line of text is listed apart, with each time it went wrong: when, and which command failed. Give it a period (`/clens:reflect 2w`, `/clens:reflect 10주`, up to 10 weeks) to review this project's sessions over that time instead. Each run's results and your decisions are kept in `~/.clens/reflect/`, and the next run takes them into account: what you declined is not proposed again unless the problem came back. A run on one session takes about 10 to 20 minutes; a period takes longer.
 
 `/clens:pending` lists what you set aside in this project: what you held, dropped and finished, each with your words and the date. Say an item is done or was recorded by mistake, and it is updated. The ledger fills from conversations held after you install this version, and is kept in `~/.clens/ledger.jsonl`.
+
+`/clens:install ko` installs the Korean analyzer (`ja` Japanese, `zh` Chinese); see [Korean, Japanese and Chinese search](#korean-japanese-and-chinese-search).
 
 `clens:stats` is not one you call. The agent reads it to answer usage questions such as "which skills do I use most" or "what is filling my context".
 
@@ -158,7 +155,7 @@ clens mcp                   run the MCP server
 
 `CLENS_HOME`, `CLENS_CODEX_HOME` and `CLENS_INDEX_DIR` move `~/.claude`, `~/.codex` and `~/.clens`. Tests point all three at temporary folders, so they never touch your real ones. [AGENTS.md](AGENTS.md) holds the rules and invariants to keep when you change the code.
 
-Both tools install `plugin/` as it is in the repository, since neither builds a plugin, so `npm run build` bundles `src/` into it and a change is committed with what it builds to. A release raises `version` in `package.json` (`npm version <x.y.z> --no-git-tag-version`), `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`, rebuilds, pushes, then pushes the tag `v<x.y.z>`: the Release workflow checks that every version matches the tag and publishes `@clens/cli` to npm from that commit. `claude plugin validate plugin` checks the Claude Code side.
+Both tools install `plugin/` as it is in the repository, since neither builds a plugin, so `npm run build` bundles `src/` into it and a change is committed with what it builds to. A release raises `version` in `package.json` (`npm version <x.y.z> --no-git-tag-version`), `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`, rebuilds and pushes. `claude plugin validate plugin` checks the Claude Code side.
 
 ## License
 

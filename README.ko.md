@@ -67,12 +67,7 @@ codex plugin add clens@clens
 
 ### 한국어·일본어·중국어 검색
 
-한국어, 일본어, 중국어를 단어 단위로 찾으려면 언어별 분석기를 한 번 받아야 합니다(`ko`, `ja`, `zh`). Claude Code에서는 에이전트에게 `clens install ko`를 실행해 달라고 하면 되고, Codex에서는 npm으로 CLI를 설치한 뒤 직접 실행하세요.
-
-```sh
-npm i -g @clens/cli
-clens install ko
-```
+한국어, 일본어, 중국어를 단어 단위로 찾으려면 언어별 분석기를 한 번 받아야 합니다(`ko`, `ja`, `zh`). Claude Code에서는 `/clens:install ko`, Codex에서는 `$clens:install ko`를 실행하거나 에이전트에게 한국어 분석기를 설치해 달라고 하세요. 분석기를 받은 뒤 색인을 다시 만들기 때문에 기록이 많으면 몇 분 걸립니다. Codex에서 샌드박스가 명령을 막으면 실행을 승인해 주세요.
 
 받은 다음에는 열려 있는 Claude Code와 Codex 세션을 모두 닫았다가 다시 여세요. 이미 열려 있던 세션은 분석기 없이 계속 색인합니다. 분석기를 받지 않아도 글자로는 찾을 수 있고, 영어는 따로 받을 게 없습니다.
 
@@ -96,6 +91,8 @@ codex plugin marketplace upgrade clens && codex plugin add clens@clens
 `/clens:reflect`는 이번 세션에서 내가 바로잡거나 설명해야 했던 것을 CLAUDE.md, AGENTS.md나 스킬 수정안으로 바꿉니다. 수정안마다 예전 세션에서도 같은 일이 있었는지 찾아서 근거로 붙이고, 내가 고른 것만 반영합니다. 글로 적는 것보다 훅이나 스크립트로 막는 게 나은 건 따로 모아서, 언제 어떤 명령에서 문제가 났는지와 함께 보여 줍니다. `/clens:reflect 2w`나 `/clens:reflect 10주`처럼 기간을 주면(최대 10주) 그동안 이 프로젝트에서 나눈 대화를 모두 봅니다. 결과와 내 결정은 `~/.clens/reflect/`에 남아서 다음에 돌릴 때 참고합니다. 거절한 건 같은 문제가 다시 생기기 전에는 또 올라오지 않습니다. 세션 하나에 10~20분쯤 걸리고, 기간을 주면 더 걸립니다.
 
 `/clens:pending`은 이 프로젝트에서 미뤄 둔 것을 보여 줍니다. 보류한 것, 안 하기로 한 것, 끝낸 것을 내가 한 말과 날짜와 함께 보여 줍니다. 어떤 항목을 끝냈다거나 잘못 적혔다고 말하면 그대로 고칩니다. 이 버전을 설치한 뒤에 나눈 대화부터 쌓이고, `~/.clens/ledger.jsonl`에 남습니다.
+
+`/clens:install ko`는 한국어 분석기를 받습니다(`ja`는 일본어, `zh`는 중국어). [한국어·일본어·중국어 검색](#한국어일본어중국어-검색)을 참고하세요.
 
 `clens:stats`는 직접 부르는 스킬이 아닙니다. "요즘 무슨 스킬 많이 써?", "컨텍스트 뭐가 많이 먹어?" 같은 질문에 에이전트가 답할 때 참고합니다.
 
@@ -158,7 +155,7 @@ clens mcp                   MCP 서버를 띄웁니다
 
 `CLENS_HOME`, `CLENS_CODEX_HOME`, `CLENS_INDEX_DIR`로 `~/.claude`, `~/.codex`, `~/.clens` 위치를 바꿀 수 있습니다. 테스트는 이 셋을 임시 폴더로 돌려 놓고 돌기 때문에 실제 폴더는 건드리지 않습니다. 코드를 고칠 때 지켜야 할 규칙과 불변 조건은 [AGENTS.md](AGENTS.md)에 있습니다.
 
-Claude Code도 Codex도 플러그인을 직접 빌드하지 않고 저장소의 `plugin/`을 그대로 설치합니다. 그래서 `npm run build`가 `src/`를 `plugin/`에 번들로 묶고, 코드를 고치면 빌드 결과도 같이 커밋합니다. 릴리스할 때는 `package.json`(`npm version <x.y.z> --no-git-tag-version`), `plugin/.claude-plugin/plugin.json`, `plugin/.codex-plugin/plugin.json`의 `version`을 올리고 다시 빌드해서 푸시한 뒤, 태그 `v<x.y.z>`를 푸시하세요. Release 워크플로가 모든 버전이 태그와 같은지 확인하고 그 커밋으로 `@clens/cli`를 npm에 배포합니다. Claude Code 쪽은 `claude plugin validate plugin`으로 검사할 수 있습니다.
+Claude Code도 Codex도 플러그인을 직접 빌드하지 않고 저장소의 `plugin/`을 그대로 설치합니다. 그래서 `npm run build`가 `src/`를 `plugin/`에 번들로 묶고, 코드를 고치면 빌드 결과도 같이 커밋합니다. 릴리스할 때는 `package.json`(`npm version <x.y.z> --no-git-tag-version`), `plugin/.claude-plugin/plugin.json`, `plugin/.codex-plugin/plugin.json`의 `version`을 올리고 다시 빌드해서 푸시하세요. Claude Code 쪽은 `claude plugin validate plugin`으로 검사할 수 있습니다.
 
 ## 라이선스
 
