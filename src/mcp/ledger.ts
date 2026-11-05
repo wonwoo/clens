@@ -15,6 +15,8 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync,
 import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 
+import { localTs } from "../util/time.js";
+
 export const HOLD_STATUSES = ["held", "dropped", "done", "removed"] as const;
 export type HoldStatus = (typeof HOLD_STATUSES)[number];
 
@@ -234,10 +236,10 @@ export function formatPending(
   const itemLines = (i: LedgerItem): string[] => {
     let detail = `  words: "${i.words}"`;
     if (i.waits_for !== null) detail += `; waits for: ${i.waits_for}`;
-    if (i.updated !== i.created) detail += `; changed: ${i.updated}`;
+    if (i.updated !== i.created) detail += `; changed: ${localTs(i.updated)}`;
     detail += `; session: ${i.session_id ?? "unknown"}`;
     if (project_id === undefined) detail += `; project: ${i.project_id}`;
-    return [`- ${i.id}  ${i.created}  ${i.item}`, detail];
+    return [`- ${i.id}  ${localTs(i.created)}  ${i.item}`, detail];
   };
 
   const cap = params.maxBytes ?? DEFAULT_PENDING_MAX_BYTES;

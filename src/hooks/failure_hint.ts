@@ -14,6 +14,7 @@ import { workKindClause } from "../analyzer/scope.js";
 import { errorExcerpt } from "../indexer/claude_parser.js";
 import { cutChars, escapeRegExp } from "../mcp/search.js";
 import { execCodeCommands } from "../util/codex_exec.js";
+import { localTs } from "../util/time.js";
 
 export type FailureKind = "missing" | "network" | "permission";
 
@@ -229,7 +230,7 @@ export function failureHint(db: Database.Database, input: FailureInput, now: num
   for (const call of picked) {
     const where = call.project_id !== null && !projects.has(call.project_id) ? ` in ${basename(call.project_cwd ?? call.project_id)}` : "";
     const command = commandOf(call.input_json, named);
-    lines.push(`- ${call.ts.slice(0, 10)}${where}: \`${command}\` (session ${call.session_id}, around_ts ${call.ts})`);
+    lines.push(`- ${localTs(call.ts).slice(0, 10)}${where}: \`${command}\` (session ${call.session_id}, around_ts ${localTs(call.ts)})`);
     const until = new Date(Date.parse(call.ts) + REPLY_WITHIN_MS).toISOString();
     const replies = repliesAfter.all(call.session_id, call.ts, until) as { text: string }[];
     const reply = namedReply(replies, failureWord(key, command));

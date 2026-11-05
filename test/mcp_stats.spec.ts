@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { applySchema } from "../src/indexer/schema.js";
 import { formatStats, projectStats } from "../src/mcp/stats.js";
 import { analyzeToolOutput } from "../src/analyzer/tool_output.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 function openMem(): Database.Database {
   const db = new Database(":memory:");
@@ -468,6 +469,23 @@ describe("mcp/stats.ts — hook blocks and tool output", () => {
     expect(lines).toContain("Tool output (characters of tool results, text only): 5 calls, 76 chars");
     expect(lines).toContain("  Bash: 3 calls, total 61, avg 20, max 31");
     expect(lines).toContain("  Read: 2 calls, total 15, avg 8, max 8");
+  });
+
+  it("prints the session span, the context-bloat turn and hook blocks in the server's zone", () => {
+    // Four assistant turns with tokens, so the context-bloat detail has a max.
+    db.exec(`
+      UPDATE event SET in_tok = 100 WHERE uuid = 'eh1';
+      UPDATE event SET in_tok = 200 WHERE uuid = 'eh2';
+      INSERT INTO event (uuid, session_id, ts, role, in_tok) VALUES
+        ('eh3', 'h1', '2026-06-01T10:30:00Z', 'assistant', 300),
+        ('eh4', 'h2', '2026-06-02T11:00:00Z', 'assistant', 1000);
+    `);
+    const out = withTz("Asia/Seoul", () => formatStats(projectStats(db, { project_id: "proj-h" })));
+    const lines = out.split("\n");
+    expect(lines).toContain("Sessions: 2 (2026-06-01T19:00:00+09:00 to 2026-06-02T20:00:00+09:00)");
+    expect(lines).toContain("    max_ctx: 1000 (session:h2 at 2026-06-02T20:00:00+09:00), median_ctx: 300, sample_size: 4");
+    expect(lines).toContain("    2026-06-02T19:00:06+09:00 session:h2 Stop");
+    expect(out).not.toMatch(UTC_TIME);
   });
 
   it("prints the empty forms when there is nothing to report", () => {

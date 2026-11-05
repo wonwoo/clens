@@ -13,6 +13,7 @@
 import type Database from "better-sqlite3";
 
 import { notCopiedClause, TOP } from "../analyzer/scope.js";
+import { localTs } from "../util/time.js";
 import { type LeftOffParams, REAL_MESSAGE, REPLY_CHARS, REQUEST_CHARS } from "./left_off.js";
 import { cutChars } from "./search.js";
 
@@ -192,15 +193,15 @@ export function formatLineOrigins(file: string, origins: LineOrigin[]): string {
     ? `${name}: 1 session wrote this text`
     : `${name}: ${origins.length} sessions wrote this text, the first first`;
   const turn = (t: LineTurn, indent: string) => [
-    ...(t.request ? [`${indent}request ${t.request.ts}: ${t.request.text}`] : []),
-    ...(t.reply_before ? [`${indent}reply before it ${t.reply_before.ts}: ${t.reply_before.text}`] : []),
+    ...(t.request ? [`${indent}request ${localTs(t.request.ts)}: ${t.request.text}`] : []),
+    ...(t.reply_before ? [`${indent}reply before it ${localTs(t.reply_before.ts)}: ${t.reply_before.text}`] : []),
   ];
   return [
     head,
     ...origins.flatMap((o) => [
-      `${o.edited_at}  session:${o.session_id}  project:${o.project_id ?? "?"}  ${o.source}  ${o.tool}`,
+      `${localTs(o.edited_at)}  session:${o.session_id}  project:${o.project_id ?? "?"}  ${o.source}  ${o.tool}`,
       ...turn(o, "  "),
-      ...(o.last ? [`  written again ${o.last.edited_at}  ${o.last.tool}`, ...turn(o.last, "    ")] : []),
+      ...(o.last ? [`  written again ${localTs(o.last.edited_at)}  ${o.last.tool}`, ...turn(o.last, "    ")] : []),
     ]),
   ].join("\n");
 }

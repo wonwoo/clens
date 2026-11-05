@@ -6,6 +6,7 @@ import {
   commandOf, commitSessions, formatCommitSessions, formatLeftOff, formatSessionRecord, formatSessionRecordWithin, leftOff,
   leftOffWithMore, sessionRecord,
 } from "../src/mcp/left_off.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 let db: Database.Database;
 
@@ -179,6 +180,17 @@ describe("clens_left_off", () => {
     const [mid] = leftOff(db, { project_id: "-w-app" }, { currentSessionId: "new" });
     expect(mid!.files[0]).toBe("/tmp/scratch/probe.js");
     expect(formatLeftOff([mid!]).split("\n").at(-1)).toBe("Edited: src/cache.ts, src/login.ts, /tmp/scratch/probe.js");
+  });
+
+  it("prints the list's times and the more footer in the server's zone", () => {
+    db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('par', '-w-app', 'interactive', '/w/app', 'claude')");
+    msg("p1", "par", "2026-09-02T09:00:00Z", "user", "update the docs");
+    msg("p2", "par", "2026-09-02T10:01:00Z", "assistant", "Docs updated.");
+    const two = leftOffWithMore(db, { project_id: "-w-app", limit: 2 });
+    const out = withTz("Asia/Seoul", () => formatLeftOff(two.sessions, two.more));
+    expect(out).toContain("[2] 2026-09-02T19:05:00+09:00  session:mid  project:-w-app  codex  started:2026-09-02T19:00:00+09:00");
+    expect(out).toContain("active since 2026-09-02T19:00:00+09:00 is not listed");
+    expect(out).not.toMatch(UTC_TIME);
   });
 });
 
@@ -724,6 +736,36 @@ describe("clens_left_off session record", () => {
     expect(old).toContain("Failed tool calls: (none)");
     expect(old).toContain("Hook blocks: (none)");
   });
+
+  it("prints a record's times in the server's zone, whole and within a length", () => {
+    seedMid();
+    // A second segment, after a compaction.
+    db.exec("INSERT INTO system_reminder (event_uuid, session_id, ts, category) VALUES ('mc', 'mid', '2026-09-02T10:06:00Z', 'compaction')");
+    msg("m7", "mid", "2026-09-02T10:10:00Z", "user", "and the regression test");
+    msg("m8", "mid", "2026-09-02T10:15:00Z", "assistant", "Regression test added.");
+    const r = sessionRecord(db, "mid")!;
+    expect(r.segments_total).toBe(2);
+    expect(r.checks_total).toBe(1);
+    withTz("Asia/Seoul", () => {
+      const lines = formatSessionRecord(r).split("\n");
+      expect(lines).toEqual(expect.arrayContaining([
+        "session:mid  project:-w-app  codex  started:2026-09-02T19:00:00+09:00  ended:2026-09-02T19:15:00+09:00",
+        "  2026-09-02T19:00:00+09:00  fix the login bug",
+        "Last reply: 2026-09-02T19:15:00+09:00  Regression test added.",
+        "  src/cache.ts  1 edits, last 2026-09-02T19:04:00+09:00",
+        '  2026-09-02T19:04:50+09:00  git add -A && git commit -m "fix login"',
+        "  test local: 1 run, 1 failed, last 2026-09-02T19:04:52+09:00: npm test (session mid)",
+        "  2026-09-02T19:04:52+09:00  Bash: npm test",
+        "  2026-09-02T19:04:53+09:00  Stop: req-harness: you cannot finish yet.",
+        "  2026-09-02T19:00:00+09:00 – 2026-09-02T19:05:00+09:00  1 requests",
+        "  2026-09-02T19:10:00+09:00 – 2026-09-02T19:15:00+09:00  1 requests",
+      ]));
+      expect(lines.join("\n")).not.toMatch(UTC_TIME);
+      const within = formatSessionRecordWithin(r, 100_000);
+      expect(within).toContain("started:2026-09-02T19:00:00+09:00");
+      expect(within).not.toMatch(UTC_TIME);
+    });
+  });
 });
 
 describe("clens_left_off commits", () => {
@@ -785,5 +827,15 @@ describe("clens_left_off commits", () => {
       '"never made"',
       "  (no session ran git commit with this subject)",
     ]);
+  });
+});
+
+describe("clens_left_off commits — local time", () => {
+  it("prints each commit's time in the server's zone", () => {
+    db.prepare("INSERT INTO tool_call (event_uuid, session_id, ts, name, input_json) VALUES (?, ?, ?, ?, ?)")
+      .run("f1", "mid", "2026-09-02T10:04:50Z", "Bash", JSON.stringify({ command: 'git commit -m "fix login"' }));
+    const out = withTz("Asia/Seoul", () => formatCommitSessions(commitSessions(db, ["fix login"], {})));
+    expect(out).toContain("  2026-09-02T19:04:50+09:00  session:mid  project:-w-app  codex");
+    expect(out).not.toMatch(UTC_TIME);
   });
 });

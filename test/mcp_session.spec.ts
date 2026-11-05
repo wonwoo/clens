@@ -2,7 +2,8 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { applySchema } from "../src/indexer/schema.js";
-import { sessionContext } from "../src/mcp/session.js";
+import { formatSessionMessages, sessionContext } from "../src/mcp/session.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 let db: Database.Database;
 
@@ -41,5 +42,14 @@ describe("clens_session — long messages", () => {
 
   it("returns every message whole with full: true", () => {
     expect(texts(true)).toEqual(["short question", LOG, AT_LIMIT, EMOJI]);
+  });
+});
+
+describe("clens_session — output", () => {
+  it("numbers each message with its role and its time in the server's zone", () => {
+    const messages = sessionContext(db, { session_id: "s", around_ts: "2026-10-01T00:00:01Z", limit: 2 });
+    const out = withTz("Asia/Seoul", () => formatSessionMessages(messages));
+    expect(out.startsWith("[1] USER 2026-10-01T09:00:01+09:00\nshort question\n\n[2] USER 2026-10-01T09:00:02+09:00\n")).toBe(true);
+    expect(out).not.toMatch(UTC_TIME);
   });
 });

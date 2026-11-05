@@ -10,6 +10,8 @@
  * in the ledger and lists it, runs the compaction hook for one session and
  * Codex's hold guidance hook, runs the tool-failure hook on a `gh` that
  * another session found missing, and asks which session wrote a line.
+ * Runs in UTC, then starts a second server in Asia/Seoul to check that tools
+ * and the compaction hook print local time and read times given back.
  * Needs `npm run build` first and the npm registry. Touches nothing outside
  * a temporary folder.
  *
@@ -60,18 +62,31 @@ writeFileSync(
     line("w5", "w4", "2026-06-22T02:00:16Z", "user", [{ type: "tool_result", tool_use_id: "toolu_why", content: "The file has been updated." }], "why"),
   ].map((l) => JSON.stringify(l)).join("\n") + "\n",
 );
+// A session just before midnight UTC, which is the next day in Asia/Seoul,
+// for the local-time checks.
+writeFileSync(
+  join(project, "late.jsonl"),
+  [
+    line("l1", null, "2026-06-21T16:00:00.250Z", "user", "write the late night deploy note", "late"),
+    line("l2", "l1", "2026-06-21T16:00:05.500Z", "assistant", [{ type: "text", text: "the deploy note is written" }], "late"),
+  ].map((l) => JSON.stringify(l)).join("\n") + "\n",
+);
 cpSync(join(REPO, "plugin"), plugin, {
   recursive: true,
   filter: (src) => !["node_modules", ".clens-install.lock"].includes(basename(src)),
 });
 
-const env = { ...getDefaultEnvironment(), ...dirs };
+// TZ pins the zone the server prints times in, so the checks below hold on
+// any machine; the local-time checks set their own.
+const env = { ...getDefaultEnvironment(), ...dirs, TZ: "UTC" };
 let failed = false;
 const check = (name, ok, detail) => {
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : `\n${detail}`}`);
   if (!ok) failed = true;
 };
 const client = new Client({ name: "plugin-smoke", version: "0.0.0" });
+const localClient = new Client({ name: "plugin-smoke-local", version: "0.0.0" });
+const textOf = (result) => result.content?.[0]?.text ?? "";
 try {
   execFileSync("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: plugin, env, stdio: "ignore" });
   execFileSync("node", ["start.mjs", "index"], { cwd: plugin, env, stdio: "ignore" });
@@ -136,10 +151,44 @@ try {
   check("tool failure hook (once per session)", codexAgain === "", codexAgain.slice(0, 500));
   const garbage = execFileSync("node", [join(plugin, "hooks", "tool_failure.mjs")], { env, input: "not json", encoding: "utf8" });
   check("tool failure hook (bad input)", garbage === "", garbage.slice(0, 500));
+
+  const localEnv = { ...env, TZ: "Asia/Seoul" };
+  await localClient.connect(new StdioClientTransport({ command: "node", args: [join(plugin, "start.mjs"), "mcp"], cwd: plugin, env: localEnv }));
+  const localHit = textOf(await localClient.callTool({
+    name: "clens_search", arguments: { query: "deploy note", session_id: "late", role: "user", limit: 1 },
+  }));
+  check("local search", localHit.includes("2026-06-22T01:00:00.250+09:00  session:late"), localHit);
+  const around = textOf(await localClient.callTool({
+    name: "clens_session", arguments: { session_id: "late", around_ts: "2026-06-22T01:00:00.250+09:00", limit: 1 },
+  }));
+  check("local session", around.includes("USER 2026-06-22T01:00:00.250+09:00") && around.includes("write the late night deploy note"), around);
+  const sinceArgs = { query: "deploy note", project_id: "-fixture-cwd", since: "2026-06-22" };
+  const localSince = await localClient.callTool({ name: "clens_search", arguments: sinceArgs });
+  const utcSince = textOf(await client.callTool({ name: "clens_search", arguments: sinceArgs }));
+  check(
+    "local since",
+    !localSince.isError && textOf(localSince).includes("session:late") && utcSince === "No results found.",
+    `${textOf(localSince)}\n--- UTC:\n${utcSince}`,
+  );
+  const badTime = await localClient.callTool({ name: "clens_search", arguments: { query: "deploy note", since: "yesterday" } });
+  check(
+    "bad time",
+    badTime.isError === true && textOf(badTime).startsWith("Invalid params") && textOf(badTime).includes("not a date or time"),
+    JSON.stringify(badTime),
+  );
+  const localPending = textOf(await localClient.callTool({ name: "clens_pending", arguments: { project_id: "-fixture-cwd" } }));
+  check("local pending", /\+09:00/.test(localPending) && !/\d{2}:\d{2}:\d{2}(\.\d+)?Z/.test(localPending), localPending);
+  const localHook = execFileSync("node", [join(plugin, "hooks", "compact.mjs")], {
+    env: localEnv,
+    input: JSON.stringify({ session_id: "late", source: "compact" }),
+    encoding: "utf8",
+  });
+  check("local compact hook", localHook.includes("2026-06-22T01:00:00.250+09:00"), localHook.slice(0, 500));
 } catch (e) {
   check("run", false, e instanceof Error ? e.message : String(e));
 } finally {
   await client.close().catch(() => {});
+  await localClient.close().catch(() => {});
   rmSync(root, { recursive: true, force: true });
 }
 process.exit(failed ? 1 : 0);

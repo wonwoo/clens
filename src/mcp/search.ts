@@ -20,6 +20,7 @@ import { languageFtsTable, registeredLanguageAdapters } from "../indexer/lang/re
 import type { LanguageAdapter } from "../indexer/lang/types.js";
 import { neighborsOf, type SessionMessage } from "./session.js";
 import { notCopiedClause, workKindClause } from "../analyzer/scope.js";
+import { localTs } from "../util/time.js";
 
 export interface SearchParams {
   query: string;
@@ -134,7 +135,7 @@ export function formatSearchResults(
     const before = r.context?.before.map((m, i, all) => contextLine(m, `-${all.length - i}`)) ?? [];
     const after = r.context?.after.map((m, i) => contextLine(m, `+${i + 1}`)) ?? [];
     const entry = [
-      `[${parts.length + 1}] ${r.ts}  session:${r.session_id}${where}  score:${r.score}`,
+      `[${parts.length + 1}] ${localTs(r.ts)}  session:${r.session_id}${where}  score:${r.score}`,
       ...before,
       `${label(r.role)}: ${r.snippet}`,
       ...after,

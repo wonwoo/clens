@@ -11,6 +11,19 @@ var WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
 // src/util/temp_dirs.ts
 var TEMP_ROOTS = ["/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/var/folders/", "/private/var/folders/"];
 
+// src/util/time.ts
+var pad = (n) => String(n).padStart(2, "0");
+var STORED_TS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
+function localTs(ts) {
+  const m = STORED_TS.exec(ts);
+  const t = Date.parse(ts);
+  if (!m || Number.isNaN(t)) return ts;
+  const d = new Date(t);
+  const off = -d.getTimezoneOffset();
+  const zone = off === 0 ? "Z" : `${off > 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${m[2] ?? ""}${zone}`;
+}
+
 // src/mcp/search.ts
 var SNIPPET_LEAD = 60;
 var SNIPPET_TRAIL = 180;
@@ -734,7 +747,7 @@ var TARGET_CHARS = 160;
 var NOUNS = { test: ["run", "runs"], api: ["call", "calls"], browser: ["page", "pages"] };
 function formatCheckGroup(g) {
   const noun = NOUNS[g.kind][g.count === 1 ? 0 : 1];
-  return `${g.kind} ${g.where}${g.host === null ? "" : ` ${g.host}`}: ${g.count} ${noun}, ${g.failed} failed, last ${g.last_ts}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
+  return `${g.kind} ${g.where}${g.host === null ? "" : ` ${g.host}`}: ${g.count} ${noun}, ${g.failed} failed, last ${localTs(g.last_ts)}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
 }
 
 // src/mcp/left_off.ts
@@ -1018,7 +1031,7 @@ function byFolder(paths) {
 }
 function formatSessionRecord(r) {
   const lines = [
-    `session:${r.session_id}  project:${r.project_id ?? "?"}  ${r.source}  started:${r.started_at ?? "?"}  ended:${r.ended_at ?? "?"}`
+    `session:${r.session_id}  project:${r.project_id ?? "?"}  ${r.source}  started:${localTs(r.started_at ?? "?")}  ended:${localTs(r.ended_at ?? "?")}`
   ];
   function section(name, header, total, rows, line) {
     if (total === 0) {
@@ -1032,9 +1045,9 @@ function formatSessionRecord(r) {
     `Requests (last ${r.requests.length} of ${r.requests_total}):`,
     r.requests_total,
     r.requests,
-    (q) => `${q.ts}  ${cutChars(q.text, REQUEST_CHARS)}`
+    (q) => `${localTs(q.ts)}  ${cutChars(q.text, REQUEST_CHARS)}`
   );
-  lines.push(r.last_reply === null ? "Last reply: (none)" : `Last reply: ${r.last_reply.ts}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
+  lines.push(r.last_reply === null ? "Last reply: (none)" : `Last reply: ${localTs(r.last_reply.ts)}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
   const change = r.segments_total === 1 ? r.segments[0]?.last_change : null;
   if (change) lines.push(`Last change (request ${change.request} of ${r.segments[0].requests}): ${cutChars(change.reply, SEGMENT_REPLY_CHARS)}`);
   section(
@@ -1042,7 +1055,7 @@ function formatSessionRecord(r) {
     `Edited (${r.edits_total} files):`,
     r.edits_total,
     r.edits,
-    (e) => `${shortPath(e.path, r.cwd)}  ${e.count} edits, last ${e.last_ts}`
+    (e) => `${shortPath(e.path, r.cwd)}  ${e.count} edits, last ${localTs(e.last_ts)}`
   );
   if (r.more_edits.length > 0) {
     lines.push("  Also edited, by folder:", ...byFolder(r.more_edits.map((p) => shortPath(p, r.cwd))).map((l) => `    ${l}`));
@@ -1056,7 +1069,7 @@ function formatSessionRecord(r) {
     `Git (last ${r.git.length} of ${r.git_total}):`,
     r.git_total,
     r.git,
-    (g) => `${g.ts}  ${shownGitLine(g.command)}`
+    (g) => `${localTs(g.ts)}  ${shownGitLine(g.command)}`
   );
   section("Checks", `Checks (last ${r.checks.length} of ${r.checks_total}):`, r.checks_total, r.checks, formatCheckGroup);
   section(
@@ -1064,7 +1077,7 @@ function formatSessionRecord(r) {
     `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`,
     r.failures_total,
     r.failures,
-    (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `
+    (f) => `${localTs(f.ts)}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `
     ${f.error}`}`
   );
   section(
@@ -1072,14 +1085,14 @@ function formatSessionRecord(r) {
     `Hook blocks (last ${r.hook_blocks.length} of ${r.hook_blocks_total}):`,
     r.hook_blocks_total,
     r.hook_blocks,
-    (b) => `${b.ts}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`
+    (b) => `${localTs(b.ts)}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`
   );
   if (r.segments_total > 1) {
     const shown = r.segments.length === r.segments_total ? `${r.segments_total}` : `last ${r.segments.length} of ${r.segments_total}`;
     lines.push(`Segments (${shown}, split at compactions and pauses over 2 hours):`);
     for (const g of r.segments) {
       lines.push(
-        `  ${g.started_at} \u2013 ${g.ended_at}  ${g.requests} requests`,
+        `  ${localTs(g.started_at)} \u2013 ${localTs(g.ended_at)}  ${g.requests} requests`,
         `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`,
         ...g.topics.length === 0 ? [] : [`    Topics: ${cutChars(g.topics.join(", "), SEGMENT_REPLY_CHARS)}`],
         ...g.last_change === null ? [] : [

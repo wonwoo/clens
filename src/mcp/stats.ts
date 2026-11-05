@@ -22,6 +22,7 @@ import { analyzeTimeline } from "../analyzer/timeline.js";
 import { analyzeFiles } from "../analyzer/files.js";
 import { analyzeHookBlocks, type HookBlocksFacts } from "../analyzer/hook_blocks.js";
 import { analyzeToolOutput, type ToolOutputFacts } from "../analyzer/tool_output.js";
+import { localTs } from "../util/time.js";
 
 export const STATS_SECTIONS = ["tools", "skills", "agents", "health", "timeline", "files", "hook_blocks", "tool_output"] as const;
 export type StatsSection = "tools" | "skills" | "agents" | "health" | "timeline" | "files" | "hook_blocks" | "tool_output";
@@ -213,8 +214,9 @@ export function formatStats(facts: StatsFacts): string {
     lines.push("Leaves out one-shot exec/SDK runs and clens judge (pipeline) sessions.");
   }
   lines.push(
+    // A missing ended_at prints "null", as the template printed it before.
     `Sessions: ${facts.sessions}` +
-      (facts.started_at ? ` (${facts.started_at} to ${facts.ended_at})` : ""),
+      (facts.started_at ? ` (${localTs(facts.started_at)} to ${localTs(facts.ended_at ?? "null")})` : ""),
   );
   if (facts.primary_model) lines.push(`Primary model: ${facts.primary_model}`);
   if (facts.name_filter !== null) lines.push(`Name filter: "${facts.name_filter}" (skills, slash commands and agents only)`);
@@ -263,7 +265,7 @@ export function formatStats(facts: StatsFacts): string {
     if (facts.health.context_bloat_detail) {
       const d = facts.health.context_bloat_detail;
       lines.push(
-        `    max_ctx: ${d.max_ctx} (session:${d.max_session_id} at ${d.max_ts}), median_ctx: ${d.median_ctx}, sample_size: ${d.sample_size}`,
+        `    max_ctx: ${d.max_ctx} (session:${d.max_session_id} at ${localTs(d.max_ts)}), median_ctx: ${d.median_ctx}, sample_size: ${d.sample_size}`,
       );
     }
   }
@@ -294,7 +296,7 @@ export function formatStats(facts: StatsFacts): string {
     if (facts.hook_blocks.recent.length > 0) {
       lines.push("  Recent:");
       for (const r of facts.hook_blocks.recent) {
-        lines.push(`    ${r.ts} session:${r.session_id} ${hookLabel(r)}` + (r.reason_line === null ? "" : `: ${r.reason_line}`));
+        lines.push(`    ${localTs(r.ts)} session:${r.session_id} ${hookLabel(r)}` + (r.reason_line === null ? "" : `: ${r.reason_line}`));
       }
     }
   }

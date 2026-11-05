@@ -10,6 +10,7 @@
 import type Database from "better-sqlite3";
 
 import { notCopiedClause, workKindClause } from "../analyzer/scope.js";
+import { localTs } from "../util/time.js";
 import { notNoise } from "./search.js";
 
 export interface RecentParams {
@@ -168,7 +169,7 @@ export function formatResults(
   const parts: string[] = [];
   let used = 0;
   for (const r of results) {
-    const header = `[${parts.length + 1}] ${r.ts}  session:${r.session_id}`;
+    const header = `[${parts.length + 1}] ${localTs(r.ts)}  session:${r.session_id}`;
     let body = `\nUser: ${r.text}`;
     if (r.assistant_response) body += `\nAssistant: ${r.assistant_response}`;
     let entry = header + body;

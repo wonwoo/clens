@@ -12,6 +12,7 @@ import {
   type LedgerEvent,
   type LedgerItem,
 } from "../src/mcp/ledger.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 let dir: string;
 let path: string;
@@ -271,6 +272,13 @@ describe("formatPending", () => {
         '  words: "다 했어"; changed: 2026-11-04T00:00:00.000Z; session: s1',
       ].join("\n"),
     );
+  });
+
+  it("prints each item's dates in the server's zone", () => {
+    const out = withTz("Asia/Seoul", () => formatPending({ items, unreadable: 0 }, { project_id: "-p" }));
+    expect(out).toContain("- 00000003  2026-11-02T09:00:00.000+09:00  New held");
+    expect(out).toContain("; changed: 2026-11-03T09:00:00.000+09:00;");
+    expect(out).not.toMatch(UTC_TIME);
   });
 
   it("T10 lists every project with the project on each item, and orders ties by id", () => {

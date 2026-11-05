@@ -11,6 +11,7 @@ import type Database from "better-sqlite3";
 
 import { TOP } from "../analyzer/scope.js";
 import { TEMP_ROOTS } from "../util/temp_dirs.js";
+import { localTs } from "../util/time.js";
 import { checksOfCall, formatCheckGroup, groupChecks, type CheckGroup } from "./checks.js";
 import { cutChars, escapeRegExp, notNoise } from "./search.js";
 import { codeLines, commandOf, shellCommands } from "./shell_text.js";
@@ -194,12 +195,12 @@ function shortPath(path: string, cwd: string | null): string {
 export function formatLeftOff(sessions: LeftOffSession[], more?: LeftOffMore): string {
   if (sessions.length === 0) return "No sessions found.";
   const footer = more && more.count > 0
-    ? `\n\n(+${more.count} more session${more.count === 1 ? "" : "s"} active since ${more.since} ${more.count === 1 ? "is" : "are"} not listed; raise limit (max 10) or narrow since/until to see ${more.count === 1 ? "it" : "them"})`
+    ? `\n\n(+${more.count} more session${more.count === 1 ? "" : "s"} active since ${localTs(more.since)} ${more.count === 1 ? "is" : "are"} not listed; raise limit (max 10) or narrow since/until to see ${more.count === 1 ? "it" : "them"})`
     : "";
   return sessions
     .map((s, i) => {
       const lines = [
-        `[${i + 1}] ${s.ended_at}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}  started:${s.started_at}`,
+        `[${i + 1}] ${localTs(s.ended_at)}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}  started:${localTs(s.started_at)}`,
       ];
       if (s.last_request) lines.push(`Last request: ${cutChars(s.last_request, REQUEST_CHARS)}`);
       if (s.last_reply) lines.push(`Last reply: ${cutChars(s.last_reply, REPLY_CHARS)}`);
@@ -664,7 +665,7 @@ function byFolder(paths: string[]): string[] {
  *  read as complete. */
 export function formatSessionRecord(r: SessionRecord): string {
   const lines = [
-    `session:${r.session_id}  project:${r.project_id ?? "?"}  ${r.source}  started:${r.started_at ?? "?"}  ended:${r.ended_at ?? "?"}`,
+    `session:${r.session_id}  project:${r.project_id ?? "?"}  ${r.source}  started:${localTs(r.started_at ?? "?")}  ended:${localTs(r.ended_at ?? "?")}`,
   ];
   function section<T>(name: string, header: string, total: number, rows: T[], line: (row: T) => string): void {
     if (total === 0) {
@@ -674,16 +675,16 @@ export function formatSessionRecord(r: SessionRecord): string {
     lines.push(header, ...rows.map((row) => `  ${line(row)}`));
   }
   section("Requests", `Requests (last ${r.requests.length} of ${r.requests_total}):`, r.requests_total, r.requests,
-    (q) => `${q.ts}  ${cutChars(q.text, REQUEST_CHARS)}`);
+    (q) => `${localTs(q.ts)}  ${cutChars(q.text, REQUEST_CHARS)}`);
   lines.push(r.last_reply === null
     ? "Last reply: (none)"
-    : `Last reply: ${r.last_reply.ts}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
+    : `Last reply: ${localTs(r.last_reply.ts)}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
   // A session of one segment shows no Segments section, so its last change,
   // which side questions after the work push out of the last reply, goes here.
   const change = r.segments_total === 1 ? r.segments[0]?.last_change : null;
   if (change) lines.push(`Last change (request ${change.request} of ${r.segments[0]!.requests}): ${cutChars(change.reply, SEGMENT_REPLY_CHARS)}`);
   section("Edited", `Edited (${r.edits_total} files):`, r.edits_total, r.edits,
-    (e) => `${shortPath(e.path, r.cwd)}  ${e.count} edits, last ${e.last_ts}`);
+    (e) => `${shortPath(e.path, r.cwd)}  ${e.count} edits, last ${localTs(e.last_ts)}`);
   if (r.more_edits.length > 0) {
     lines.push("  Also edited, by folder:", ...byFolder(r.more_edits.map((p) => shortPath(p, r.cwd))).map((l) => `    ${l}`));
   }
@@ -692,12 +693,12 @@ export function formatSessionRecord(r: SessionRecord): string {
     lines.push(`  Temporary: ${count} files (${r.temp_edits.map((t) => `${t.root} ${t.count}`).join(", ")})`);
   }
   section("Git", `Git (last ${r.git.length} of ${r.git_total}):`, r.git_total, r.git,
-    (g) => `${g.ts}  ${shownGitLine(g.command)}`);
+    (g) => `${localTs(g.ts)}  ${shownGitLine(g.command)}`);
   section("Checks", `Checks (last ${r.checks.length} of ${r.checks_total}):`, r.checks_total, r.checks, formatCheckGroup);
   section("Failed tool calls", `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`, r.failures_total, r.failures,
-    (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `\n    ${f.error}`}`);
+    (f) => `${localTs(f.ts)}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `\n    ${f.error}`}`);
   section("Hook blocks", `Hook blocks (last ${r.hook_blocks.length} of ${r.hook_blocks_total}):`, r.hook_blocks_total, r.hook_blocks,
-    (b) => `${b.ts}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`);
+    (b) => `${localTs(b.ts)}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`);
   // Last, because hooks/compact.mjs leaves out segments and then cuts the
   // record from its end to fit, and the sections above are what a compaction
   // summary tends to drop. One segment is the whole session, which those
@@ -707,7 +708,7 @@ export function formatSessionRecord(r: SessionRecord): string {
     lines.push(`Segments (${shown}, split at compactions and pauses over 2 hours):`);
     for (const g of r.segments) {
       lines.push(
-        `  ${g.started_at} – ${g.ended_at}  ${g.requests} requests`,
+        `  ${localTs(g.started_at)} – ${localTs(g.ended_at)}  ${g.requests} requests`,
         `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`,
         ...(g.topics.length === 0 ? [] : [`    Topics: ${cutChars(g.topics.join(", "), SEGMENT_REPLY_CHARS)}`]),
         ...(g.last_change === null ? [] : [
@@ -800,6 +801,6 @@ export function formatCommitSessions(commits: CommitSessions[]): string {
     JSON.stringify(subject),
     ...(sessions.length === 0
       ? ["  (no session ran git commit with this subject)"]
-      : sessions.map((s) => `  ${s.ts}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}`)),
+      : sessions.map((s) => `  ${localTs(s.ts)}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}`)),
   ]).join("\n");
 }

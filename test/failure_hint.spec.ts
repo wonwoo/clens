@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { alreadyTold, failureHint, failureKey, hintKey, rememberTold } from "../src/hooks/failure_hint.js";
 import { applySchema } from "../src/indexer/schema.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 let db: Database.Database;
 let n = 0;
@@ -107,6 +108,13 @@ describe("failureHint", () => {
     expect(hint).toContain("gh pr list");
     expect(hint).toContain("gh is not installed here, so I pushed with git");
     expect(hint).toContain("2026-10-20T01:00:00Z");
+  });
+
+  it("prints the earlier failure's date and time in the server's zone", () => {
+    failed("web1", "2026-10-19T16:00:00Z", "gh pr list", GH);
+    const hint = withTz("Asia/Seoul", () => failureHint(db, ghNow, NOW))!;
+    expect(hint).toContain("- 2026-10-20 in web: `gh pr list` (session web1, around_ts 2026-10-20T01:00:00+09:00)");
+    expect(hint).not.toMatch(UTC_TIME);
   });
 
   it("keeps a refused operation to the same project", () => {

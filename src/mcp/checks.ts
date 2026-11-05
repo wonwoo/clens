@@ -9,6 +9,7 @@
 import type Database from "better-sqlite3";
 
 import { notCopiedClause, TOP, workKindClause } from "../analyzer/scope.js";
+import { localTs } from "../util/time.js";
 import { cutChars, escapeRegExp } from "./search.js";
 import { executedCommands, shellCommands } from "./shell_text.js";
 
@@ -167,7 +168,7 @@ const NOUNS: Record<CheckGroup["kind"], [string, string]> = { test: ["run", "run
 export function formatCheckGroup(g: CheckGroup): string {
   const noun = NOUNS[g.kind][g.count === 1 ? 0 : 1];
   return `${g.kind} ${g.where}${g.host === null ? "" : ` ${g.host}`}: ${g.count} ${noun}, ${g.failed} failed, `
-    + `last ${g.last_ts}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
+    + `last ${localTs(g.last_ts)}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
 }
 
 export interface BranchChecksParams { project_id: string; branch: string; since?: string; until?: string }
@@ -307,13 +308,13 @@ export function formatBranchChecks(r: BranchChecks): string {
   }
   section("Sessions on it", `Sessions on it (last ${r.sessions.length} of ${r.sessions_total}), first and last call on it:`,
     r.sessions_total, r.sessions,
-    (s) => `${s.session_id}  ${s.source}  ${s.first_ts} – ${s.last_ts}`
+    (s) => `${s.session_id}  ${s.source}  ${localTs(s.first_ts)} – ${localTs(s.last_ts)}`
       + (s.subagents > 0 ? `  (+${s.subagents} subagent${s.subagents === 1 ? "" : "s"})` : "")
       + (s.start_branch_only ? "  (branch from the session's start)" : ""));
   section("Checks", `Checks (last ${r.groups.length} of ${r.groups_total}, by kind and host):`, r.groups_total, r.groups, formatCheckGroup);
   section("Git push and merge on it or naming it", `Git push and merge on it or naming it (last ${r.git.length} of ${r.git_total}):`,
     r.git_total, r.git,
-    (g) => `${g.ts}  ${cutChars(g.line, TARGET_CHARS)}  (session ${g.session_id})${g.failed ? "  failed" : ""}`);
+    (g) => `${localTs(g.ts)}  ${cutChars(g.line, TARGET_CHARS)}  (session ${g.session_id})${g.failed ? "  failed" : ""}`);
   lines.push(CHECKS_NOTE);
   return lines.join("\n");
 }
@@ -359,7 +360,7 @@ export function formatRecentBranches(project_id: string, r: { branches: BranchSu
     `Branches in ${project_id}, latest first:`,
     ...r.branches.map((b, i) => {
       const checks = b.checks.length === 0 ? "none" : b.checks.map((c) => `${c.label} ${c.count}`).join(", ");
-      return `[${i + 1}] ${b.branch}  last ${b.last_ts}  ${b.sessions} session${b.sessions === 1 ? "" : "s"}  checks: ${checks}`;
+      return `[${i + 1}] ${b.branch}  last ${localTs(b.last_ts)}  ${b.sessions} session${b.sessions === 1 ? "" : "s"}  checks: ${checks}`;
     }),
     ...(r.more > 0 ? [`(+${r.more} more branch${r.more === 1 ? "" : "es"}; raise limit, max ${BRANCH_LIMIT_MAX})`] : []),
     "Pass branch with one of them for its checks.",

@@ -56,14 +56,14 @@ force one tool to answer both.
      `session_id: "current"` (Claude Code and Codex). Session stats count only that
      session's own calls, not the subagents it started.
 2. **Default scope is the last 1 month** — if the user doesn't name a time
-   window, set `since` to 1 month before now (UTC), not `undefined`. Do not
+   window, set `since` to the date one month before today, not `undefined`. Do not
    default to "today"/"recent" (too narrow) or all-time (too broad for a
    long-running project) on your own — 1 month is the standing default
    unless the user says otherwise.
 3. If the user does name a window (today, this week, since a date, last N
    days, or explicitly "all-time"/"전체"/"처음부터"), compute `since`
-   accordingly as an ISO 8601 UTC timestamp (start of that day/period,
-   same convention as `clens_recent`/`clens_search`) — or omit `since`
+   accordingly as a date, YYYY-MM-DD, the start of that day in local time
+   (the same forms as `clens_recent`/`clens_search`) — or omit `since`
    entirely when they explicitly ask for all-time.
 4. Load the tool schema via ToolSearch (`select:mcp__clens__clens_stats`) if
    it isn't already loaded, then call it with the scope from step 1 and

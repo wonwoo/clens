@@ -43,6 +43,19 @@ function errorExcerpt(text) {
   return head + TRUNCATE_MARKER + tail;
 }
 
+// src/util/time.ts
+var pad = (n) => String(n).padStart(2, "0");
+var STORED_TS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
+function localTs(ts) {
+  const m = STORED_TS.exec(ts);
+  const t = Date.parse(ts);
+  if (!m || Number.isNaN(t)) return ts;
+  const d = new Date(t);
+  const off = -d.getTimezoneOffset();
+  const zone = off === 0 ? "Z" : `${off > 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${m[2] ?? ""}${zone}`;
+}
+
 // src/mcp/search.ts
 var SNIPPET_LEAD = 60;
 var SNIPPET_TRAIL = 180;
@@ -388,7 +401,7 @@ function failureHint(db, input2, now) {
   for (const call of picked) {
     const where = call.project_id !== null && !projects.has(call.project_id) ? ` in ${basename(call.project_cwd ?? call.project_id)}` : "";
     const command = commandOf(call.input_json, named);
-    lines.push(`- ${call.ts.slice(0, 10)}${where}: \`${command}\` (session ${call.session_id}, around_ts ${call.ts})`);
+    lines.push(`- ${localTs(call.ts).slice(0, 10)}${where}: \`${command}\` (session ${call.session_id}, around_ts ${localTs(call.ts)})`);
     const until = new Date(Date.parse(call.ts) + REPLY_WITHIN_MS).toISOString();
     const replies = repliesAfter.all(call.session_id, call.ts, until);
     const reply = namedReply(replies, failureWord(key2, command));

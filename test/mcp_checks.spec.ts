@@ -5,6 +5,7 @@ import { applySchema } from "../src/indexer/schema.js";
 import {
   branchChecks, branchParamsError, checksOfCall, formatBranchChecks, formatRecentBranches, recentBranches, whereOfUrl,
 } from "../src/mcp/checks.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 const bash = (command: string) => checksOfCall("Bash", JSON.stringify({ command }));
 const kinds = (command: string) => bash(command).map((c) => c.kind);
@@ -277,6 +278,14 @@ describe("branchChecks", () => {
       "No session in -w-app made a call on branch nope, and no git push or merge names it. Pass branches: true for the project's branches.",
     );
   });
+
+  it("prints sessions, checks and git lines in the server's zone", () => {
+    const out = withTz("Asia/Seoul", () => formatBranchChecks(branchChecks(db, { project_id: "-w-app", branch: "feature/x" })));
+    expect(out).toContain("  A  claude  2026-10-01T19:00:00+09:00 – 2026-10-01T19:10:00+09:00  (+1 subagent)");
+    expect(out).toContain("1 call, 0 failed, last 2026-10-01T19:05:00+09:00: http://localhost:8080/h (session A)");
+    expect(out).toContain("  2026-10-01T19:30:00+09:00  git merge feature/x  (session D)");
+    expect(out).not.toMatch(UTC_TIME);
+  });
 });
 
 describe("branchChecks — git lines naming the branch", () => {
@@ -361,6 +370,12 @@ describe("recentBranches", () => {
       "Pass branch with one of them for its checks.",
     ].join("\n"));
     expect(formatRecentBranches("-w-none", recentBranches(db, { project_id: "-w-none" }))).toBe("No branch recorded in -w-none.");
+  });
+
+  it("prints each branch's last time in the server's zone", () => {
+    const out = withTz("Asia/Seoul", () => formatRecentBranches("-w-app", recentBranches(db, { project_id: "-w-app" })));
+    expect(out).toContain("[1] feature/x  last 2026-10-01T19:40:00+09:00  3 sessions");
+    expect(out).not.toMatch(UTC_TIME);
   });
 });
 

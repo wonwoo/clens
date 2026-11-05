@@ -4,6 +4,7 @@ import { applySchema } from "../src/indexer/schema.js";
 import { searchUserText, searchWithTotal, formatSearchResults, notNoise, DEFAULT_SEARCH_MAX_BYTES, searchText, searchManyText } from "../src/mcp/search.js";
 import { neighborsOf } from "../src/mcp/session.js";
 import { registerLanguage, resetLanguageRegistry } from "../src/indexer/lang/registry.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 function openMem(): Database.Database {
   const db = new Database(":memory:");
@@ -1255,5 +1256,16 @@ describe("mcp/search.ts — several queries in one call", () => {
   it("searchText on one query returns what searchWithTotal plus formatSearchResults gave", () => {
     const { results, totalMatched } = searchWithTotal(db, { query: "인증" });
     expect(searchText(db, { query: "인증" }, {}, OUT)).toBe(formatSearchResults(results, OUT.maxBytes, totalMatched, false));
+  });
+});
+
+describe("mcp/search.ts — local time", () => {
+  it("prints each hit's time in the server's zone", () => {
+    const db = openMem();
+    seed(db);
+    const out = withTz("Asia/Seoul", () => formatSearchResults(searchUserText(db, { query: "인증" })));
+    expect(out).toContain("2026-06-01T19:00:00+09:00  session:s1");
+    expect(out).not.toMatch(UTC_TIME);
+    db.close();
   });
 });

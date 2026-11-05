@@ -8,6 +8,7 @@ import {
   MAX_ROW_BYTES,
   type RecentResult,
 } from "../src/mcp/recent.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 function openMem(): Database.Database {
   const db = new Database(":memory:");
@@ -275,5 +276,16 @@ describe("mcp/recent.ts — single oversized row is truncated, not dropped", () 
     expect(out).toBe(Buffer.from(out, "utf8").toString("utf8"));
     expect(out).not.toContain("�");
     expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(MAX_ROW_BYTES);
+  });
+});
+
+describe("mcp/recent.ts — local time", () => {
+  it("prints each message's time in the server's zone", () => {
+    const db = openMem();
+    seed(db);
+    const out = withTz("Asia/Seoul", () => formatResults(recentUserText(db, { project_id: "proj-a" })));
+    expect(out).toContain("2026-06-01T19:00:00+09:00  session:s1");
+    expect(out).not.toMatch(UTC_TIME);
+    db.close();
   });
 });

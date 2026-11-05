@@ -35,13 +35,14 @@ import {
 import { z } from "zod";
 
 import { indexDbPath, ledgerPath, watchLockPath } from "../util/paths.js";
+import { timeParam } from "./time_param.js";
 import { startWatch, type WatchHandle } from "../indexer/watch.js";
 import { acquireLock } from "../indexer/driver.js";
 import { ensureLanguageAdaptersLoaded } from "../indexer/lang/init.js";
 import { searchText, searchManyText, queryTerms, DEFAULT_SEARCH_MAX_BYTES } from "./search.js";
 import { searchAnalyzers, serveAnalyzers } from "./analyzers.js";
 import { recentUserText, formatResults, DEFAULT_RECENT_MAX_BYTES } from "./recent.js";
-import { sessionContext } from "./session.js";
+import { formatSessionMessages, sessionContext } from "./session.js";
 import {
   leftOffWithMore, formatLeftOff, sessionRecord, formatSessionRecord, commitSessions, formatCommitSessions,
 } from "./left_off.js";
@@ -59,15 +60,15 @@ import { codexSessionFromMeta, detectCurrentSessionId, resolveSessionId } from "
 // `project` turned a one-project clens_left_off into a list of every project.
 const SessionParamsSchema = z.strictObject({
   session_id: z.string(),
-  around_ts: z.string(),
+  around_ts: timeParam,
   limit: z.number().int().min(1).max(40).optional(),
   full: z.boolean().optional(),
 });
 
 const RecentParamsSchema = z.strictObject({
   project_id: z.string(),
-  since: z.string().optional(),
-  until: z.string().optional(),
+  since: timeParam.optional(),
+  until: timeParam.optional(),
   query: z.string().optional(),
   limit: z.number().int().min(1).max(100).optional(),
   maxBytes: z.number().int().min(256).max(1_000_000).optional(),
@@ -80,8 +81,8 @@ const SearchParamsSchema = z
     query: z.string().min(1).optional(),
     queries: z.array(z.string().min(1)).min(2).max(5).optional(),
     project_id: z.string().optional(),
-    since: z.string().optional(),
-    until: z.string().optional(),
+    since: timeParam.optional(),
+    until: timeParam.optional(),
     role: z.enum(["user", "assistant"]).optional(),
     session_id: z.string().min(1).optional(),
     limit: z.number().int().min(1).max(100).optional(),
@@ -93,8 +94,8 @@ const SearchParamsSchema = z
 const LeftOffParamsSchema = z.strictObject({
   project_id: z.string().optional(),
   file: z.string().min(1).optional(),
-  since: z.string().optional(),
-  until: z.string().optional(),
+  since: timeParam.optional(),
+  until: timeParam.optional(),
   limit: z.number().int().min(1).max(10).optional(),
   session_id: z.string().min(1).optional(),
   commits: z.array(z.string().min(1)).min(1).max(50).optional(),
@@ -110,7 +111,7 @@ const StatsParamsSchema = z.strictObject({
   // min(1): an empty string would otherwise fall through to a wider scope.
   project_id: z.string().min(1).optional(),
   session_id: z.string().min(1).optional(),
-  since: z.string().optional(),
+  since: timeParam.optional(),
   sections: z.array(z.enum(STATS_SECTIONS)).min(1).optional(),
   name: z.string().min(1).optional(),
 });
@@ -170,11 +171,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: "ISO 8601 date lower bound (matches at or after this time)",
+            description: "Lower bound (at or after). A date alone, YYYY-MM-DD, is the start of that day in local time; a date-time without Z or an offset is local time. Times clens printed can be passed back as they are.",
           },
           until: {
             type: "string",
-            description: "ISO 8601 date upper bound (matches at or before this time). Combine with since to bound a window.",
+            description: "Upper bound (at or before). Same forms as since; a date alone is the start of that day, so pass the next day to include a whole day. Combine with since to bound a window.",
           },
           role: {
             type: "string",
@@ -227,11 +228,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: "ISO 8601 lower bound. For 'today' use start of today in UTC. For 'yesterday' use yesterday's date.",
+            description: "Lower bound, same forms as clens_search's since. For 'today' pass today's date; for 'yesterday' pass yesterday's date with until set to today's.",
           },
           until: {
             type: "string",
-            description: "ISO 8601 upper bound",
+            description: "Upper bound, same forms as since.",
           },
           query: {
             type: "string",
@@ -266,7 +267,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           around_ts: {
             type: "string",
-            description: "ISO 8601 timestamp to center the context window on (ts from clens_search result)",
+            description: "A time clens printed, such as a clens_search hit's ts, as printed: the message at that time and those around it.",
           },
           limit: {
             type: "number",
@@ -302,11 +303,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: "ISO 8601 lower bound, for \"what did I do yesterday / this week\". With since and until, only sessions active in that window, each shown as it stood at the window's end: its last request and reply and the edits inside it.",
+            description: "Lower bound (same forms as clens_search's since), for \"what did I do yesterday / this week\". With since and until, only sessions active in that window, each shown as it stood at the window's end: its last request and reply and the edits inside it.",
           },
           until: {
             type: "string",
-            description: "ISO 8601 upper bound (at or before this time). Combine with since to bound a window.",
+            description: "Upper bound (at or before this time), same forms as since. Combine with since to bound a window.",
           },
           limit: {
             type: "number",
@@ -357,7 +358,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: "ISO 8601 date lower bound. Omit for all-time stats. Ignored when session_id is set.",
+            description: "Lower bound, same forms as clens_search's since. Omit for all-time stats. Ignored when session_id is set.",
           },
           sections: {
             type: "array",
@@ -493,10 +494,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!resolved.ok) return { content: [{ type: "text", text: resolved.error }], isError: true };
       const messages = sessionContext(getDb(), { ...parsed.data, session_id: resolved.id });
       if (messages.length === 0) return { content: [{ type: "text", text: "No messages found." }] };
-      const formatted = messages
-        .map((m, i) => `[${i + 1}] ${m.role.toUpperCase()} ${m.ts}\n${m.text}`)
-        .join("\n\n");
-      return { content: [{ type: "text", text: formatted }] };
+      return { content: [{ type: "text", text: formatSessionMessages(messages) }] };
     } catch (e) {
       const err = e as { message?: string };
       return { content: [{ type: "text", text: `Session error: ${err.message ?? String(e)}` }], isError: true };

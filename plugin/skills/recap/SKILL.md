@@ -34,12 +34,12 @@ when_to_use: |
    ToolSearch `select:mcp__clens__clens_left_off` if needed): the point is
    where the latest work stands, and the latest 3 sessions hold it. Use
    `limit: 10` only when the user names a period or asks for more. Each
-   session comes with `started_at` and `ended_at` (UTC), the last request,
-   the last reply and the files it edited. A session can run for days:
-   `started_at` to `ended_at` is its span.
+   session comes with `started_at` and `ended_at` (local time, with its
+   offset), the last request, the last reply and the files it edited. A
+   session can run for days: `started_at` to `ended_at` is its span.
 2. If the user named a period ("yesterday", "this week", a date), pass it as
-   `since` and `until`, converted from the user's local time to UTC, with
-   `limit: 10`.
+   `since` and `until` (a date alone is the start of that day in local
+   time), with `limit: 10`.
    Each session then shows its part inside the period: its first and last
    message there, its last request and reply, and its edits. If 10 sessions
    come back, the period may hold more: say the recap covers the latest 10.

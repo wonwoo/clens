@@ -8,6 +8,8 @@
 
 import type Database from "better-sqlite3";
 
+import { localTs } from "../util/time.js";
+
 export interface SessionParams {
   session_id: string;
   around_ts: string;
@@ -57,6 +59,11 @@ export function sessionContext(db: Database.Database, params: SessionParams): Se
   // Reverse before (was DESC) and concatenate
   const messages = [...before.reverse(), ...after];
   return params.full ? messages : messages.map((m) => ({ ...m, text: cutMiddle(m.text) }));
+}
+
+/** clens_session's answer: each message numbered, with its role and time. */
+export function formatSessionMessages(messages: SessionMessage[]): string {
+  return messages.map((m, i) => `[${i + 1}] ${m.role.toUpperCase()} ${localTs(m.ts)}\n${m.text}`).join("\n\n");
 }
 
 /** `text` with its middle cut when it is over LONG_MESSAGE_CHARS characters

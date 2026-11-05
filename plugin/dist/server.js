@@ -26399,6 +26399,38 @@ function judgeCwdDir() {
   return join(clensHome(), "judge-cwd");
 }
 
+// src/util/time.ts
+var pad = (n) => String(n).padStart(2, "0");
+var STORED_TS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
+function localTs(ts) {
+  const m = STORED_TS.exec(ts);
+  const t = Date.parse(ts);
+  if (!m || Number.isNaN(t)) return ts;
+  const d = new Date(t);
+  const off = -d.getTimezoneOffset();
+  const zone = off === 0 ? "Z" : `${off > 0 ? "+" : "-"}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${m[2] ?? ""}${zone}`;
+}
+var DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+var DATE_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})?$/i;
+function utcBound(input) {
+  const s = input.trim();
+  const d = DATE_ONLY.exec(s);
+  if (d) {
+    const [y, mo, day] = [Number(d[1]), Number(d[2]), Number(d[3])];
+    const t2 = new Date(y, mo - 1, day);
+    if (t2.getFullYear() !== y || t2.getMonth() !== mo - 1 || t2.getDate() !== day) return null;
+    return t2.toISOString();
+  }
+  if (!DATE_TIME.test(s)) return null;
+  const t = Date.parse(s.replace(" ", "T"));
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+}
+var TIME_INPUT_HINT = "not a date or time: pass YYYY-MM-DD (the start of that day, local time) or YYYY-MM-DDTHH:MM[:SS[.sss]], optionally ending in Z or \xB1HH:MM (without one it is local time)";
+
+// src/mcp/time_param.ts
+var timeParam = external_exports.string().refine((s) => utcBound(s) !== null, { message: TIME_INPUT_HINT }).transform((s) => utcBound(s));
+
 // src/indexer/watch.ts
 import { existsSync as existsSync3, watch } from "node:fs";
 
@@ -30008,6 +30040,10 @@ function sessionContext(db2, params) {
   const messages = [...before.reverse(), ...after];
   return params.full ? messages : messages.map((m) => ({ ...m, text: cutMiddle(m.text) }));
 }
+function formatSessionMessages(messages) {
+  return messages.map((m, i) => `[${i + 1}] ${m.role.toUpperCase()} ${localTs(m.ts)}
+${m.text}`).join("\n\n");
+}
 function cutMiddle(text) {
   if (text.length <= LONG_MESSAGE_CHARS) return text;
   const chars = Array.from(text);
@@ -30133,7 +30169,7 @@ function formatSearchResults(results, maxBytes = DEFAULT_SEARCH_MAX_BYTES, total
     const before = r.context?.before.map((m, i, all) => contextLine(m, `-${all.length - i}`)) ?? [];
     const after = r.context?.after.map((m, i) => contextLine(m, `+${i + 1}`)) ?? [];
     const entry = [
-      `[${parts.length + 1}] ${r.ts}  session:${r.session_id}${where}  score:${r.score}`,
+      `[${parts.length + 1}] ${localTs(r.ts)}  session:${r.session_id}${where}  score:${r.score}`,
       ...before,
       `${label(r.role)}: ${r.snippet}`,
       ...after
@@ -30652,7 +30688,7 @@ function formatResults(results, maxBytes = DEFAULT_RECENT_MAX_BYTES) {
   const parts = [];
   let used = 0;
   for (const r of results) {
-    const header = `[${parts.length + 1}] ${r.ts}  session:${r.session_id}`;
+    const header = `[${parts.length + 1}] ${localTs(r.ts)}  session:${r.session_id}`;
     let body = `
 User: ${r.text}`;
     if (r.assistant_response) body += `
@@ -31183,7 +31219,7 @@ var TARGET_CHARS = 160;
 var NOUNS = { test: ["run", "runs"], api: ["call", "calls"], browser: ["page", "pages"] };
 function formatCheckGroup(g) {
   const noun = NOUNS[g.kind][g.count === 1 ? 0 : 1];
-  return `${g.kind} ${g.where}${g.host === null ? "" : ` ${g.host}`}: ${g.count} ${noun}, ${g.failed} failed, last ${g.last_ts}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
+  return `${g.kind} ${g.where}${g.host === null ? "" : ` ${g.host}`}: ${g.count} ${noun}, ${g.failed} failed, last ${localTs(g.last_ts)}: ${cutChars(g.last_target, TARGET_CHARS)} (session ${g.last_session})`;
 }
 var SESSIONS_SHOWN = 10;
 var GROUPS_SHOWN = 20;
@@ -31270,7 +31306,7 @@ function formatBranchChecks(r) {
     `Sessions on it (last ${r.sessions.length} of ${r.sessions_total}), first and last call on it:`,
     r.sessions_total,
     r.sessions,
-    (s) => `${s.session_id}  ${s.source}  ${s.first_ts} \u2013 ${s.last_ts}` + (s.subagents > 0 ? `  (+${s.subagents} subagent${s.subagents === 1 ? "" : "s"})` : "") + (s.start_branch_only ? "  (branch from the session's start)" : "")
+    (s) => `${s.session_id}  ${s.source}  ${localTs(s.first_ts)} \u2013 ${localTs(s.last_ts)}` + (s.subagents > 0 ? `  (+${s.subagents} subagent${s.subagents === 1 ? "" : "s"})` : "") + (s.start_branch_only ? "  (branch from the session's start)" : "")
   );
   section("Checks", `Checks (last ${r.groups.length} of ${r.groups_total}, by kind and host):`, r.groups_total, r.groups, formatCheckGroup);
   section(
@@ -31278,7 +31314,7 @@ function formatBranchChecks(r) {
     `Git push and merge on it or naming it (last ${r.git.length} of ${r.git_total}):`,
     r.git_total,
     r.git,
-    (g) => `${g.ts}  ${cutChars(g.line, TARGET_CHARS)}  (session ${g.session_id})${g.failed ? "  failed" : ""}`
+    (g) => `${localTs(g.ts)}  ${cutChars(g.line, TARGET_CHARS)}  (session ${g.session_id})${g.failed ? "  failed" : ""}`
   );
   lines.push(CHECKS_NOTE);
   return lines.join("\n");
@@ -31313,7 +31349,7 @@ function formatRecentBranches(project_id, r) {
     `Branches in ${project_id}, latest first:`,
     ...r.branches.map((b, i) => {
       const checks = b.checks.length === 0 ? "none" : b.checks.map((c) => `${c.label} ${c.count}`).join(", ");
-      return `[${i + 1}] ${b.branch}  last ${b.last_ts}  ${b.sessions} session${b.sessions === 1 ? "" : "s"}  checks: ${checks}`;
+      return `[${i + 1}] ${b.branch}  last ${localTs(b.last_ts)}  ${b.sessions} session${b.sessions === 1 ? "" : "s"}  checks: ${checks}`;
     }),
     ...r.more > 0 ? [`(+${r.more} more branch${r.more === 1 ? "" : "es"}; raise limit, max ${BRANCH_LIMIT_MAX})`] : [],
     "Pass branch with one of them for its checks."
@@ -31423,10 +31459,10 @@ function formatLeftOff(sessions, more) {
   if (sessions.length === 0) return "No sessions found.";
   const footer = more && more.count > 0 ? `
 
-(+${more.count} more session${more.count === 1 ? "" : "s"} active since ${more.since} ${more.count === 1 ? "is" : "are"} not listed; raise limit (max 10) or narrow since/until to see ${more.count === 1 ? "it" : "them"})` : "";
+(+${more.count} more session${more.count === 1 ? "" : "s"} active since ${localTs(more.since)} ${more.count === 1 ? "is" : "are"} not listed; raise limit (max 10) or narrow since/until to see ${more.count === 1 ? "it" : "them"})` : "";
   return sessions.map((s, i) => {
     const lines = [
-      `[${i + 1}] ${s.ended_at}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}  started:${s.started_at}`
+      `[${i + 1}] ${localTs(s.ended_at)}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}  started:${localTs(s.started_at)}`
     ];
     if (s.last_request) lines.push(`Last request: ${cutChars(s.last_request, REQUEST_CHARS)}`);
     if (s.last_reply) lines.push(`Last reply: ${cutChars(s.last_reply, REPLY_CHARS)}`);
@@ -31708,7 +31744,7 @@ function byFolder(paths) {
 }
 function formatSessionRecord(r) {
   const lines = [
-    `session:${r.session_id}  project:${r.project_id ?? "?"}  ${r.source}  started:${r.started_at ?? "?"}  ended:${r.ended_at ?? "?"}`
+    `session:${r.session_id}  project:${r.project_id ?? "?"}  ${r.source}  started:${localTs(r.started_at ?? "?")}  ended:${localTs(r.ended_at ?? "?")}`
   ];
   function section(name, header, total, rows, line) {
     if (total === 0) {
@@ -31722,9 +31758,9 @@ function formatSessionRecord(r) {
     `Requests (last ${r.requests.length} of ${r.requests_total}):`,
     r.requests_total,
     r.requests,
-    (q) => `${q.ts}  ${cutChars(q.text, REQUEST_CHARS)}`
+    (q) => `${localTs(q.ts)}  ${cutChars(q.text, REQUEST_CHARS)}`
   );
-  lines.push(r.last_reply === null ? "Last reply: (none)" : `Last reply: ${r.last_reply.ts}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
+  lines.push(r.last_reply === null ? "Last reply: (none)" : `Last reply: ${localTs(r.last_reply.ts)}  ${cutChars(r.last_reply.text, RECORD_REPLY_CHARS)}`);
   const change = r.segments_total === 1 ? r.segments[0]?.last_change : null;
   if (change) lines.push(`Last change (request ${change.request} of ${r.segments[0].requests}): ${cutChars(change.reply, SEGMENT_REPLY_CHARS)}`);
   section(
@@ -31732,7 +31768,7 @@ function formatSessionRecord(r) {
     `Edited (${r.edits_total} files):`,
     r.edits_total,
     r.edits,
-    (e) => `${shortPath(e.path, r.cwd)}  ${e.count} edits, last ${e.last_ts}`
+    (e) => `${shortPath(e.path, r.cwd)}  ${e.count} edits, last ${localTs(e.last_ts)}`
   );
   if (r.more_edits.length > 0) {
     lines.push("  Also edited, by folder:", ...byFolder(r.more_edits.map((p) => shortPath(p, r.cwd))).map((l) => `    ${l}`));
@@ -31746,7 +31782,7 @@ function formatSessionRecord(r) {
     `Git (last ${r.git.length} of ${r.git_total}):`,
     r.git_total,
     r.git,
-    (g) => `${g.ts}  ${shownGitLine(g.command)}`
+    (g) => `${localTs(g.ts)}  ${shownGitLine(g.command)}`
   );
   section("Checks", `Checks (last ${r.checks.length} of ${r.checks_total}):`, r.checks_total, r.checks, formatCheckGroup);
   section(
@@ -31754,7 +31790,7 @@ function formatSessionRecord(r) {
     `Failed tool calls (last ${r.failures.length} of ${r.failures_total}):`,
     r.failures_total,
     r.failures,
-    (f) => `${f.ts}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `
+    (f) => `${localTs(f.ts)}  ${f.tool}: ${cutChars(f.input, FAILED_INPUT_CHARS)}${f.error === null ? "" : `
     ${f.error}`}`
   );
   section(
@@ -31762,14 +31798,14 @@ function formatSessionRecord(r) {
     `Hook blocks (last ${r.hook_blocks.length} of ${r.hook_blocks_total}):`,
     r.hook_blocks_total,
     r.hook_blocks,
-    (b) => `${b.ts}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`
+    (b) => `${localTs(b.ts)}  ${b.hook_event}${b.tool === null ? "" : ` ${b.tool}`}: ${cutChars(b.reason, RECORD_LINE_CHARS)}`
   );
   if (r.segments_total > 1) {
     const shown = r.segments.length === r.segments_total ? `${r.segments_total}` : `last ${r.segments.length} of ${r.segments_total}`;
     lines.push(`Segments (${shown}, split at compactions and pauses over 2 hours):`);
     for (const g of r.segments) {
       lines.push(
-        `  ${g.started_at} \u2013 ${g.ended_at}  ${g.requests} requests`,
+        `  ${localTs(g.started_at)} \u2013 ${localTs(g.ended_at)}  ${g.requests} requests`,
         `    First request: ${g.first_request === null ? "(none)" : cutChars(g.first_request, RECORD_LINE_CHARS)}`,
         ...g.topics.length === 0 ? [] : [`    Topics: ${cutChars(g.topics.join(", "), SEGMENT_REPLY_CHARS)}`],
         ...g.last_change === null ? [] : [
@@ -31819,7 +31855,7 @@ function commitSessions(db2, subjects, params) {
 function formatCommitSessions(commits) {
   return commits.flatMap(({ subject, sessions }) => [
     JSON.stringify(subject),
-    ...sessions.length === 0 ? ["  (no session ran git commit with this subject)"] : sessions.map((s) => `  ${s.ts}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}`)
+    ...sessions.length === 0 ? ["  (no session ran git commit with this subject)"] : sessions.map((s) => `  ${localTs(s.ts)}  session:${s.session_id}  project:${s.project_id ?? "?"}  ${s.source}`)
   ]).join("\n");
 }
 
@@ -31934,15 +31970,15 @@ function formatLineOrigins(file2, origins) {
   }
   const head = origins.length === 1 ? `${name}: 1 session wrote this text` : `${name}: ${origins.length} sessions wrote this text, the first first`;
   const turn = (t, indent) => [
-    ...t.request ? [`${indent}request ${t.request.ts}: ${t.request.text}`] : [],
-    ...t.reply_before ? [`${indent}reply before it ${t.reply_before.ts}: ${t.reply_before.text}`] : []
+    ...t.request ? [`${indent}request ${localTs(t.request.ts)}: ${t.request.text}`] : [],
+    ...t.reply_before ? [`${indent}reply before it ${localTs(t.reply_before.ts)}: ${t.reply_before.text}`] : []
   ];
   return [
     head,
     ...origins.flatMap((o) => [
-      `${o.edited_at}  session:${o.session_id}  project:${o.project_id ?? "?"}  ${o.source}  ${o.tool}`,
+      `${localTs(o.edited_at)}  session:${o.session_id}  project:${o.project_id ?? "?"}  ${o.source}  ${o.tool}`,
       ...turn(o, "  "),
-      ...o.last ? [`  written again ${o.last.edited_at}  ${o.last.tool}`, ...turn(o.last, "    ")] : []
+      ...o.last ? [`  written again ${localTs(o.last.edited_at)}  ${o.last.tool}`, ...turn(o.last, "    ")] : []
     ])
   ].join("\n");
 }
@@ -32148,10 +32184,10 @@ ${unreadableLine}`;
   const itemLines = (i) => {
     let detail = `  words: "${i.words}"`;
     if (i.waits_for !== null) detail += `; waits for: ${i.waits_for}`;
-    if (i.updated !== i.created) detail += `; changed: ${i.updated}`;
+    if (i.updated !== i.created) detail += `; changed: ${localTs(i.updated)}`;
     detail += `; session: ${i.session_id ?? "unknown"}`;
     if (project_id === void 0) detail += `; project: ${i.project_id}`;
-    return [`- ${i.id}  ${i.created}  ${i.item}`, detail];
+    return [`- ${i.id}  ${localTs(i.created)}  ${i.item}`, detail];
   };
   const cap = params.maxBytes ?? DEFAULT_PENDING_MAX_BYTES;
   const reserve = MORE_LINE_RESERVE + (unreadableLine === null ? 0 : Buffer.byteLength(unreadableLine, "utf8") + 1);
@@ -32591,7 +32627,8 @@ function formatStats(facts) {
     lines.push("Leaves out one-shot exec/SDK runs and clens judge (pipeline) sessions.");
   }
   lines.push(
-    `Sessions: ${facts.sessions}` + (facts.started_at ? ` (${facts.started_at} to ${facts.ended_at})` : "")
+    // A missing ended_at prints "null", as the template printed it before.
+    `Sessions: ${facts.sessions}` + (facts.started_at ? ` (${localTs(facts.started_at)} to ${localTs(facts.ended_at ?? "null")})` : "")
   );
   if (facts.primary_model) lines.push(`Primary model: ${facts.primary_model}`);
   if (facts.name_filter !== null) lines.push(`Name filter: "${facts.name_filter}" (skills, slash commands and agents only)`);
@@ -32633,7 +32670,7 @@ function formatStats(facts) {
     if (facts.health.context_bloat_detail) {
       const d = facts.health.context_bloat_detail;
       lines.push(
-        `    max_ctx: ${d.max_ctx} (session:${d.max_session_id} at ${d.max_ts}), median_ctx: ${d.median_ctx}, sample_size: ${d.sample_size}`
+        `    max_ctx: ${d.max_ctx} (session:${d.max_session_id} at ${localTs(d.max_ts)}), median_ctx: ${d.median_ctx}, sample_size: ${d.sample_size}`
       );
     }
   }
@@ -32659,7 +32696,7 @@ function formatStats(facts) {
     if (facts.hook_blocks.recent.length > 0) {
       lines.push("  Recent:");
       for (const r of facts.hook_blocks.recent) {
-        lines.push(`    ${r.ts} session:${r.session_id} ${hookLabel(r)}` + (r.reason_line === null ? "" : `: ${r.reason_line}`));
+        lines.push(`    ${localTs(r.ts)} session:${r.session_id} ${hookLabel(r)}` + (r.reason_line === null ? "" : `: ${r.reason_line}`));
       }
     }
   }
@@ -32716,14 +32753,14 @@ function detectCurrentSessionId(pid, env) {
 // src/mcp/server.ts
 var SessionParamsSchema = external_exports.strictObject({
   session_id: external_exports.string(),
-  around_ts: external_exports.string(),
+  around_ts: timeParam,
   limit: external_exports.number().int().min(1).max(40).optional(),
   full: external_exports.boolean().optional()
 });
 var RecentParamsSchema = external_exports.strictObject({
   project_id: external_exports.string(),
-  since: external_exports.string().optional(),
-  until: external_exports.string().optional(),
+  since: timeParam.optional(),
+  until: timeParam.optional(),
   query: external_exports.string().optional(),
   limit: external_exports.number().int().min(1).max(100).optional(),
   maxBytes: external_exports.number().int().min(256).max(1e6).optional()
@@ -32733,8 +32770,8 @@ var SearchParamsSchema = external_exports.strictObject({
   query: external_exports.string().min(1).optional(),
   queries: external_exports.array(external_exports.string().min(1)).min(2).max(5).optional(),
   project_id: external_exports.string().optional(),
-  since: external_exports.string().optional(),
-  until: external_exports.string().optional(),
+  since: timeParam.optional(),
+  until: timeParam.optional(),
   role: external_exports.enum(["user", "assistant"]).optional(),
   session_id: external_exports.string().min(1).optional(),
   limit: external_exports.number().int().min(1).max(100).optional(),
@@ -32744,8 +32781,8 @@ var SearchParamsSchema = external_exports.strictObject({
 var LeftOffParamsSchema = external_exports.strictObject({
   project_id: external_exports.string().optional(),
   file: external_exports.string().min(1).optional(),
-  since: external_exports.string().optional(),
-  until: external_exports.string().optional(),
+  since: timeParam.optional(),
+  until: timeParam.optional(),
   limit: external_exports.number().int().min(1).max(10).optional(),
   session_id: external_exports.string().min(1).optional(),
   commits: external_exports.array(external_exports.string().min(1)).min(1).max(50).optional(),
@@ -32758,7 +32795,7 @@ var StatsParamsSchema = external_exports.strictObject({
   // min(1): an empty string would otherwise fall through to a wider scope.
   project_id: external_exports.string().min(1).optional(),
   session_id: external_exports.string().min(1).optional(),
-  since: external_exports.string().optional(),
+  since: timeParam.optional(),
   sections: external_exports.array(external_exports.enum(STATS_SECTIONS)).min(1).optional(),
   name: external_exports.string().min(1).optional()
 });
@@ -32808,11 +32845,11 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: "ISO 8601 date lower bound (matches at or after this time)"
+            description: "Lower bound (at or after). A date alone, YYYY-MM-DD, is the start of that day in local time; a date-time without Z or an offset is local time. Times clens printed can be passed back as they are."
           },
           until: {
             type: "string",
-            description: "ISO 8601 date upper bound (matches at or before this time). Combine with since to bound a window."
+            description: "Upper bound (at or before). Same forms as since; a date alone is the start of that day, so pass the next day to include a whole day. Combine with since to bound a window."
           },
           role: {
             type: "string",
@@ -32855,11 +32892,11 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: "ISO 8601 lower bound. For 'today' use start of today in UTC. For 'yesterday' use yesterday's date."
+            description: "Lower bound, same forms as clens_search's since. For 'today' pass today's date; for 'yesterday' pass yesterday's date with until set to today's."
           },
           until: {
             type: "string",
-            description: "ISO 8601 upper bound"
+            description: "Upper bound, same forms as since."
           },
           query: {
             type: "string",
@@ -32889,7 +32926,7 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           around_ts: {
             type: "string",
-            description: "ISO 8601 timestamp to center the context window on (ts from clens_search result)"
+            description: "A time clens printed, such as a clens_search hit's ts, as printed: the message at that time and those around it."
           },
           limit: {
             type: "number",
@@ -32919,11 +32956,11 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: `ISO 8601 lower bound, for "what did I do yesterday / this week". With since and until, only sessions active in that window, each shown as it stood at the window's end: its last request and reply and the edits inside it.`
+            description: `Lower bound (same forms as clens_search's since), for "what did I do yesterday / this week". With since and until, only sessions active in that window, each shown as it stood at the window's end: its last request and reply and the edits inside it.`
           },
           until: {
             type: "string",
-            description: "ISO 8601 upper bound (at or before this time). Combine with since to bound a window."
+            description: "Upper bound (at or before this time), same forms as since. Combine with since to bound a window."
           },
           limit: {
             type: "number",
@@ -32969,7 +33006,7 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           since: {
             type: "string",
-            description: "ISO 8601 date lower bound. Omit for all-time stats. Ignored when session_id is set."
+            description: "Lower bound, same forms as clens_search's since. Omit for all-time stats. Ignored when session_id is set."
           },
           sections: {
             type: "array",
@@ -33093,9 +33130,7 @@ server2.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!resolved.ok) return { content: [{ type: "text", text: resolved.error }], isError: true };
       const messages = sessionContext(getDb(), { ...parsed.data, session_id: resolved.id });
       if (messages.length === 0) return { content: [{ type: "text", text: "No messages found." }] };
-      const formatted = messages.map((m, i) => `[${i + 1}] ${m.role.toUpperCase()} ${m.ts}
-${m.text}`).join("\n\n");
-      return { content: [{ type: "text", text: formatted }] };
+      return { content: [{ type: "text", text: formatSessionMessages(messages) }] };
     } catch (e) {
       const err = e;
       return { content: [{ type: "text", text: `Session error: ${err.message ?? String(e)}` }], isError: true };

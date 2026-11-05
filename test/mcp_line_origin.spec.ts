@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { applySchema } from "../src/indexer/schema.js";
 import { formatLineOrigins, lineOrigins } from "../src/mcp/line_origin.js";
+import { UTC_TIME, withTz } from "./tz.js";
 
 let db: Database.Database;
 
@@ -219,6 +220,25 @@ describe("formatLineOrigins", () => {
       "    request 2026-09-01T10:21:00Z: go ahead",
       "    reply before it 2026-09-01T10:20:00Z: A $slice keeps it atomic; go?",
     ]);
+  });
+
+  it("prints each edit, request and reply time in the server's zone", () => {
+    msg("r1", "a", "2026-09-01T09:55:00Z", "assistant", "Keying by name avoids the hash; shall I?");
+    msg("u1", "a", "2026-09-01T09:56:00Z", "user", "오케 그렇게 하자");
+    edit("e1", "a", "2026-09-01T10:00:00Z", "/w/app/src/cache.ts", "", LINE);
+    msg("u2", "a", "2026-09-01T10:21:00Z", "user", "go ahead");
+    call("p1", "a", "2026-09-01T10:22:00Z", "apply_patch", patch(["src/cache.ts", [`+${LINE}`]]), ["/w/app/src/cache.ts"]);
+    const out = withTz("Asia/Seoul", () => formatLineOrigins("src/cache.ts", lineOrigins(db, "src/cache.ts", LINE, {})));
+    expect(out.split("\n")).toEqual([
+      '"src/cache.ts": 1 session wrote this text',
+      "2026-09-01T19:00:00+09:00  session:a  project:-w-app  claude  Edit",
+      "  request 2026-09-01T18:56:00+09:00: 오케 그렇게 하자",
+      "  reply before it 2026-09-01T18:55:00+09:00: Keying by name avoids the hash; shall I?",
+      "  written again 2026-09-01T19:22:00+09:00  apply_patch",
+      "    request 2026-09-01T19:21:00+09:00: go ahead",
+      "    reply before it 2026-09-01T18:55:00+09:00: Keying by name avoids the hash; shall I?",
+    ]);
+    expect(out).not.toMatch(UTC_TIME);
   });
 
   it("says where to look when no edit wrote the text", () => {
