@@ -38,6 +38,18 @@ describe("text sent to the agent", () => {
     expect(HOLD_DESCRIPTION).toContain("Not for what only shapes the task at hand");
   });
 
+  // The SessionStart hooks list the project's held and dropped items, so an
+  // agent marks a finished item done in any session, not only after
+  // clens_pending (the sentence tested in the 2026-11-05 runs R1-R15).
+  it("tells the agent to mark a listed held item done, leave partial work held, and not propose a dropped item again", () => {
+    expect(HOLD_GUIDANCE).toContain(
+      "When you finish an item listed as held, at the start of the session or by clens_pending, record it done with clens_hold and its id",
+    );
+    expect(HOLD_GUIDANCE).toContain("if only part of it is done, leave it held");
+    expect(HOLD_GUIDANCE).toContain("Do not propose a dropped item again unless the user brings it up");
+    expect(HOLD_GUIDANCE).not.toContain("When you finish an item clens_pending listed as held");
+  });
+
   it("sends the agent to a branch's checks when asked whether work was tested or deployed", () => {
     expect(SERVER_INSTRUCTIONS).toContain("(clens_left_off branch)");
   });

@@ -1,5 +1,5 @@
 {
-  "description": "Right after Codex compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure. At the start of a session, tell the agent to record in clens's ledger what the user sets aside.",
+  "description": "Right after Codex compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure. At the start of a session and after a compaction, tell the agent to record in clens's ledger what the user sets aside, and list the project's held and dropped items.",
   "hooks": {
     "SessionStart": [
       {

@@ -7,9 +7,11 @@
  * Installs from plugin/package-lock.json as Claude Code does (`npm ci
  * --ignore-scripts`), indexes fixture sessions with `start.mjs index`,
  * starts the server with `start.mjs mcp` and searches it, records an item
- * in the ledger and lists it, runs the compaction hook for one session and
- * Codex's hold guidance hook, runs the tool-failure hook on a `gh` that
- * another session found missing, and asks which session wrote a line.
+ * in the ledger and lists it, runs the compaction hook for one session,
+ * Codex's hold guidance hook with and without a working directory, and the
+ * ledger list hook for the project of that item and for another one, runs
+ * the tool-failure hook on a `gh` that another session found missing, and
+ * asks which session wrote a line.
  * Runs in UTC, then starts a second server in Asia/Seoul to check that tools
  * and the compaction hook print local time and read times given back.
  * Needs `npm run build` first and the npm registry. Touches nothing outside
@@ -130,6 +132,15 @@ try {
     encoding: "utf8",
   });
   check("hold guidance hook", guidance.includes('"hookEventName":"SessionStart"') && guidance.includes("call clens_hold"), guidance.slice(0, 500));
+  // The item recorded above for -fixture-cwd, listed for a session in /fixture/cwd.
+  const runHook = (name, input) =>
+    execFileSync("node", [join(plugin, "hooks", name)], { env, input: JSON.stringify(input), encoding: "utf8" });
+  const ledgerList = runHook("ledger_list.mjs", { source: "startup", cwd: "/fixture/cwd" });
+  check("ledger list hook", ledgerList.includes('"hookEventName":"SessionStart"') && ledgerList.includes("Add a due date to tasks"), ledgerList.slice(0, 500));
+  const otherList = runHook("ledger_list.mjs", { source: "startup", cwd: "/elsewhere" });
+  check("ledger list hook (other project)", otherList === "", otherList.slice(0, 500));
+  const guidanceList = runHook("hold_guidance.mjs", { source: "startup", cwd: "/fixture/cwd" });
+  check("hold guidance hook (with list)", guidanceList.includes("call clens_hold") && guidanceList.includes("Add a due date to tasks"), guidanceList.slice(0, 500));
 
   const failure = execFileSync("node", [join(plugin, "hooks", "tool_failure.mjs")], {
     env,

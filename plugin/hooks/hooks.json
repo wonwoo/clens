@@ -1,5 +1,5 @@
 {
-  "description": "Right after Claude Code compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure.",
+  "description": "Right after Claude Code compacts a conversation, put that session's clens work record back into it. When a shell command fails in a way a retry does not fix, say what an earlier session did after the same failure. At the start of a session and after a compaction, list the project's held and dropped items from clens's ledger.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,16 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/compact.mjs\"",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/ledger_list.mjs\"",
+            "timeout": 10
           }
         ]
       }

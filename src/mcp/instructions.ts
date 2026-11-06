@@ -18,13 +18,15 @@
 // the user sets aside without being asked. Claude Code reads it as the last
 // paragraph of SERVER_INSTRUCTIONS. Codex does not pass server instructions
 // to the model, so its SessionStart hook (src/hooks/hold_guidance.ts) prints
-// the same text.
+// the same text. The SessionStart hooks also list the project's held and
+// dropped items with their ids (src/hooks/ledger_list.ts in Claude Code,
+// src/hooks/hold_guidance.ts in Codex), which the last sentence refers to.
 export const HOLD_GUIDANCE = `LEDGER: clens also keeps a ledger of what the user sets aside, so held work is not forgotten in later sessions and dropped ideas are not proposed again. It is for work and ideas that stand on their own, apart from this conversation. Record without being asked when the user sets one aside: call clens_hold once per item, then go on with the request.
 - held: put off, to come back to later ("나중에", "일단 대기", "다시 생각해볼게", "백로그에 남겨", "let's park it")
 - dropped: weighed and rejected, so it should not be proposed again ("패스", "안 해도 돼", "필요 없음", "isn't worth it")
 Judge by meaning in any language, not by these words. What only shapes the task at hand ends with it and is not recorded: what to leave out of it ("도커 빼고", "skip the tests this time"), picking one option (the others are not set aside unless the user says so), waiting on or holding back one of its steps ("재시작할게 대기", commit, push, deploy), and questions.
 When the user asks you to note work for later ("기억해 둬", "적어 둬", "remember this"), record it as held. A preference or fact to remember is not work; leave it out of the ledger.
-When you finish an item clens_pending listed as held, record it done with its id.`;
+When you finish an item listed as held, at the start of the session or by clens_pending, record it done with clens_hold and its id; if only part of it is done, leave it held. Do not propose a dropped item again unless the user brings it up.`;
 
 export const SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply. It keeps sessions whose transcripts were deleted.
 
@@ -78,7 +80,7 @@ export const HOLD_DESCRIPTION = `Record in clens's ledger an item the user set a
 
 New item: pass project_id, item (what was set aside, in one line that makes sense without this conversation), status held (kept for later) or dropped (will not be done), words (the user's own words that set it aside, quoted) and, for a held item, waits_for when the user said what it waits for.
 
-Change an item: pass project_id, its id (from clens_pending or an earlier clens_hold) and status: done when it was just done, held or dropped when the user changed their mind, removed when it should not have been recorded. words and waits_for are optional then; item cannot change.
+Change an item: pass project_id, its id (from clens_pending, the ledger list at session start, or an earlier clens_hold) and status: done when it was just done, held or dropped when the user changed their mind, removed when it should not have been recorded. words and waits_for are optional then; item cannot change.
 
 project_id is the working directory path with every slash replaced by a dash.`;
 

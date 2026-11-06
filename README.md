@@ -90,7 +90,7 @@ If you set clens up by hand before (`claude mcp add`, `codex mcp add`, a compact
 
 `/clens:reflect` turns what you had to correct or explain in this session into proposed edits to CLAUDE.md or AGENTS.md and to skills. Each proposal comes with the earlier sessions where the same thing happened, and only what you pick is written. A rule that a hook or a script would enforce better than a line of text is listed apart, with each time it went wrong: when, and which command failed. Give it a period (`/clens:reflect 2w`, `/clens:reflect 10주`, up to 10 weeks) to review this project's sessions over that time instead. Each run's results and your decisions are kept in `~/.clens/reflect/`, and the next run takes them into account: what you declined is not proposed again unless the problem came back. A run on one session takes about 10 to 20 minutes; a period takes longer.
 
-`/clens:pending` lists what you set aside in this project: what you held, dropped and finished, each with your words and the date. Say an item is done or was recorded by mistake, and it is updated. The ledger fills from conversations held after you install this version, and is kept in `~/.clens/ledger.jsonl`.
+`/clens:pending` lists what you set aside in this project: what you held, dropped and finished, each with your words and the date. Say an item is done or was recorded by mistake, and it is updated. An agent that finishes a held item marks it done by itself. The ledger fills from conversations held after you install this version, and is kept in `~/.clens/ledger.jsonl`.
 
 `/clens:install ko` installs the Korean analyzer (`ja` Japanese, `zh` Chinese); see [Korean, Japanese and Chinese search](#korean-japanese-and-chinese-search).
 
@@ -114,7 +114,7 @@ clens reads the transcripts Claude Code keeps in `~/.claude/projects/` and Codex
 
 After a compaction, a hook (`hooks/compact.mjs`) puts that session's work record back into the conversation. When a shell command fails, another hook (`hooks/tool_failure.mjs`) compares it with the failures in the index; it runs on failures in Claude Code, and after every command in Codex, which has no failure event. clens goes online only to install its npm dependencies on first run and to download a language analyzer.
 
-The agent writes the ledger to `~/.clens/ledger.jsonl`, apart from the index, so rebuilding the index leaves it as it is. In Codex a session-start hook (`hooks/hold_guidance.mjs`) tells the agent to record, since Codex does not pass the server's instructions to the model.
+The agent writes the ledger to `~/.clens/ledger.jsonl`, apart from the index, so rebuilding the index leaves it as it is. At the start of a session and after a compaction, a hook lists the project's held and dropped items with their ids, so the agent marks a held item done when it finishes it and does not propose a dropped one again: `hooks/ledger_list.mjs` in Claude Code, and in Codex `hooks/hold_guidance.mjs`, which also tells the agent to record, since Codex does not pass the server's instructions to the model.
 
 ## Limits
 
@@ -123,7 +123,7 @@ The agent writes the ledger to `~/.clens/ledger.jsonl`, apart from the index, so
 - An assistant reply over 4 KB is stored as its start and end, about 2 KB each, so words in its middle are not found.
 - Files a script changes, or whose path is set only when a command runs (`$VAR`, a glob), can be missing from a session's edited files. The same goes for git commands run from inside a script.
 - In Codex, the compaction recovery runs only after you trust the hook, and not after a subagent's compaction.
-- The agent records only what it recognises as set aside. Wording that sounds like agreement ("I guess that can't be helped") can be missed. In Codex nothing is recorded until you trust clens's hooks.
+- The agent records only what it recognises as set aside. Wording that sounds like agreement ("I guess that can't be helped") can be missed. Likewise it marks a held item done only when it sees that the work it finished is that item. In Codex nothing is recorded until you trust clens's hooks.
 
 ## Development
 
@@ -142,7 +142,7 @@ claude mcp add -s user clens -- node /absolute/path/to/clens/plugin/dist/server.
 codex mcp add clens -- node /absolute/path/to/clens/plugin/dist/server.js
 ```
 
-The compaction hook is `plugin/hooks/compact.mjs`, built from `src/hooks/compact.ts`, the failed-command hook `plugin/hooks/tool_failure.mjs`, built from `src/hooks/tool_failure.ts`, and the ledger guidance hook `plugin/hooks/hold_guidance.mjs`, built from `src/hooks/hold_guidance.ts` and registered for Codex only; `plugin/hooks/hooks.json` (Claude Code) and `plugin/.codex-plugin/hooks.json` (Codex) show how to register them.
+The compaction hook is `plugin/hooks/compact.mjs`, built from `src/hooks/compact.ts`, the failed-command hook `plugin/hooks/tool_failure.mjs`, built from `src/hooks/tool_failure.ts`, the ledger list hook `plugin/hooks/ledger_list.mjs`, built from `src/hooks/ledger_list.ts` and registered for Claude Code only, and the ledger guidance hook `plugin/hooks/hold_guidance.mjs`, built from `src/hooks/hold_guidance.ts` and registered for Codex only; `plugin/hooks/hooks.json` (Claude Code) and `plugin/.codex-plugin/hooks.json` (Codex) show how to register them.
 
 The CLI:
 

@@ -31989,7 +31989,7 @@ var HOLD_GUIDANCE = `LEDGER: clens also keeps a ledger of what the user sets asi
 - dropped: weighed and rejected, so it should not be proposed again ("\uD328\uC2A4", "\uC548 \uD574\uB3C4 \uB3FC", "\uD544\uC694 \uC5C6\uC74C", "isn't worth it")
 Judge by meaning in any language, not by these words. What only shapes the task at hand ends with it and is not recorded: what to leave out of it ("\uB3C4\uCEE4 \uBE7C\uACE0", "skip the tests this time"), picking one option (the others are not set aside unless the user says so), waiting on or holding back one of its steps ("\uC7AC\uC2DC\uC791\uD560\uAC8C \uB300\uAE30", commit, push, deploy), and questions.
 When the user asks you to note work for later ("\uAE30\uC5B5\uD574 \uB46C", "\uC801\uC5B4 \uB46C", "remember this"), record it as held. A preference or fact to remember is not work; leave it out of the ledger.
-When you finish an item clens_pending listed as held, record it done with its id.`;
+When you finish an item listed as held, at the start of the session or by clens_pending, record it done with clens_hold and its id; if only part of it is done, leave it held. Do not propose a dropped item again unless the user brings it up.`;
 var SERVER_INSTRUCTIONS = `clens is a local, read-only index of the user's past Claude Code and Codex conversations across all projects: every user message and assistant reply. It keeps sessions whose transcripts were deleted.
 
 USE IT FIRST, without being asked, when the user refers to earlier work rather than the current conversation or code:
@@ -32037,7 +32037,7 @@ var HOLD_DESCRIPTION = `Record in clens's ledger an item the user set aside in t
 
 New item: pass project_id, item (what was set aside, in one line that makes sense without this conversation), status held (kept for later) or dropped (will not be done), words (the user's own words that set it aside, quoted) and, for a held item, waits_for when the user said what it waits for.
 
-Change an item: pass project_id, its id (from clens_pending or an earlier clens_hold) and status: done when it was just done, held or dropped when the user changed their mind, removed when it should not have been recorded. words and waits_for are optional then; item cannot change.
+Change an item: pass project_id, its id (from clens_pending, the ledger list at session start, or an earlier clens_hold) and status: done when it was just done, held or dropped when the user changed their mind, removed when it should not have been recorded. words and waits_for are optional then; item cannot change.
 
 project_id is the working directory path with every slash replaced by a dash.`;
 var PENDING_DESCRIPTION = `List clens's ledger: what the user set aside in conversations, recorded with clens_hold. Pass project_id (the working directory path with every slash replaced by a dash) for one project; omit it for every project. Items are grouped as held, dropped and done, newest first, each with its id, date, item, the user's words, what it waits for and the session that recorded it. Items marked removed are left out. The ledger holds only what agents recorded since this version of clens was installed; it is not built from past transcripts.`;
@@ -32163,6 +32163,9 @@ function recordHold(path, params, ctx) {
   appendLedgerEvent(path, { id, ts, project_id, session_id, status, item, words, waits_for });
   return { ok: true, text: `Recorded ${id} as ${status}: ${item}` };
 }
+function newestFirst(a, b) {
+  return a.updated === b.updated ? a.id < b.id ? -1 : 1 : a.updated < b.updated ? 1 : -1;
+}
 var DEFAULT_PENDING_MAX_BYTES = 16384;
 var MORE_LINE_RESERVE = 64;
 var GROUPS = ["held", "dropped", "done"];
@@ -32177,9 +32180,7 @@ function formatPending(ledger, params) {
     return unreadableLine === null ? nothing : `${nothing}
 ${unreadableLine}`;
   }
-  const groups = GROUPS.map(
-    (status) => kept.filter((i) => i.status === status).sort((a, b) => a.updated === b.updated ? a.id < b.id ? -1 : 1 : a.updated < b.updated ? 1 : -1)
-  );
+  const groups = GROUPS.map((status) => kept.filter((i) => i.status === status).sort(newestFirst));
   const [held, dropped, done] = groups.map((g) => g.length);
   const lines = [`Ledger for ${project_id ?? "every project"}: ${held} held, ${dropped} dropped, ${done} done`];
   const itemLines = (i) => {

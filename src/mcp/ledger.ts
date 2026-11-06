@@ -2,10 +2,11 @@
  * clens_hold / clens_pending — the ledger of what users set aside.
  *
  * The agent in a conversation records an item when the user puts it off or
- * drops it (clens_hold), and clens_pending lists them later. The ledger is its
- * own file, ~/.clens/ledger.jsonl (ledgerPath()), not a table of the index:
- * the MCP server opens the index read-only, and a rebuild re-derives the
- * index from transcripts, which cannot re-derive an agent's judgement.
+ * drops it (clens_hold), and clens_pending lists them later, as do the
+ * SessionStart hooks for the project at hand (formatLedgerList). The ledger
+ * is its own file, ~/.clens/ledger.jsonl (ledgerPath()), not a table of the
+ * index: the MCP server opens the index read-only, and a rebuild re-derives
+ * the index from transcripts, which cannot re-derive an agent's judgement.
  *
  * One JSON event per line, appended and never rewritten. The first event of
  * an id creates the item; later ones change its status, words or waits_for.
@@ -200,6 +201,11 @@ export function recordHold(
   return { ok: true, text: `Recorded ${id} as ${status}: ${item}` };
 }
 
+/** Latest change first, ties by id; the order both lists of the ledger use. */
+function newestFirst(a: LedgerItem, b: LedgerItem): number {
+  return a.updated === b.updated ? (a.id < b.id ? -1 : 1) : a.updated < b.updated ? 1 : -1;
+}
+
 /** Default cap on the size of a clens_pending answer, in bytes. */
 export const DEFAULT_PENDING_MAX_BYTES = 16384;
 
@@ -225,11 +231,7 @@ export function formatPending(
     return unreadableLine === null ? nothing : `${nothing}\n${unreadableLine}`;
   }
 
-  const groups = GROUPS.map((status) =>
-    kept
-      .filter((i) => i.status === status)
-      .sort((a, b) => (a.updated === b.updated ? (a.id < b.id ? -1 : 1) : a.updated < b.updated ? 1 : -1)),
-  );
+  const groups = GROUPS.map((status) => kept.filter((i) => i.status === status).sort(newestFirst));
   const [held, dropped, done] = groups.map((g) => g.length);
   const lines = [`Ledger for ${project_id ?? "every project"}: ${held} held, ${dropped} dropped, ${done} done`];
 
@@ -259,5 +261,47 @@ export function formatPending(
   }
   if (written < kept.length) lines.push(`(+${kept.length - written} more items not shown)`);
   if (unreadableLine !== null) lines.push(unreadableLine);
+  return lines.join("\n");
+}
+
+export const LEDGER_LIST_HELD_MAX = 10;
+export const LEDGER_LIST_DROPPED_MAX = 5;
+export const LEDGER_LIST_MAX_CHARS = 6000;
+
+/** Room kept under LEDGER_LIST_MAX_CHARS for the "dropped:" line and the two
+ *  "+N more" lines, each under 45 characters. */
+const LIST_TAIL_RESERVE = 200;
+
+const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** The SessionStart list of one project's held and dropped items, or null
+ *  when the project has none. The SessionStart hooks print it
+ *  (src/hooks/ledger_context.ts), so that an agent in any session sees the ids
+ *  to mark done; clens_pending gives what the caps leave out. */
+export function formatLedgerList(items: LedgerItem[], project_id: string): string | null {
+  const kept = items.filter((i) => i.project_id === project_id && (i.status === "held" || i.status === "dropped"));
+  if (kept.length === 0) return null;
+  const lines = ["clens ledger for this project, from earlier sessions (ids for clens_hold; full list with clens_pending):"];
+  const groups = [
+    ["held", LEDGER_LIST_HELD_MAX],
+    ["dropped", LEDGER_LIST_DROPPED_MAX],
+  ] as const;
+  for (const [status, max] of groups) {
+    const group = kept.filter((i) => i.status === status).sort(newestFirst);
+    if (group.length === 0) continue;
+    lines.push(`${status}:`);
+    let shown = 0;
+    for (const i of group) {
+      if (shown === max) break;
+      const line = `- ${i.id}  ${oneLine(i.item)}  (words: "${oneLine(i.words)}")`;
+      // An item longer than the room left (only in a hand-edited ledger)
+      // ends its group and is counted below.
+      if (lines.join("\n").length + 1 + line.length > LEDGER_LIST_MAX_CHARS - LIST_TAIL_RESERVE) break;
+      lines.push(line);
+      shown++;
+    }
+    const more = group.length - shown;
+    if (more > 0) lines.push(`(+${more} more ${status} item${more === 1 ? "" : "s"}: clens_pending)`);
+  }
   return lines.join("\n");
 }

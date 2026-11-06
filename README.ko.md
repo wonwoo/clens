@@ -90,7 +90,7 @@ codex plugin marketplace upgrade clens && codex plugin add clens@clens
 
 `/clens:reflect`는 이번 세션에서 내가 바로잡거나 설명해야 했던 것을 CLAUDE.md, AGENTS.md나 스킬 수정안으로 바꿉니다. 수정안마다 예전 세션에서도 같은 일이 있었는지 찾아서 근거로 붙이고, 내가 고른 것만 반영합니다. 글로 적는 것보다 훅이나 스크립트로 막는 게 나은 건 따로 모아서, 언제 어떤 명령에서 문제가 났는지와 함께 보여 줍니다. `/clens:reflect 2w`나 `/clens:reflect 10주`처럼 기간을 주면(최대 10주) 그동안 이 프로젝트에서 나눈 대화를 모두 봅니다. 결과와 내 결정은 `~/.clens/reflect/`에 남아서 다음에 돌릴 때 참고합니다. 거절한 건 같은 문제가 다시 생기기 전에는 또 올라오지 않습니다. 세션 하나에 10~20분쯤 걸리고, 기간을 주면 더 걸립니다.
 
-`/clens:pending`은 이 프로젝트에서 미뤄 둔 것을 보여 줍니다. 보류한 것, 안 하기로 한 것, 끝낸 것을 내가 한 말과 날짜와 함께 보여 줍니다. 어떤 항목을 끝냈다거나 잘못 적혔다고 말하면 그대로 고칩니다. 이 버전을 설치한 뒤에 나눈 대화부터 쌓이고, `~/.clens/ledger.jsonl`에 남습니다.
+`/clens:pending`은 이 프로젝트에서 미뤄 둔 것을 보여 줍니다. 보류한 것, 안 하기로 한 것, 끝낸 것을 내가 한 말과 날짜와 함께 보여 줍니다. 어떤 항목을 끝냈다거나 잘못 적혔다고 말하면 그대로 고칩니다. 보류 항목을 끝낸 에이전트는 따로 말하지 않아도 완료로 적습니다. 이 버전을 설치한 뒤에 나눈 대화부터 쌓이고, `~/.clens/ledger.jsonl`에 남습니다.
 
 `/clens:install ko`는 한국어 분석기를 받습니다(`ja`는 일본어, `zh`는 중국어). [한국어·일본어·중국어 검색](#한국어일본어중국어-검색)을 참고하세요.
 
@@ -114,7 +114,7 @@ clens는 Claude Code가 `~/.claude/projects/`에, Codex가 `~/.codex/sessions/`�
 
 대화가 압축되면 훅(`hooks/compact.mjs`)이 그 세션의 작업 기록을 대화에 다시 넣습니다. 셸 명령이 실패하면 다른 훅(`hooks/tool_failure.mjs`)이 색인에 저장된 실패 기록과 비교합니다. Claude Code에서는 실패했을 때만, Codex에서는 실패 전용 이벤트가 없어서 명령마다 돕니다. 네트워크는 처음 실행할 때 npm 패키지를 설치하거나 언어 분석기를 받을 때만 씁니다.
 
-장부는 에이전트가 색인과 따로 `~/.clens/ledger.jsonl`에 적기 때문에 색인을 다시 만들어도 그대로 남습니다. Codex는 서버 안내문을 모델에 넘기지 않아서, 세션이 시작될 때 훅(`hooks/hold_guidance.mjs`)이 에이전트에게 기록하라고 알려 줍니다.
+장부는 에이전트가 색인과 따로 `~/.clens/ledger.jsonl`에 적기 때문에 색인을 다시 만들어도 그대로 남습니다. 세션이 시작될 때와 압축 직후에는 훅이 이 프로젝트에서 보류하거나 버린 항목을 id와 함께 보여 줍니다. 그래서 에이전트는 보류 항목을 끝내면 완료로 적고, 버린 항목은 다시 제안하지 않습니다. Claude Code에서는 `hooks/ledger_list.mjs`가, Codex에서는 `hooks/hold_guidance.mjs`가 이 일을 합니다. Codex는 서버 안내문을 모델에 넘기지 않으므로 이 훅이 기록하라는 안내도 함께 전합니다.
 
 ## 한계
 
@@ -123,7 +123,7 @@ clens는 Claude Code가 `~/.claude/projects/`에, Codex가 `~/.codex/sessions/`�
 - 4KB가 넘는 어시스턴트 답은 앞뒤 약 2KB씩만 저장합니다. 그래서 가운데에 있는 단어로는 찾을 수 없습니다.
 - 스크립트로 바꾼 파일이나 `$VAR`, glob처럼 실행해 봐야 경로가 정해지는 파일은 고친 파일 목록에서 빠질 수 있습니다. 스크립트 안에서 돌린 git 명령도 마찬가지입니다.
 - Codex에서는 훅을 신뢰해야 압축 뒤 복구가 동작하고, 서브에이전트가 압축했을 때는 동작하지 않습니다.
-- 에이전트는 미뤄 뒀다고 알아본 것만 적습니다. "어쩔 수 없는 거 아니냐"처럼 동의하는 듯한 말은 놓칠 수 있습니다. Codex에서는 clens 훅을 신뢰하기 전까지 아무것도 적히지 않습니다.
+- 에이전트는 미뤄 뒀다고 알아본 것만 적습니다. "어쩔 수 없는 거 아니냐"처럼 동의하는 듯한 말은 놓칠 수 있습니다. 보류 항목도 방금 끝낸 일이 그 항목이라고 알아볼 때만 완료로 적습니다. Codex에서는 clens 훅을 신뢰하기 전까지 아무것도 적히지 않습니다.
 
 ## 개발
 
@@ -142,7 +142,7 @@ claude mcp add -s user clens -- node /절대/경로/clens/plugin/dist/server.js
 codex mcp add clens -- node /절대/경로/clens/plugin/dist/server.js
 ```
 
-압축 훅은 `src/hooks/compact.ts`를 빌드한 `plugin/hooks/compact.mjs`이고, 실패한 명령 훅은 `src/hooks/tool_failure.ts`를 빌드한 `plugin/hooks/tool_failure.mjs`, 장부 안내 훅은 `src/hooks/hold_guidance.ts`를 빌드한 `plugin/hooks/hold_guidance.mjs`이며 Codex에만 등록합니다. 어떻게 등록하는지는 Claude Code는 `plugin/hooks/hooks.json`, Codex는 `plugin/.codex-plugin/hooks.json`에 있습니다.
+압축 훅은 `src/hooks/compact.ts`를 빌드한 `plugin/hooks/compact.mjs`이고, 실패한 명령 훅은 `src/hooks/tool_failure.ts`를 빌드한 `plugin/hooks/tool_failure.mjs`, 장부 목록 훅은 `src/hooks/ledger_list.ts`를 빌드한 `plugin/hooks/ledger_list.mjs`로 Claude Code에만 등록하고, 장부 안내 훅은 `src/hooks/hold_guidance.ts`를 빌드한 `plugin/hooks/hold_guidance.mjs`로 Codex에만 등록합니다. 어떻게 등록하는지는 Claude Code는 `plugin/hooks/hooks.json`, Codex는 `plugin/.codex-plugin/hooks.json`에 있습니다.
 
 CLI 명령은 이렇습니다.
 
