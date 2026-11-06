@@ -1,6 +1,6 @@
 {
   "name": "@clens/cli",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "description": "Search past Claude Code and Codex sessions — local SQLite index served over MCP",
   "license": "MIT",
