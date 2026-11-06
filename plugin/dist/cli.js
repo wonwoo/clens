@@ -497,14 +497,14 @@ var require_graceful_fs = __commonJS({
         return close;
       })(fs.close);
       fs.closeSync = (function(fs$closeSync) {
-        function closeSync(fd) {
+        function closeSync2(fd) {
           fs$closeSync.apply(fs, arguments);
           resetQueue();
         }
-        Object.defineProperty(closeSync, previousSymbol, {
+        Object.defineProperty(closeSync2, previousSymbol, {
           value: fs$closeSync
         });
-        return closeSync;
+        return closeSync2;
       })(fs.closeSync);
       if (/\bgfs4\b/i.test(process.env.NODE_DEBUG || "")) {
         process.on("exit", function() {
@@ -1616,365 +1616,15 @@ var require_proper_lockfile = __commonJS({
 // src/indexer/driver.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
 import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2 } from "node:fs";
-import { basename as basename2, dirname as dirname3, join as join4 } from "node:path";
+import { basename as basename3, dirname as dirname3, join as join4 } from "node:path";
 import Database from "better-sqlite3";
 
-// src/indexer/lang/registry.ts
-var registry = /* @__PURE__ */ new Map();
-function listKnownLanguageCodes() {
-  return ["ko", "ja", "zh"];
-}
-function registerLanguage(adapter) {
-  registry.set(adapter.code, adapter);
-}
-function getLanguageAdapter(code) {
-  return registry.get(code);
-}
-function languageFtsTable(code) {
-  return `user_text_fts_lang_${code}`;
-}
-
-// src/indexer/schema.ts
-var SCHEMA_VERSION = 18;
-function languageTableStatements(code) {
-  const table = languageFtsTable(code);
-  return [
-    `CREATE VIRTUAL TABLE IF NOT EXISTS ${table} USING fts5(
-       text,
-       session_id UNINDEXED,
-       ts         UNINDEXED,
-       tokenize   = 'unicode61'
-    )`,
-    `CREATE TRIGGER IF NOT EXISTS ${table}_ad
-       AFTER DELETE ON user_text BEGIN
-         DELETE FROM ${table} WHERE rowid = old.rowid;
-       END`
-  ];
-}
-var SCHEMA_STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`,
-  // ----- File cursor (incremental indexing state) -----
-  `CREATE TABLE IF NOT EXISTS file_cursor (
-     path     TEXT PRIMARY KEY,
-     mtime    REAL NOT NULL,
-     size     INTEGER NOT NULL,
-     lines    INTEGER NOT NULL,
-     last_ok  INTEGER NOT NULL,
-     -- no longer written or read; kept so the schema does not change
-     live     INTEGER NOT NULL DEFAULT 0
-   )`,
-  // ----- Upkeep state (not derived from transcripts; digest.ts leaves it out) -----
-  // key 'fts_optimized_at': epoch ms of the last FTS 'optimize' (driver.ts).
-  // A new table and no derived rows, so no SCHEMA_VERSION bump.
-  `CREATE TABLE IF NOT EXISTS maintenance (
-     key    TEXT PRIMARY KEY,
-     value  TEXT NOT NULL
-   )`,
-  // ----- Project / Session -----
-  `CREATE TABLE IF NOT EXISTS project (
-     id       TEXT PRIMARY KEY,
-     cwd      TEXT,
-     display  TEXT
-   )`,
-  `CREATE TABLE IF NOT EXISTS session (
-     id            TEXT PRIMARY KEY,
-     project_id    TEXT,
-     kind          TEXT,
-     parent_id     TEXT,
-     started_at    TEXT,
-     ended_at      TEXT,
-     cwd           TEXT,
-     git_branch    TEXT,
-     model_primary TEXT,
-     version       TEXT,
-     source        TEXT NOT NULL DEFAULT 'claude',
-     FOREIGN KEY (project_id) REFERENCES project(id)
-   )`,
-  // ----- Event (one row per JSONL line, multi-block messages stay as one) -----
-  `CREATE TABLE IF NOT EXISTS event (
-     uuid              TEXT PRIMARY KEY,
-     session_id        TEXT NOT NULL,
-     parent_uuid       TEXT,
-     prompt_id         TEXT,
-     agent_id          TEXT,
-     is_sidechain      INTEGER,
-     ts                TEXT NOT NULL,
-     role              TEXT,
-     model             TEXT,
-     in_tok            INTEGER DEFAULT 0,
-     out_tok           INTEGER DEFAULT 0,
-     cache_r           INTEGER DEFAULT 0,
-     cache_w           INTEGER DEFAULT 0,
-     text_len          INTEGER DEFAULT 0,
-     has_tool_use      INTEGER DEFAULT 0,
-     has_text          INTEGER DEFAULT 0,
-     has_tool_res      INTEGER DEFAULT 0,
-     user_turn_no      INTEGER,
-     assistant_turn_no INTEGER,
-     source_file       TEXT,
-     FOREIGN KEY (session_id) REFERENCES session(id)
-   )`,
-  `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
-  `CREATE INDEX IF NOT EXISTS event_session_idx ON event(session_id, ts)`,
-  `CREATE INDEX IF NOT EXISTS event_ts_idx ON event(ts)`,
-  `CREATE INDEX IF NOT EXISTS event_source_file_idx ON event(source_file)`,
-  // ----- Event-unknown-block (forensic store for unrecognized block types) -----
-  `CREATE TABLE IF NOT EXISTS event_unknown_block (
-     event_uuid  TEXT NOT NULL,
-     block_index INTEGER NOT NULL,
-     raw_json    TEXT NOT NULL,
-     PRIMARY KEY (event_uuid, block_index),
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  // ----- Tool calls -----
-  `CREATE TABLE IF NOT EXISTS tool_call (
-     event_uuid  TEXT NOT NULL,
-     session_id  TEXT NOT NULL,
-     ts          TEXT NOT NULL,
-     call_id     TEXT,
-     name        TEXT NOT NULL,
-     input_json  TEXT,
-     duration_ms INTEGER,
-     is_error    INTEGER DEFAULT 0,
-     result_chars INTEGER,
-     error_excerpt TEXT,
-     git_branch  TEXT,
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS tool_session_idx ON tool_call(session_id)`,
-  `CREATE INDEX IF NOT EXISTS tool_name_idx ON tool_call(name)`,
-  // A session's calls of some tools (the session record's git commands):
-  // without it SQLite took tool_name_idx and read every shell call in the
-  // index. Only an index, so no SCHEMA_VERSION bump: the next open adds it.
-  `CREATE INDEX IF NOT EXISTS tool_session_name_idx ON tool_call(session_id, name)`,
-  `CREATE INDEX IF NOT EXISTS tool_call_id_idx ON tool_call(call_id)`,
-  // ----- File operations -----
-  `CREATE TABLE IF NOT EXISTS file_op (
-     event_uuid  TEXT NOT NULL,
-     session_id  TEXT NOT NULL,
-     ts          TEXT NOT NULL,
-     tool        TEXT NOT NULL,
-     path        TEXT NOT NULL,
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS file_op_path_idx ON file_op(path)`,
-  // A session's edits (clens_left_off) and the indexer's per-session wipe
-  // read the whole table without it. No SCHEMA_VERSION bump, as above.
-  `CREATE INDEX IF NOT EXISTS file_op_session_tool_idx ON file_op(session_id, tool)`,
-  // ----- User and assistant text -----
-  `CREATE TABLE IF NOT EXISTS user_text (
-     event_uuid  TEXT NOT NULL,
-     session_id  TEXT NOT NULL,
-     ts          TEXT NOT NULL,
-     text        TEXT NOT NULL,
-     is_command  INTEGER DEFAULT 0,
-     role        TEXT NOT NULL DEFAULT 'user',
-     type        TEXT NOT NULL DEFAULT 'user_message',
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS user_text_session_ts_idx ON user_text(session_id, ts)`,
-  // ----- FTS5 full-text index over user_text -----
-  `CREATE VIRTUAL TABLE IF NOT EXISTS user_text_fts USING fts5(
-     text,
-     session_id UNINDEXED,
-     ts         UNINDEXED,
-     content    = 'user_text',
-     content_rowid = 'rowid'
-  )`,
-  `CREATE TRIGGER IF NOT EXISTS user_text_fts_ai
-     AFTER INSERT ON user_text BEGIN
-       INSERT INTO user_text_fts(rowid, text, session_id, ts)
-       VALUES (new.rowid, new.text, new.session_id, new.ts);
-     END`,
-  `CREATE TRIGGER IF NOT EXISTS user_text_fts_ad
-     AFTER DELETE ON user_text BEGIN
-       INSERT INTO user_text_fts(user_text_fts, rowid, text, session_id, ts)
-       VALUES ('delete', old.rowid, old.text, old.session_id, old.ts);
-     END`,
-  // ----- FTS5 trigram index (substring / partial-word matching) -----
-  // External content (content = 'user_text'), same as user_text_fts above —
-  // this table previously kept its own full copy of every row's text in its
-  // internal _content shadow table (verified: ~39MB of pure duplication of
-  // data user_text already stores), never actually read by search.ts (which
-  // always JOINs back to user_text for the displayed text regardless of
-  // which FTS layer matched). Pointing it at user_text instead eliminates
-  // that duplication with no behavior change (verified: identical MATCH/
-  // rank results before and after, same rowids in the same order).
-  `CREATE VIRTUAL TABLE IF NOT EXISTS user_text_fts_trigram USING fts5(
-     text,
-     session_id UNINDEXED,
-     ts         UNINDEXED,
-     tokenize      = 'trigram',
-     content       = 'user_text',
-     content_rowid = 'rowid'
-  )`,
-  `CREATE TRIGGER IF NOT EXISTS user_text_fts_trigram_ai
-     AFTER INSERT ON user_text BEGIN
-       INSERT INTO user_text_fts_trigram(rowid, text, session_id, ts)
-       VALUES (new.rowid, new.text, new.session_id, new.ts);
-     END`,
-  // External content tables can't reconstruct a deleted row's old column
-  // values from user_text after the fact (there's no shadow copy to fall
-  // back on) — the special 'delete' command below passes them explicitly
-  // from the trigger's old.* row, same pattern as user_text_fts_ad above.
-  `CREATE TRIGGER IF NOT EXISTS user_text_fts_trigram_ad
-     AFTER DELETE ON user_text BEGIN
-       INSERT INTO user_text_fts_trigram(user_text_fts_trigram, rowid, text, session_id, ts)
-       VALUES ('delete', old.rowid, old.text, old.session_id, old.ts);
-     END`,
-  // ----- FTS5 per-language morpheme-normalized layers (optional install) -----
-  ...listKnownLanguageCodes().flatMap(languageTableStatements),
-  // ----- Skill / Agent / Slash command -----
-  `CREATE TABLE IF NOT EXISTS skill_call (
-     event_uuid   TEXT NOT NULL,
-     session_id   TEXT NOT NULL,
-     ts           TEXT NOT NULL,
-     skill        TEXT NOT NULL,
-     args_excerpt TEXT,
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS skill_name_idx ON skill_call(skill)`,
-  `CREATE TABLE IF NOT EXISTS agent_call (
-     event_uuid     TEXT NOT NULL,
-     session_id     TEXT NOT NULL,
-     ts             TEXT NOT NULL,
-     subagent_type  TEXT NOT NULL,
-     description    TEXT,
-     prompt_excerpt TEXT,
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS agent_type_idx ON agent_call(subagent_type)`,
-  `CREATE TABLE IF NOT EXISTS slash_command (
-     event_uuid TEXT NOT NULL,
-     session_id TEXT NOT NULL,
-     ts         TEXT NOT NULL,
-     name       TEXT NOT NULL,
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS slash_name_idx ON slash_command(name)`,
-  `CREATE TABLE IF NOT EXISTS system_reminder (
-     event_uuid   TEXT NOT NULL,
-     session_id   TEXT NOT NULL,
-     ts           TEXT NOT NULL,
-     category     TEXT NOT NULL,
-     text_excerpt TEXT,
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS system_reminder_cat_idx ON system_reminder(category)`,
-  // One row per hook refusal: a PreToolUse block (from the blocked call's
-  // error result; tool and call_id set) or a Stop block (from its
-  // hook_blocking_error attachment; tool and call_id NULL).
-  `CREATE TABLE IF NOT EXISTS hook_block (
-     event_uuid  TEXT NOT NULL,
-     session_id  TEXT NOT NULL,
-     ts          TEXT NOT NULL,
-     hook_event  TEXT NOT NULL,
-     tool        TEXT,
-     call_id     TEXT,
-     reason      TEXT,
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
-  `CREATE INDEX IF NOT EXISTS hook_block_session_idx ON hook_block(session_id)`,
-  // ----- Anomaly bucket (lifecycle per §7) -----
-  // `source_file` is a v1 implementation detail (not in the spec's column list)
-  // so incremental re-parses can wipe their own per-file anomaly rows before
-  // re-flushing — keeps `clens stats --digest` deterministic between
-  // incremental and rebuild paths (gate 2). Reports still aggregate via
-  // `SELECT kind, SUM(count) GROUP BY kind`, so the extra column is transparent
-  // to downstream consumers.
-  `CREATE TABLE IF NOT EXISTS anomaly (
-     session_id   TEXT,
-     ts           TEXT,
-     kind         TEXT NOT NULL,
-     count        INTEGER NOT NULL DEFAULT 1,
-     detail       TEXT,
-     source_file  TEXT
-   )`,
-  `CREATE INDEX IF NOT EXISTS anomaly_kind_idx ON anomaly(kind)`,
-  `CREATE INDEX IF NOT EXISTS anomaly_source_file_idx ON anomaly(source_file)`
-];
-function applySchema(db) {
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 30000");
-  db.pragma("foreign_keys = OFF");
-  db.pragma("synchronous = NORMAL");
-  const initTx = db.transaction(() => {
-    for (const stmt of SCHEMA_STATEMENTS) db.exec(stmt);
-    const toolCallColumns = db.prepare("PRAGMA table_info(tool_call)").all();
-    if (!toolCallColumns.some((c) => c.name === "result_chars")) {
-      db.exec("ALTER TABLE tool_call ADD COLUMN result_chars INTEGER");
-    }
-    if (!toolCallColumns.some((c) => c.name === "error_excerpt")) {
-      db.exec("ALTER TABLE tool_call ADD COLUMN error_excerpt TEXT");
-    }
-    if (!toolCallColumns.some((c) => c.name === "git_branch")) {
-      db.exec("ALTER TABLE tool_call ADD COLUMN git_branch TEXT");
-    }
-    const row = db.prepare("SELECT v FROM schema_version LIMIT 1").get();
-    if (!row) {
-      db.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
-    }
-  });
-  initTx();
-}
-function getSchemaVersion(db) {
-  try {
-    const row = db.prepare("SELECT v FROM schema_version LIMIT 1").get();
-    return row?.v ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// src/indexer/cursor.ts
-import { readdirSync, statSync } from "node:fs";
-import { join as join2 } from "node:path";
-
-// src/indexer/sources.ts
-import { basename, dirname } from "node:path";
-
-// src/util/paths.ts
-import { homedir } from "node:os";
-import { join } from "node:path";
-function claudeHome() {
-  return process.env.CLENS_HOME ?? join(homedir(), ".claude");
-}
-function clensHome() {
-  if (process.env.CLENS_HOME !== void 0 && process.env.CLENS_INDEX_DIR === void 0) {
-    return join(process.env.CLENS_HOME, "__no_clens__");
-  }
-  return process.env.CLENS_INDEX_DIR ?? join(homedir(), ".clens");
-}
-function projectsDir() {
-  return join(claudeHome(), "projects");
-}
-function codexHome() {
-  if (process.env.CLENS_HOME !== void 0 && process.env.CLENS_CODEX_HOME === void 0) {
-    return join(process.env.CLENS_HOME, "__no_codex__");
-  }
-  return process.env.CLENS_CODEX_HOME ?? join(homedir(), ".codex");
-}
-function codexSessionsDir() {
-  return join(codexHome(), "sessions");
-}
-function indexDbPath() {
-  return join(clensHome(), "index.db");
-}
-function indexLockPath() {
-  return join(clensHome(), "index.db.lock");
-}
-function modelsDir() {
-  return join(clensHome(), "models");
-}
-function languageModelDir(code) {
-  return join(modelsDir(), code);
-}
-function judgeCwdDir() {
-  return join(clensHome(), "judge-cwd");
-}
+// src/indexer/append.ts
+import { closeSync, openSync, readSync } from "node:fs";
+import { basename as basename2 } from "node:path";
 
 // src/indexer/claude_parser.ts
-import { homedir as homedir2 } from "node:os";
+import { homedir } from "node:os";
 
 // src/indexer/shell_writes.ts
 import { posix } from "node:path";
@@ -3027,7 +2677,7 @@ function walkContent(args) {
         if (typeof command === "string") {
           let paths = [];
           try {
-            paths = shellWrittenFiles(command, cwd, homedir2());
+            paths = shellWrittenFiles(command, cwd, homedir());
           } catch {
             bumpAnomaly(batch, "shell_writes_error");
           }
@@ -3158,6 +2808,7 @@ function extractRemindersFromText(text, event_uuid, session_id, ts, out) {
     });
   }
 }
+var SUBAGENT_FILE_RE = /\/subagents\/(?:[^/]+\/)*agent-[^/]+\.jsonl$/;
 function agentSessionId(agentId) {
   return `agent-${agentId}`;
 }
@@ -3348,6 +2999,53 @@ function assignTurnNumbers(events) {
     }
   }
   return { userTurns: u, assistantTurns: a };
+}
+
+// src/indexer/cursor.ts
+import { readdirSync, statSync } from "node:fs";
+import { join as join2 } from "node:path";
+
+// src/indexer/sources.ts
+import { basename, dirname } from "node:path";
+
+// src/util/paths.ts
+import { homedir as homedir2 } from "node:os";
+import { join } from "node:path";
+function claudeHome() {
+  return process.env.CLENS_HOME ?? join(homedir2(), ".claude");
+}
+function clensHome() {
+  if (process.env.CLENS_HOME !== void 0 && process.env.CLENS_INDEX_DIR === void 0) {
+    return join(process.env.CLENS_HOME, "__no_clens__");
+  }
+  return process.env.CLENS_INDEX_DIR ?? join(homedir2(), ".clens");
+}
+function projectsDir() {
+  return join(claudeHome(), "projects");
+}
+function codexHome() {
+  if (process.env.CLENS_HOME !== void 0 && process.env.CLENS_CODEX_HOME === void 0) {
+    return join(process.env.CLENS_HOME, "__no_codex__");
+  }
+  return process.env.CLENS_CODEX_HOME ?? join(homedir2(), ".codex");
+}
+function codexSessionsDir() {
+  return join(codexHome(), "sessions");
+}
+function indexDbPath() {
+  return join(clensHome(), "index.db");
+}
+function indexLockPath() {
+  return join(clensHome(), "index.db.lock");
+}
+function modelsDir() {
+  return join(clensHome(), "models");
+}
+function languageModelDir(code) {
+  return join(modelsDir(), code);
+}
+function judgeCwdDir() {
+  return join(clensHome(), "judge-cwd");
 }
 
 // src/indexer/codex_parser.ts
@@ -4491,6 +4189,21 @@ function upsertCursor(db, row) {
   ).run(row);
 }
 
+// src/indexer/lang/registry.ts
+var registry = /* @__PURE__ */ new Map();
+function listKnownLanguageCodes() {
+  return ["ko", "ja", "zh"];
+}
+function registerLanguage(adapter) {
+  registry.set(adapter.code, adapter);
+}
+function getLanguageAdapter(code) {
+  return registry.get(code);
+}
+function languageFtsTable(code) {
+  return `user_text_fts_lang_${code}`;
+}
+
 // src/indexer/writer.ts
 function prepareStatements(db) {
   const insertLanguageFts = /* @__PURE__ */ new Map();
@@ -4698,6 +4411,453 @@ function applyToolResults(stmts, results) {
   }
 }
 
+// src/indexer/append.ts
+function readRange(path, start, end) {
+  const buf = Buffer.alloc(end - start);
+  const fd = openSync(path, "r");
+  try {
+    let got = 0;
+    while (got < buf.byteLength) {
+      const n = readSync(fd, buf, got, buf.byteLength - got, start + got);
+      if (n === 0) return null;
+      got += n;
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return buf;
+}
+function appendNewLines(db, stmts, f) {
+  const full = (reason) => ({ kind: "full", reason });
+  const cursor = db.prepare("SELECT path, mtime, size, lines, last_ok FROM file_cursor WHERE path = ?").get(f.path);
+  if (cursor === void 0) return full("no_cursor");
+  if (f.size < cursor.size || f.size < cursor.last_ok) return full("shrunk");
+  const from = cursor.last_ok > 0 ? cursor.last_ok - 1 : 0;
+  const bytes = readRange(f.path, from, f.size);
+  if (bytes === null) return full("shrunk");
+  if (cursor.last_ok > 0 && bytes[0] !== 10) return full("not_line_start");
+  const batch = {
+    counters: /* @__PURE__ */ new Map(),
+    session_id: null,
+    ts: new Date(Math.floor(f.mtime * 1e3)).toISOString(),
+    source_file: f.path
+  };
+  const toolResults = /* @__PURE__ */ new Map();
+  let events = [];
+  const meta = { cwd: false, gitBranch: false, version: false, sdkEntrypoint: false };
+  let lineStart = cursor.last_ok - from;
+  let terminated = 0;
+  for (let i = lineStart; i < bytes.byteLength; i++) {
+    if (bytes[i] !== 10) continue;
+    const line = bytes.subarray(lineStart, i).toString("utf8");
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      if (terminated === 0) return full("torn_first_line");
+    }
+    terminated += 1;
+    const p = parseEventLine(line, f.path, cursor.lines + terminated, batch, toolResults);
+    if (p !== null) events.push(p);
+    if (obj !== null && typeof obj === "object" && !Array.isArray(obj)) {
+      const o = obj;
+      if (typeof o.cwd === "string") meta.cwd = true;
+      if (typeof o.gitBranch === "string") meta.gitBranch = true;
+      if (typeof o.version === "string") meta.version = true;
+      if (typeof o.entrypoint === "string" && o.entrypoint.startsWith("sdk-")) meta.sdkEntrypoint = true;
+    }
+    lineStart = i + 1;
+  }
+  const subagentFile = SUBAGENT_FILE_RE.test(f.path);
+  const fileSessions = db.prepare("SELECT DISTINCT session_id FROM event WHERE source_file = ?").all(f.path).map((r) => r.session_id);
+  if (fileSessions.length === 0) return full("no_session_row");
+  const own = subagentFile ? fileSessions[0] : basename2(f.path, ".jsonl");
+  if (fileSessions.length > 1 || fileSessions[0] !== own) return full("several_sessions");
+  if (!subagentFile && db.prepare("SELECT 1 FROM anomaly WHERE source_file = ? AND kind = 'copied_session_line_skipped' LIMIT 1").get(f.path) !== void 0) {
+    return full("copied_lines");
+  }
+  if (subagentFile) {
+    const kept = events.filter((p) => p.event.agent_id !== null && p.event.session_id === agentSessionId(p.event.agent_id));
+    const skipped = events.length - kept.length;
+    if (skipped > 0) {
+      const cur = batch.counters.get("subagent_line_skipped");
+      if (cur) cur.count += skipped;
+      else batch.counters.set("subagent_line_skipped", { count: skipped, detail: null });
+    }
+    events = kept;
+  }
+  const session = db.prepare("SELECT kind, parent_id, started_at, ended_at, cwd, git_branch, version, model_primary FROM session WHERE id = ?").get(own);
+  if (session === void 0) return full("no_session_row");
+  if (events.some((p) => p.event.session_id !== own)) return full("other_session");
+  if (db.prepare("SELECT 1 FROM event WHERE session_id = ? AND source_file IS NOT ? LIMIT 1").get(own, f.path) !== void 0) {
+    return full("several_files");
+  }
+  if (session.cwd === null && meta.cwd || session.git_branch === null && meta.gitBranch || session.version === null && meta.version || subagentFile && session.parent_id === null && events.length > 0) {
+    return full("late_meta");
+  }
+  if (session.kind === "interactive" && meta.sdkEntrypoint) return full("sdk_entrypoint");
+  if (session.kind !== "subagent" && events.some((p) => p.event.is_sidechain === 1)) return full("sidechain");
+  const knownUuid = db.prepare("SELECT 1 FROM event WHERE uuid = ?");
+  if (events.some((p) => knownUuid.get(p.event.uuid) !== void 0)) return full("known_uuid");
+  const answered = db.prepare("SELECT 1 FROM tool_call WHERE call_id = ? AND duration_ms IS NOT NULL LIMIT 1");
+  for (const callId of toolResults.keys()) {
+    if (answered.get(callId) !== void 0) return full("result_exists");
+  }
+  assignTurnNumbers(events);
+  const last = db.prepare(
+    `SELECT MAX(ts) AS ts, MAX(user_turn_no) AS user_turn_no, MAX(assistant_turn_no) AS assistant_turn_no FROM event
+       WHERE session_id = ? AND (user_turn_no IS NOT NULL OR assistant_turn_no IS NOT NULL)`
+  ).get(own);
+  const numbered = events.filter((p) => p.event.user_turn_no !== null || p.event.assistant_turn_no !== null);
+  if (last.ts !== null && numbered.some((p) => p.event.ts < last.ts)) return full("out_of_order");
+  let primaryModel = session.model_primary;
+  const newModels = events.filter((p) => p.event.role === "assistant" && typeof p.event.model === "string");
+  if (newModels.length > 0) {
+    const counts = /* @__PURE__ */ new Map();
+    const stored = db.prepare("SELECT model, COUNT(*) AS n FROM event WHERE session_id = ? AND role = 'assistant' AND model IS NOT NULL GROUP BY model").all(own);
+    for (const r of stored) counts.set(r.model, r.n);
+    for (const p of newModels) counts.set(p.event.model, (counts.get(p.event.model) ?? 0) + 1);
+    const ranked = [...counts].sort((x, y) => y[1] - x[1]);
+    if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return full("model_tie");
+    primaryModel = ranked[0][0];
+  }
+  db.transaction(() => {
+    for (const p of events) {
+      if (p.event.user_turn_no !== null) p.event.user_turn_no += last.user_turn_no ?? 0;
+      if (p.event.assistant_turn_no !== null) p.event.assistant_turn_no += last.assistant_turn_no ?? 0;
+      writeParsedEvent(stmts, p);
+    }
+    applyToolResults(stmts, toolResults);
+    let startedAt = session.started_at;
+    let endedAt = session.ended_at;
+    for (const p of events) {
+      if (startedAt === null || p.event.ts < startedAt) startedAt = p.event.ts;
+      if (endedAt === null || p.event.ts > endedAt) endedAt = p.event.ts;
+    }
+    db.prepare("UPDATE session SET started_at = ?, ended_at = ?, model_primary = ? WHERE id = ?").run(
+      startedAt,
+      endedAt,
+      primaryModel,
+      own
+    );
+    const stored = db.prepare("SELECT kind, count, detail, session_id FROM anomaly WHERE source_file = ?").all(f.path);
+    const merged = new Map(stored.map((r) => [r.kind, { count: r.count, detail: r.detail }]));
+    for (const [kind, { count, detail }] of batch.counters) {
+      const m = merged.get(kind);
+      if (m === void 0) merged.set(kind, { count, detail });
+      else {
+        m.count += count;
+        if (detail !== null) m.detail = detail;
+      }
+    }
+    const anomalySession = stored.length > 0 ? stored[0].session_id : own;
+    stmts.wipeAnomaliesForFile.run(f.path);
+    for (const [kind, { count, detail }] of merged) {
+      stmts.insertAnomaly.run({ session_id: anomalySession, ts: batch.ts, kind, count, detail, source_file: f.path });
+    }
+    upsertCursor(db, {
+      path: f.path,
+      mtime: f.mtime,
+      size: f.size,
+      lines: cursor.lines + terminated,
+      last_ok: from + lineStart
+    });
+  })();
+  return { kind: "appended", events: events.length, parse_errors: batch.counters.get("json_parse_error")?.count ?? 0 };
+}
+
+// src/indexer/schema.ts
+var SCHEMA_VERSION = 18;
+function languageTableStatements(code) {
+  const table = languageFtsTable(code);
+  return [
+    `CREATE VIRTUAL TABLE IF NOT EXISTS ${table} USING fts5(
+       text,
+       session_id UNINDEXED,
+       ts         UNINDEXED,
+       tokenize   = 'unicode61'
+    )`,
+    `CREATE TRIGGER IF NOT EXISTS ${table}_ad
+       AFTER DELETE ON user_text BEGIN
+         DELETE FROM ${table} WHERE rowid = old.rowid;
+       END`
+  ];
+}
+var SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`,
+  // ----- File cursor (incremental indexing state) -----
+  `CREATE TABLE IF NOT EXISTS file_cursor (
+     path     TEXT PRIMARY KEY,
+     mtime    REAL NOT NULL,
+     size     INTEGER NOT NULL,
+     lines    INTEGER NOT NULL,
+     last_ok  INTEGER NOT NULL,
+     -- no longer written or read; kept so the schema does not change
+     live     INTEGER NOT NULL DEFAULT 0
+   )`,
+  // ----- Upkeep state (not derived from transcripts; digest.ts leaves it out) -----
+  // key 'fts_optimized_at': epoch ms of the last FTS 'optimize' (driver.ts).
+  // A new table and no derived rows, so no SCHEMA_VERSION bump.
+  `CREATE TABLE IF NOT EXISTS maintenance (
+     key    TEXT PRIMARY KEY,
+     value  TEXT NOT NULL
+   )`,
+  // ----- Project / Session -----
+  `CREATE TABLE IF NOT EXISTS project (
+     id       TEXT PRIMARY KEY,
+     cwd      TEXT,
+     display  TEXT
+   )`,
+  `CREATE TABLE IF NOT EXISTS session (
+     id            TEXT PRIMARY KEY,
+     project_id    TEXT,
+     kind          TEXT,
+     parent_id     TEXT,
+     started_at    TEXT,
+     ended_at      TEXT,
+     cwd           TEXT,
+     git_branch    TEXT,
+     model_primary TEXT,
+     version       TEXT,
+     source        TEXT NOT NULL DEFAULT 'claude',
+     FOREIGN KEY (project_id) REFERENCES project(id)
+   )`,
+  // ----- Event (one row per JSONL line, multi-block messages stay as one) -----
+  `CREATE TABLE IF NOT EXISTS event (
+     uuid              TEXT PRIMARY KEY,
+     session_id        TEXT NOT NULL,
+     parent_uuid       TEXT,
+     prompt_id         TEXT,
+     agent_id          TEXT,
+     is_sidechain      INTEGER,
+     ts                TEXT NOT NULL,
+     role              TEXT,
+     model             TEXT,
+     in_tok            INTEGER DEFAULT 0,
+     out_tok           INTEGER DEFAULT 0,
+     cache_r           INTEGER DEFAULT 0,
+     cache_w           INTEGER DEFAULT 0,
+     text_len          INTEGER DEFAULT 0,
+     has_tool_use      INTEGER DEFAULT 0,
+     has_text          INTEGER DEFAULT 0,
+     has_tool_res      INTEGER DEFAULT 0,
+     user_turn_no      INTEGER,
+     assistant_turn_no INTEGER,
+     source_file       TEXT,
+     FOREIGN KEY (session_id) REFERENCES session(id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
+  `CREATE INDEX IF NOT EXISTS event_session_idx ON event(session_id, ts)`,
+  `CREATE INDEX IF NOT EXISTS event_ts_idx ON event(ts)`,
+  `CREATE INDEX IF NOT EXISTS event_source_file_idx ON event(source_file)`,
+  // ----- Event-unknown-block (forensic store for unrecognized block types) -----
+  `CREATE TABLE IF NOT EXISTS event_unknown_block (
+     event_uuid  TEXT NOT NULL,
+     block_index INTEGER NOT NULL,
+     raw_json    TEXT NOT NULL,
+     PRIMARY KEY (event_uuid, block_index),
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  // ----- Tool calls -----
+  `CREATE TABLE IF NOT EXISTS tool_call (
+     event_uuid  TEXT NOT NULL,
+     session_id  TEXT NOT NULL,
+     ts          TEXT NOT NULL,
+     call_id     TEXT,
+     name        TEXT NOT NULL,
+     input_json  TEXT,
+     duration_ms INTEGER,
+     is_error    INTEGER DEFAULT 0,
+     result_chars INTEGER,
+     error_excerpt TEXT,
+     git_branch  TEXT,
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS tool_session_idx ON tool_call(session_id)`,
+  `CREATE INDEX IF NOT EXISTS tool_name_idx ON tool_call(name)`,
+  // A session's calls of some tools (the session record's git commands):
+  // without it SQLite took tool_name_idx and read every shell call in the
+  // index. Only an index, so no SCHEMA_VERSION bump: the next open adds it.
+  `CREATE INDEX IF NOT EXISTS tool_session_name_idx ON tool_call(session_id, name)`,
+  `CREATE INDEX IF NOT EXISTS tool_call_id_idx ON tool_call(call_id)`,
+  // ----- File operations -----
+  `CREATE TABLE IF NOT EXISTS file_op (
+     event_uuid  TEXT NOT NULL,
+     session_id  TEXT NOT NULL,
+     ts          TEXT NOT NULL,
+     tool        TEXT NOT NULL,
+     path        TEXT NOT NULL,
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS file_op_path_idx ON file_op(path)`,
+  // A session's edits (clens_left_off) and the indexer's per-session wipe
+  // read the whole table without it. No SCHEMA_VERSION bump, as above.
+  `CREATE INDEX IF NOT EXISTS file_op_session_tool_idx ON file_op(session_id, tool)`,
+  // ----- User and assistant text -----
+  `CREATE TABLE IF NOT EXISTS user_text (
+     event_uuid  TEXT NOT NULL,
+     session_id  TEXT NOT NULL,
+     ts          TEXT NOT NULL,
+     text        TEXT NOT NULL,
+     is_command  INTEGER DEFAULT 0,
+     role        TEXT NOT NULL DEFAULT 'user',
+     type        TEXT NOT NULL DEFAULT 'user_message',
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS user_text_session_ts_idx ON user_text(session_id, ts)`,
+  // ----- FTS5 full-text index over user_text -----
+  `CREATE VIRTUAL TABLE IF NOT EXISTS user_text_fts USING fts5(
+     text,
+     session_id UNINDEXED,
+     ts         UNINDEXED,
+     content    = 'user_text',
+     content_rowid = 'rowid'
+  )`,
+  `CREATE TRIGGER IF NOT EXISTS user_text_fts_ai
+     AFTER INSERT ON user_text BEGIN
+       INSERT INTO user_text_fts(rowid, text, session_id, ts)
+       VALUES (new.rowid, new.text, new.session_id, new.ts);
+     END`,
+  `CREATE TRIGGER IF NOT EXISTS user_text_fts_ad
+     AFTER DELETE ON user_text BEGIN
+       INSERT INTO user_text_fts(user_text_fts, rowid, text, session_id, ts)
+       VALUES ('delete', old.rowid, old.text, old.session_id, old.ts);
+     END`,
+  // ----- FTS5 trigram index (substring / partial-word matching) -----
+  // External content (content = 'user_text'), same as user_text_fts above —
+  // this table previously kept its own full copy of every row's text in its
+  // internal _content shadow table (verified: ~39MB of pure duplication of
+  // data user_text already stores), never actually read by search.ts (which
+  // always JOINs back to user_text for the displayed text regardless of
+  // which FTS layer matched). Pointing it at user_text instead eliminates
+  // that duplication with no behavior change (verified: identical MATCH/
+  // rank results before and after, same rowids in the same order).
+  `CREATE VIRTUAL TABLE IF NOT EXISTS user_text_fts_trigram USING fts5(
+     text,
+     session_id UNINDEXED,
+     ts         UNINDEXED,
+     tokenize      = 'trigram',
+     content       = 'user_text',
+     content_rowid = 'rowid'
+  )`,
+  `CREATE TRIGGER IF NOT EXISTS user_text_fts_trigram_ai
+     AFTER INSERT ON user_text BEGIN
+       INSERT INTO user_text_fts_trigram(rowid, text, session_id, ts)
+       VALUES (new.rowid, new.text, new.session_id, new.ts);
+     END`,
+  // External content tables can't reconstruct a deleted row's old column
+  // values from user_text after the fact (there's no shadow copy to fall
+  // back on) — the special 'delete' command below passes them explicitly
+  // from the trigger's old.* row, same pattern as user_text_fts_ad above.
+  `CREATE TRIGGER IF NOT EXISTS user_text_fts_trigram_ad
+     AFTER DELETE ON user_text BEGIN
+       INSERT INTO user_text_fts_trigram(user_text_fts_trigram, rowid, text, session_id, ts)
+       VALUES ('delete', old.rowid, old.text, old.session_id, old.ts);
+     END`,
+  // ----- FTS5 per-language morpheme-normalized layers (optional install) -----
+  ...listKnownLanguageCodes().flatMap(languageTableStatements),
+  // ----- Skill / Agent / Slash command -----
+  `CREATE TABLE IF NOT EXISTS skill_call (
+     event_uuid   TEXT NOT NULL,
+     session_id   TEXT NOT NULL,
+     ts           TEXT NOT NULL,
+     skill        TEXT NOT NULL,
+     args_excerpt TEXT,
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS skill_name_idx ON skill_call(skill)`,
+  `CREATE TABLE IF NOT EXISTS agent_call (
+     event_uuid     TEXT NOT NULL,
+     session_id     TEXT NOT NULL,
+     ts             TEXT NOT NULL,
+     subagent_type  TEXT NOT NULL,
+     description    TEXT,
+     prompt_excerpt TEXT,
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS agent_type_idx ON agent_call(subagent_type)`,
+  `CREATE TABLE IF NOT EXISTS slash_command (
+     event_uuid TEXT NOT NULL,
+     session_id TEXT NOT NULL,
+     ts         TEXT NOT NULL,
+     name       TEXT NOT NULL,
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS slash_name_idx ON slash_command(name)`,
+  `CREATE TABLE IF NOT EXISTS system_reminder (
+     event_uuid   TEXT NOT NULL,
+     session_id   TEXT NOT NULL,
+     ts           TEXT NOT NULL,
+     category     TEXT NOT NULL,
+     text_excerpt TEXT,
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS system_reminder_cat_idx ON system_reminder(category)`,
+  // One row per hook refusal: a PreToolUse block (from the blocked call's
+  // error result; tool and call_id set) or a Stop block (from its
+  // hook_blocking_error attachment; tool and call_id NULL).
+  `CREATE TABLE IF NOT EXISTS hook_block (
+     event_uuid  TEXT NOT NULL,
+     session_id  TEXT NOT NULL,
+     ts          TEXT NOT NULL,
+     hook_event  TEXT NOT NULL,
+     tool        TEXT,
+     call_id     TEXT,
+     reason      TEXT,
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`,
+  `CREATE INDEX IF NOT EXISTS hook_block_session_idx ON hook_block(session_id)`,
+  // ----- Anomaly bucket (lifecycle per §7) -----
+  // `source_file` is a v1 implementation detail (not in the spec's column list)
+  // so incremental re-parses can wipe their own per-file anomaly rows before
+  // re-flushing — keeps `clens stats --digest` deterministic between
+  // incremental and rebuild paths (gate 2). Reports still aggregate via
+  // `SELECT kind, SUM(count) GROUP BY kind`, so the extra column is transparent
+  // to downstream consumers.
+  `CREATE TABLE IF NOT EXISTS anomaly (
+     session_id   TEXT,
+     ts           TEXT,
+     kind         TEXT NOT NULL,
+     count        INTEGER NOT NULL DEFAULT 1,
+     detail       TEXT,
+     source_file  TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS anomaly_kind_idx ON anomaly(kind)`,
+  `CREATE INDEX IF NOT EXISTS anomaly_source_file_idx ON anomaly(source_file)`
+];
+function applySchema(db) {
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 30000");
+  db.pragma("foreign_keys = OFF");
+  db.pragma("synchronous = NORMAL");
+  const initTx = db.transaction(() => {
+    for (const stmt of SCHEMA_STATEMENTS) db.exec(stmt);
+    const toolCallColumns = db.prepare("PRAGMA table_info(tool_call)").all();
+    if (!toolCallColumns.some((c) => c.name === "result_chars")) {
+      db.exec("ALTER TABLE tool_call ADD COLUMN result_chars INTEGER");
+    }
+    if (!toolCallColumns.some((c) => c.name === "error_excerpt")) {
+      db.exec("ALTER TABLE tool_call ADD COLUMN error_excerpt TEXT");
+    }
+    if (!toolCallColumns.some((c) => c.name === "git_branch")) {
+      db.exec("ALTER TABLE tool_call ADD COLUMN git_branch TEXT");
+    }
+    const row = db.prepare("SELECT v FROM schema_version LIMIT 1").get();
+    if (!row) {
+      db.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
+    }
+  });
+  initTx();
+}
+function getSchemaVersion(db) {
+  try {
+    const row = db.prepare("SELECT v FROM schema_version LIMIT 1").get();
+    return row?.v ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // src/indexer/lang/init.ts
 import { existsSync, readdirSync as readdirSync2, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -4902,7 +5062,7 @@ function deriveSessionKind(args) {
   return "interactive";
 }
 function deriveProjectId(source, filePath, cwd) {
-  return getSourceAdapter(source).deriveProjectId?.(filePath, cwd) ?? basename2(dirname3(filePath));
+  return getSourceAdapter(source).deriveProjectId?.(filePath, cwd) ?? basename3(dirname3(filePath));
 }
 function summarizeFile(events) {
   const out = {
@@ -5018,7 +5178,6 @@ function commitFile(args) {
   tx();
   return { eventsInserted: summary.events.length };
 }
-var SUBAGENT_FILE_RE = /\/subagents\/(?:[^/]+\/)*agent-[^/]+\.jsonl$/;
 function writableEvents(db, source, source_file, events, batch) {
   if (source !== "claude" || events.length === 0) return events;
   const skip = (kind, n) => {
@@ -5115,6 +5274,7 @@ async function runIndex(opts = {}) {
       forceRebuild: needsRebuild
     });
     let filesParsed = 0;
+    let filesAppended = 0;
     let events = 0;
     let parseErrors = 0;
     for (const f of discovered) {
@@ -5123,6 +5283,16 @@ async function runIndex(opts = {}) {
       if (lock.lost) {
         db.close();
         throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+      }
+      if (!needsRebuild && f.source === "claude") {
+        const appended = appendNewLines(db, stmts, f);
+        if (appended.kind === "appended") {
+          filesParsed += 1;
+          filesAppended += 1;
+          events += appended.events;
+          parseErrors += appended.parse_errors;
+          continue;
+        }
       }
       const body = readFileSync2(f.path, "utf8");
       const batch = {
@@ -5162,6 +5332,7 @@ async function runIndex(opts = {}) {
       files_parsed: filesParsed,
       events_inserted: events,
       parse_errors: parseErrors,
+      files_appended: filesAppended,
       elapsed_ms: Date.now() - t0
     };
   } finally {

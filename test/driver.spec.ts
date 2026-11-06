@@ -356,9 +356,12 @@ describe("indexer driver — Codex explicit skill invocation ($name) validation"
  * registered adapter's inserts happen inside writeParsedEvent(), the same
  * per-file transaction as everything else (writer.ts), and wipeSessions()
  * deleting from user_text fires the language table's own AFTER DELETE
- * trigger (schema.ts) the same way the trigram layer's does — so a touched
- * file's per-session wipe-and-reinsert must reproduce byte-identical
+ * trigger (schema.ts) the same way the trigram layer's does — so a
+ * per-session wipe-and-reinsert must reproduce byte-identical
  * language-layer rows, not just leave the rest of the schema untouched.
+ * A touched file no longer re-derives its session (src/indexer/append.ts
+ * takes it without rewriting a row); the morpheme test below re-derives one
+ * and compares its language rows with a rebuild.
  * Uses a fake adapter (deterministic, no real model needed) registered
  * directly — see writer_lang.spec.ts for why this bypasses lang/init.ts
  * entirely and is a legitimate way to test the wiring.
@@ -401,7 +404,7 @@ describe("indexer driver — language layer respects Gate 2 (incremental == rebu
     expect(langCount).toBeLessThanOrEqual(userTextCount);
   });
 
-  it("incremental re-parse after touching the file reproduces byte-identical ko-layer rows", async () => {
+  it("an incremental run after touching the file leaves byte-identical ko-layer rows", async () => {
     const before = snapshotLangTable();
 
     const filePath = join(env.claude, "projects", "fixture-project", "test.jsonl");
@@ -461,6 +464,8 @@ describe("indexer driver — re-deriving a file reuses the morphemes already ind
     analyzed.length = 0;
 
     const filePath = join(env.claude, "projects", "fixture-project", "test.jsonl");
+    // Dated before the session's messages, so the run re-derives the session
+    // instead of appending the line on its own (src/indexer/append.ts).
     appendFileSync(
       filePath,
       JSON.stringify({
@@ -469,7 +474,7 @@ describe("indexer driver — re-deriving a file reuses the morphemes already ind
         type: "user",
         message: { role: "user", content: "새로 들어온 메시지입니다" },
         uuid: "evt-appended",
-        timestamp: "2026-06-21T09:20:00.000Z",
+        timestamp: "2026-06-20T09:20:00.000Z",
         userType: "external",
         entrypoint: "cli",
         cwd: "/fixture/cwd",

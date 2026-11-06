@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runIndex } from "../src/indexer/driver.js";
 
-// Every change to a live transcript makes the indexer delete and re-insert all
-// of its session's rows, and FTS5 keeps the deleted rows' entries until a merge
+// Every change to a live transcript that is not appended on its own
+// (src/indexer/append.ts) makes the indexer delete and re-insert all of its
+// session's rows, and FTS5 keeps the deleted rows' entries until a merge
 // reaches them. The driver optimizes the search tables at most once an hour.
 
 let root: string;
@@ -36,7 +37,10 @@ const HOUR = 60 * 60 * 1000;
 const T0 = Date.parse("2026-09-30T00:00:00Z");
 
 let lineNo = 0;
-function line(): string {
+/** One message of the session. `datedBefore` dates it before every message
+ *  written without it, so it reaches the index by re-deriving the session,
+ *  not by appending (src/indexer/append.ts). */
+function line(datedBefore = false): string {
   lineNo += 1;
   const n = lineNo;
   return (
@@ -44,7 +48,7 @@ function line(): string {
       uuid: `u${n}`,
       sessionId: SESSION,
       type: n % 2 ? "user" : "assistant",
-      timestamp: new Date(Date.parse("2026-09-01T00:00:00Z") + n * 1000).toISOString(),
+      timestamp: new Date(Date.parse(datedBefore ? "2026-08-01T00:00:00Z" : "2026-09-01T00:00:00Z") + n * 1000).toISOString(),
       cwd: "/w/app",
       message:
         n % 2
@@ -55,8 +59,8 @@ function line(): string {
 }
 
 let clock = 1_900_000_000;
-function write(path: string, lines: number, append: boolean): void {
-  const body = Array.from({ length: lines }, line).join("");
+function write(path: string, lines: number, append: boolean, datedBefore = false): void {
+  const body = Array.from({ length: lines }, () => line(datedBefore)).join("");
   if (append) appendFileSync(path, body);
   else writeFileSync(path, body);
   clock += 10;
@@ -108,13 +112,13 @@ describe("indexer — FTS upkeep", () => {
 
     // Twenty changes inside the hour: each re-derives the whole session.
     for (let i = 1; i <= 20; i++) {
-      write(file, 1, true);
+      write(file, 1, true, true);
       await runIndex({ now: T0 + i * 1000 });
     }
     // Measured: 3.3 times the fresh size, and 1.1 times after the optimize.
     expect(trigramBytes()).toBeGreaterThan(fresh * 2);
 
-    write(file, 1, true);
+    write(file, 1, true, true);
     await runIndex({ now: T0 + HOUR });
     expect(trigramBytes()).toBeLessThan(fresh * 1.2);
 

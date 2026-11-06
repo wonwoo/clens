@@ -8,8 +8,9 @@
  *   - Compare each file's mtime against file_cursor.mtime to decide whether
  *     it needs (re)parsing.
  *
- * Reading the body itself happens in the driver, not here, so this module
- * stays free of I/O strategy decisions (full-read vs partial-resume).
+ * Reading the body itself happens in the driver and append.ts, not here, so
+ * this module stays free of I/O strategy decisions (full-read vs
+ * partial-resume).
  */
 
 import { readdirSync, statSync } from "node:fs";

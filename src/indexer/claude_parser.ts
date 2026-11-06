@@ -540,6 +540,10 @@ function extractRemindersFromText(
   }
 }
 
+/** A subagent transcript: <session>/subagents/agent-*.jsonl, or one level
+ *  deeper for a workflow's agents (subagents/workflows/<run>/agent-*.jsonl). */
+export const SUBAGENT_FILE_RE = /\/subagents\/(?:[^/]+\/)*agent-[^/]+\.jsonl$/;
+
 /** The session id a Claude Code subagent's lines are stored under. */
 export function agentSessionId(agentId: string): string {
   return `agent-${agentId}`;
@@ -712,12 +716,13 @@ export function parseEventLine(
 
 /**
  * Parse an entire JSONL file body. Partial last line (no trailing \n)
- * is excluded from `events` and from `last_ok_byte_offset`; the driver
- * re-reads the whole file on its next change, which picks it up.
+ * is excluded from `events` and from `last_ok_byte_offset`; the next run
+ * picks it up, by appending (append.ts) or by re-reading the whole file.
  *
  * `last_ok_byte_offset` is a BYTE offset (not codepoint offset), computed
- * over the UTF-8 buffer. It is stored as file_cursor.last_ok; nothing
- * resumes reading from it.
+ * over the UTF-8 buffer. It is stored as file_cursor.last_ok, where
+ * append.ts resumes reading the file's own bytes; the two agree for a file
+ * of valid UTF-8, which is what Claude Code writes.
  */
 export function parseFileBody(args: {
   body: string;

@@ -9,6 +9,9 @@
  *   - Per-session re-derivation: when ANY event for session S changes,
  *     wipe-and-reinsert all S events so user_turn_no is recomputed from a
  *     consistent ordering.
+ *   - Append path: a Claude Code transcript that only grew has just its new
+ *     lines written (append.ts) when that provably equals re-deriving its
+ *     session; every other change re-derives as above.
  *   - Transaction boundary: one transaction per file batch. Writers in
  *     other clens processes block on the SQLite shared lock; the advisory
  *     lockfile prevents concurrent index writers.
@@ -19,9 +22,10 @@ import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import lockfile from "proper-lockfile";
 
+import { appendNewLines } from "./append.js";
 import { applySchema, getSchemaVersion, SCHEMA_VERSION } from "./schema.js";
 import { discoverFiles, upsertCursor, type DiscoveredFile } from "./cursor.js";
-import { agentSessionId, assignTurnNumbers } from "./claude_parser.js";
+import { agentSessionId, assignTurnNumbers, SUBAGENT_FILE_RE } from "./claude_parser.js";
 import { getSourceAdapter } from "./sources.js";
 import {
   applyToolResults,
@@ -56,6 +60,9 @@ export interface IndexResult {
   files_parsed: number;
   events_inserted: number;
   parse_errors: number;
+  /** Files indexed by appending their new lines (append.ts); also counted in
+   *  files_parsed, their new events alone in events_inserted. */
+  files_appended: number;
   elapsed_ms: number;
 }
 
@@ -339,10 +346,6 @@ function commitFile(args: {
   return { eventsInserted: summary.events.length };
 }
 
-/** A subagent transcript: <session>/subagents/agent-*.jsonl, or one level
- *  deeper for a workflow's agents (subagents/workflows/<run>/agent-*.jsonl). */
-const SUBAGENT_FILE_RE = /\/subagents\/(?:[^/]+\/)*agent-[^/]+\.jsonl$/;
-
 /** The events a Claude transcript may write. commitFile wipes and refills
  *  every session it writes, so a file must only write the sessions it holds
  *  in full; otherwise re-reading it deletes rows that came from another file.
@@ -394,12 +397,13 @@ function writableEvents(
 
 /** FTS5 keeps a deleted row's index entries until a merge reaches them, and
  *  commitFile deletes and re-inserts every row of a session it re-derives, so
- *  each change to a live transcript leaves its session's text behind in the
- *  search tables. Automatic merging did not keep up: a day after a rebuild the
- *  index was 2.24 GB, 814 MB after 'optimize' and VACUUM, with the same search
- *  results. 'optimize' took under 2 s on that clean index. FTS5's secure-delete
- *  option removes entries at delete time instead, but made re-deriving an
- *  880-row session 13 times slower (3.5 s against 0.27 s). */
+ *  each change to a live transcript that is not appended (append.ts) leaves
+ *  its session's text behind in the search tables. Automatic merging did not
+ *  keep up: a day after a rebuild the index was 2.24 GB, 814 MB after
+ *  'optimize' and VACUUM, with the same search results. 'optimize' took under
+ *  2 s on that clean index. FTS5's secure-delete option removes entries at
+ *  delete time instead, but made re-deriving an 880-row session 13 times
+ *  slower (3.5 s against 0.27 s). */
 const FTS_OPTIMIZE_INTERVAL_MS = 60 * 60 * 1000;
 
 function optimizeFtsIfDue(db: Database.Database, now: number, rebuilt: boolean, vacuumMinFreeBytes: number): void {
@@ -517,6 +521,7 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
     });
 
     let filesParsed = 0;
+    let filesAppended = 0;
     let events = 0;
     let parseErrors = 0;
     for (const f of discovered) {
@@ -529,6 +534,19 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
       if (lock.lost) {
         db.close();
         throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+      }
+      // A Claude Code transcript that only grew gets its new lines appended
+      // when append.ts can prove that equals re-deriving it; Codex rollouts
+      // and rebuilds always re-derive.
+      if (!needsRebuild && f.source === "claude") {
+        const appended = appendNewLines(db, stmts, f);
+        if (appended.kind === "appended") {
+          filesParsed += 1;
+          filesAppended += 1;
+          events += appended.events;
+          parseErrors += appended.parse_errors;
+          continue;
+        }
       }
       const body = readFileSync(f.path, "utf8");
       const batch: AnomalyBatch = {
@@ -569,6 +587,7 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
       files_parsed: filesParsed,
       events_inserted: events,
       parse_errors: parseErrors,
+      files_appended: filesAppended,
       elapsed_ms: Date.now() - t0,
     };
   } finally {
