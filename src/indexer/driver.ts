@@ -9,20 +9,24 @@
  *   - Per-session re-derivation: when ANY event for session S changes,
  *     wipe-and-reinsert all S events so user_turn_no is recomputed from a
  *     consistent ordering.
- *   - Append path: a Claude Code transcript that only grew has just its new
- *     lines written (append.ts) when that provably equals re-deriving its
- *     session; every other change re-derives as above.
+ *   - Append path: a Claude Code transcript or Codex rollout that only grew
+ *     has just its new lines written (append.ts, codex_append.ts) when that
+ *     provably equals re-deriving its session; every other change re-derives
+ *     as above.
  *   - Transaction boundary: one transaction per file batch. Writers in
  *     other clens processes block on the SQLite shared lock; the advisory
  *     lockfile prevents concurrent index writers.
  */
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
 import Database from "better-sqlite3";
 import lockfile from "proper-lockfile";
 
 import { appendNewLines } from "./append.js";
+import { appendCodexLines, keepCodexState, prefilledCallIds } from "./codex_append.js";
+import { parseCodexFile } from "./codex_parser.js";
+import { filterCodexSkillCandidates } from "./codex_skills.js";
 import { applySchema, getSchemaVersion, SCHEMA_VERSION } from "./schema.js";
 import { discoverFiles, upsertCursor, type DiscoveredFile } from "./cursor.js";
 import { agentSessionId, assignTurnNumbers, SUBAGENT_FILE_RE } from "./claude_parser.js";
@@ -36,7 +40,7 @@ import {
   writeParsedEvent,
   type WriterStatements,
 } from "./writer.js";
-import { clensHome, codexHome, indexDbPath, indexLockPath, judgeCwdDir } from "../util/paths.js";
+import { clensHome, indexDbPath, indexLockPath, judgeCwdDir } from "../util/paths.js";
 import { ensureLanguageAdaptersLoaded } from "./lang/init.js";
 import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 import type { AnomalyBatch, FileParseResult, ParsedEvent, ToolResultInfo } from "./types.js";
@@ -192,29 +196,6 @@ function summarizeFile(events: ParsedEvent[]): FileWriteSummary {
     out.primary_model = [...modelCount.entries()].sort((a, b) => b[1] - a[1])[0]![0];
   }
   return out;
-}
-
-/**
- * codex_parser.ts extracts every "$word" in a Codex user_message as an
- * unvalidated skill candidate (it can't tell "$code-review" from "$100" or a
- * pasted Java inner-class name — see its SKILL_MARKER_RE comment). Confirm a
- * candidate against real installed skill directories — global
- * (codexHome()/skills/<name>) or this session's own project-local
- * (<cwd>/.codex/skills/<name>) — before trusting it. This lives here rather
- * than in the parser so codex_parser.ts stays a pure function, and rather
- * than in analyzer/ because that layer is pure-SQL-only.
- */
-function isKnownCodexSkill(name: string, cwd: string | null): boolean {
-  if (existsSync(join(codexHome(), "skills", name))) return true;
-  if (cwd !== null && existsSync(join(cwd, ".codex", "skills", name))) return true;
-  return false;
-}
-
-function filterCodexSkillCandidates(events: ParsedEvent[], cwd: string | null): void {
-  for (const p of events) {
-    if (p.skill_calls.length === 0) continue;
-    p.skill_calls = p.skill_calls.filter((sc) => isKnownCodexSkill(sc.skill, cwd));
-  }
 }
 
 /**
@@ -535,11 +516,11 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
         db.close();
         throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
       }
-      // A Claude Code transcript that only grew gets its new lines appended
-      // when append.ts can prove that equals re-deriving it; Codex rollouts
-      // and rebuilds always re-derive.
-      if (!needsRebuild && f.source === "claude") {
-        const appended = appendNewLines(db, stmts, f);
+      // A Claude Code transcript or Codex rollout that only grew gets its new
+      // lines appended when append.ts or codex_append.ts can prove that
+      // equals re-deriving it; rebuilds always re-derive.
+      if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
+        const appended = f.source === "claude" ? appendNewLines(db, stmts, f) : appendCodexLines(db, stmts, f);
         if (appended.kind === "appended") {
           filesParsed += 1;
           filesAppended += 1;
@@ -555,10 +536,11 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
         ts: new Date(Math.floor(f.mtime * 1000)).toISOString(),
         source_file: f.path,
       };
-      const parsed = getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
-      if (f.source === "codex") {
-        filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd);
-      }
+      // A Codex parse also returns the state it ends with, kept below for the
+      // next append to this rollout.
+      const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
+      const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
+      const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
       const { eventsInserted } = commitFile({
         db,
         stmts,
@@ -573,6 +555,9 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
         session_meta: parsed.session_meta,
         source: f.source,
       });
+      if (codex !== null) {
+        keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills!, prefilledCallIds(parsed.events));
+      }
       filesParsed += 1;
       events += eventsInserted;
       parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;

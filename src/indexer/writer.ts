@@ -45,6 +45,10 @@ export interface WriterStatements {
   insertAnomaly: Database.Statement;
   wipeAnomaliesForFile: Database.Statement;
   updateToolCallResult: Database.Statement;
+  /** Sets a call's result even when one is already set: a later line of a
+   *  Codex rollout can change the result of a call written in an earlier
+   *  run (codex_append.ts), where a re-derivation writes the newest one. */
+  setToolCallResult: Database.Statement;
   upsertSession: Database.Statement;
   upsertProject: Database.Statement;
   wipeEventsForSession: Database.Statement;
@@ -153,6 +157,14 @@ export function prepareStatements(db: Database.Database): WriterStatements {
            result_chars = @result_chars,
            error_excerpt = @error_excerpt
        WHERE call_id = @call_id AND duration_ms IS NULL`,
+    ),
+    setToolCallResult: db.prepare(
+      `UPDATE tool_call
+       SET duration_ms = CAST((julianday(@result_ts) - julianday(ts)) * 86400000 AS INTEGER),
+           is_error = @is_error,
+           result_chars = @result_chars,
+           error_excerpt = @error_excerpt
+       WHERE call_id = @call_id AND session_id = @session_id`,
     ),
     // A file writes only the sessions it holds in full (writableEvents in
     // driver.ts), so its span replaces the stored one, as in a rebuild, which
@@ -276,7 +288,7 @@ function insertLanguageLayers(
 }
 
 /** better-sqlite3 cannot bind boolean / undefined directly. Normalize. */
-function toSqlBindable(row: object): Record<string, unknown> {
+export function toSqlBindable(row: object): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(row)) {
     const v = (row as Record<string, unknown>)[k];

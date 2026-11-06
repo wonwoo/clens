@@ -7,9 +7,10 @@
  * (gate 2, see driver.ts). Otherwise `full` is returned before anything is
  * written, and runIndex re-derives the file as before.
  *
- * Codex rollouts never come here: their parser carries the model, token
- * counts and open calls from earlier lines into later events, which the
- * index does not keep.
+ * Codex rollouts go through codex_append.ts instead: their parser carries
+ * the model, token counts and open calls from earlier lines into later
+ * events, so a rollout's new lines are parsed from the state its last parse
+ * ended with. readAppended and finishAppend are the parts both share.
  */
 
 import { closeSync, openSync, readSync } from "node:fs";
@@ -26,13 +27,15 @@ export type AppendFallback =
   | "no_cursor" | "shrunk" | "not_line_start" | "torn_first_line"
   | "no_session_row" | "several_sessions" | "copied_lines" | "other_session" | "several_files"
   | "late_meta" | "sdk_entrypoint" | "sidechain" | "known_uuid"
-  | "result_exists" | "out_of_order" | "model_tie";
+  | "result_exists" | "out_of_order" | "model_tie"
+  // Codex rollouts only (codex_append.ts).
+  | "no_state" | "skills_changed" | "meta_changed" | "earlier_event_changed" | "prefilled_result" | "shared_call_id";
 
 export type AppendOutcome =
   | { kind: "appended"; events: number; parse_errors: number }
   | { kind: "full"; reason: AppendFallback };
 
-interface SessionRow {
+export interface SessionRow {
   kind: string | null;
   parent_id: string | null;
   started_at: string | null;
@@ -62,6 +65,31 @@ function readRange(path: string, start: number, end: number): Buffer | null {
 }
 
 /**
+ * Guards 1-3, shared by both sources: the file's cursor, and the bytes after
+ * it when the bytes before last_ok are the ones already indexed. `bytes`
+ * starts at `from`, the \n before last_ok when last_ok is past 0, and the
+ * first new line starts at `start` in it.
+ */
+export function readAppended(
+  db: Database.Database,
+  f: DiscoveredFile,
+): { cursor: FileCursorRow; from: number; bytes: Buffer; start: number } | AppendFallback {
+  const cursor = db.prepare("SELECT path, mtime, size, lines, last_ok FROM file_cursor WHERE path = ?").get(f.path) as
+    | FileCursorRow
+    | undefined;
+  if (cursor === undefined) return "no_cursor";
+  // The full path stores the size listed before the read, and last_ok from
+  // the read itself, so last_ok can pass `size` when the file grew between
+  // the two; a file shorter than last_ok lost indexed bytes.
+  if (f.size < cursor.size || f.size < cursor.last_ok) return "shrunk";
+  const from = cursor.last_ok > 0 ? cursor.last_ok - 1 : 0;
+  const bytes = readRange(f.path, from, f.size);
+  if (bytes === null) return "shrunk";
+  if (cursor.last_ok > 0 && bytes[0] !== 0x0a) return "not_line_start";
+  return { cursor, from, bytes, start: cursor.last_ok - from };
+}
+
+/**
  * Index only the lines appended to `f` since its cursor, when that gives the
  * same rows as re-deriving its session; otherwise return `full` without
  * writing. Must run under the index lock, as runIndex holds it.
@@ -74,18 +102,9 @@ export function appendNewLines(
   const full = (reason: AppendFallback): AppendOutcome => ({ kind: "full", reason });
 
   // 1-3: the bytes before last_ok are the ones already indexed.
-  const cursor = db.prepare("SELECT path, mtime, size, lines, last_ok FROM file_cursor WHERE path = ?").get(f.path) as
-    | FileCursorRow
-    | undefined;
-  if (cursor === undefined) return full("no_cursor");
-  // The full path stores the size listed before the read, and last_ok from
-  // the read itself, so last_ok can pass `size` when the file grew between
-  // the two; a file shorter than last_ok lost indexed bytes.
-  if (f.size < cursor.size || f.size < cursor.last_ok) return full("shrunk");
-  const from = cursor.last_ok > 0 ? cursor.last_ok - 1 : 0;
-  const bytes = readRange(f.path, from, f.size);
-  if (bytes === null) return full("shrunk");
-  if (cursor.last_ok > 0 && bytes[0] !== 0x0a) return full("not_line_start");
+  const read = readAppended(db, f);
+  if (typeof read === "string") return full(read);
+  const { cursor, from, bytes } = read;
 
   // 4: parse the new lines that end in \n, as parseFileBody does; a partial
   // last line is left for a later run.
@@ -98,8 +117,7 @@ export function appendNewLines(
   const toolResults = new Map<string, ToolResultInfo>();
   let events: ParsedEvent[] = [];
   const meta = { cwd: false, gitBranch: false, version: false, sdkEntrypoint: false };
-  // `bytes` starts at `from`: at the \n checked above, when last_ok is past 0.
-  let lineStart = cursor.last_ok - from;
+  let lineStart = read.start;
   let terminated = 0;
   for (let i = lineStart; i < bytes.byteLength; i++) {
     if (bytes[i] !== 0x0a) continue;
@@ -194,6 +212,45 @@ export function appendNewLines(
     if (answered.get(callId) !== undefined) return full("result_exists");
   }
 
+  return finishAppend(db, stmts, {
+    f,
+    cursor,
+    own,
+    session,
+    events,
+    batch,
+    terminated,
+    last_ok: from + lineStart,
+    writeExtra: () => applyToolResults(stmts, toolResults),
+  });
+}
+
+/**
+ * Guards 13-14 and the write, shared by both sources: the new events of
+ * session `own` with turn numbers continued from the stored ones, then
+ * `writeExtra` (the rows the new lines change in events already written),
+ * the session's span and primary model, the file's anomaly counts and its
+ * cursor, in one transaction. `last_ok` is the file offset after the last
+ * new line that ends in \n, and `terminated` the number of those lines.
+ */
+export function finishAppend(
+  db: Database.Database,
+  stmts: WriterStatements,
+  args: {
+    f: DiscoveredFile;
+    cursor: FileCursorRow;
+    own: string;
+    session: SessionRow;
+    events: ParsedEvent[];
+    batch: AnomalyBatch;
+    terminated: number;
+    last_ok: number;
+    writeExtra: () => void;
+  },
+): AppendOutcome {
+  const { f, cursor, own, session, events, batch, terminated, last_ok, writeExtra } = args;
+  const full = (reason: AppendFallback): AppendOutcome => ({ kind: "full", reason });
+
   // 13: turn numbers continue from the stored ones only when every new
   // numbered event sorts after them. assignTurnNumbers numbers the new events
   // here so the rule for which events get a number stays in one place; an
@@ -233,7 +290,7 @@ export function appendNewLines(
       // No known tokens: these messages are new to the analyzer.
       writeParsedEvent(stmts, p);
     }
-    applyToolResults(stmts, toolResults);
+    writeExtra();
 
     let startedAt = session.started_at;
     let endedAt = session.ended_at;
@@ -267,7 +324,7 @@ export function appendNewLines(
       }
     }
     // With no stored rows no line was skipped, so the file's first event is
-    // one of its own session's.
+    // one of its own session's (a Codex rollout's are all its own).
     const anomalySession = stored.length > 0 ? stored[0]!.session_id : own;
     stmts.wipeAnomaliesForFile.run(f.path);
     for (const [kind, { count, detail }] of merged) {
@@ -279,7 +336,7 @@ export function appendNewLines(
       mtime: f.mtime,
       size: f.size,
       lines: cursor.lines + terminated,
-      last_ok: from + lineStart,
+      last_ok,
     });
   })();
 

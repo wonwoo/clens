@@ -365,7 +365,7 @@ describe("append path — T5 no new complete line", () => {
 });
 
 describe("append path — T6 Codex", () => {
-  it("re-derives a grown Codex rollout", async () => {
+  it("appends a grown Codex rollout", async () => {
     const day = join(env.codex, "sessions", "2026", "07", "01");
     mkdirSync(day, { recursive: true });
     const file = join(day, "rollout-2026-07-01-codex-sess-1.jsonl");
@@ -380,7 +380,7 @@ describe("append path — T6 Codex", () => {
     add(file, cline({ timestamp: "2026-07-01T00:00:03Z", type: "event_msg", payload: { type: "user_message", message: "again" } }));
     const r = await runIndex({});
     expect(r.files_parsed).toBe(1);
-    expect(r.files_appended).toBe(0);
+    expect(r.files_appended).toBe(1);
     await expectDigestEqualsRebuild();
   });
 });

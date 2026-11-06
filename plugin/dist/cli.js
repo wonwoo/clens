@@ -1615,8 +1615,8 @@ var require_proper_lockfile = __commonJS({
 
 // src/indexer/driver.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
-import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2 } from "node:fs";
-import { basename as basename3, dirname as dirname3, join as join4 } from "node:path";
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync2 } from "node:fs";
+import { basename as basename3, dirname as dirname3 } from "node:path";
 import Database from "better-sqlite3";
 
 // src/indexer/append.ts
@@ -3591,8 +3591,12 @@ function makeBlankParsed(event) {
   };
 }
 function parseCodexFileBody(args) {
+  return parseCodexFile(args).result;
+}
+function parseCodexFile(args) {
   const { source_file, batch } = args;
-  const body = /^\{[ \t\r]*\n/.test(args.body) ? compactJsonStream(args.body) ?? args.body : args.body;
+  const pretty = /^\{[ \t\r]*\n/.test(args.body);
+  const body = pretty ? compactJsonStream(args.body) ?? args.body : args.body;
   const events = [];
   const state = {
     session_id: null,
@@ -3619,48 +3623,61 @@ function parseCodexFileBody(args) {
     kind: null,
     parentId: null
   };
-  const toolResults = /* @__PURE__ */ new Map();
-  const buf = Buffer.from(body, "utf8");
-  let i = 0;
-  let lineStartByte = 0;
-  let lineSeq = 0;
-  let lastOk = 0;
-  let fullyTerminated = 0;
-  while (i < buf.byteLength) {
-    if (buf[i] === 10) {
-      const line = buf.slice(lineStartByte, i).toString("utf8");
-      lineSeq += 1;
-      const cl = parseLine(line);
-      if (cl === null) {
-        if (line.trim().length > 0) bumpAnomaly2(batch, "json_parse_error");
-      } else if (inCopiedHistory(cl, state) || inParentTurn(cl, state)) {
-        bumpAnomaly2(batch, "copied_session_line_skipped");
-      } else {
-        processLine(cl, lineSeq, source_file, state, events, toolResults, batch);
-        if (batch.session_id === null && state.session_id !== null) {
-          batch.session_id = state.session_id;
-        }
-      }
-      fullyTerminated += 1;
-      lastOk = i + 1;
-      lineStartByte = i + 1;
-    }
-    i += 1;
-  }
+  const resume = { state, toolResults: /* @__PURE__ */ new Map() };
+  const { terminated, last_ok } = parseCodexLines({
+    buf: Buffer.from(body, "utf8"),
+    start: 0,
+    first_seq: 1,
+    source_file,
+    resume,
+    batch,
+    events
+  });
   return {
-    events,
-    anomalies: batch,
-    fully_terminated_line_count: fullyTerminated,
-    last_ok_byte_offset: lastOk,
-    tool_results: toolResults,
-    session_meta: {
-      cwd: state.cwd,
-      git_branch: state.git_branch,
-      version: state.version,
-      kind: state.kind ?? void 0,
-      parent_id: state.parentId ?? void 0
-    }
+    result: {
+      events,
+      anomalies: batch,
+      fully_terminated_line_count: terminated,
+      last_ok_byte_offset: last_ok,
+      tool_results: resume.toolResults,
+      session_meta: {
+        cwd: state.cwd,
+        git_branch: state.git_branch,
+        version: state.version,
+        kind: state.kind ?? void 0,
+        parent_id: state.parentId ?? void 0
+      }
+    },
+    resume: pretty ? null : resume
   };
+}
+function parseCodexLines(args) {
+  const { buf, source_file, batch, events } = args;
+  const { state, toolResults } = args.resume;
+  let lineStartByte = args.start;
+  let lineSeq = args.first_seq - 1;
+  let lastOk = args.start;
+  let fullyTerminated = 0;
+  for (let i = args.start; i < buf.byteLength; i++) {
+    if (buf[i] !== 10) continue;
+    const line = buf.subarray(lineStartByte, i).toString("utf8");
+    lineSeq += 1;
+    const cl = parseLine(line);
+    if (cl === null) {
+      if (line.trim().length > 0) bumpAnomaly2(batch, "json_parse_error");
+    } else if (inCopiedHistory(cl, state) || inParentTurn(cl, state)) {
+      bumpAnomaly2(batch, "copied_session_line_skipped");
+    } else {
+      processLine(cl, lineSeq, source_file, state, events, toolResults, batch);
+      if (batch.session_id === null && state.session_id !== null) {
+        batch.session_id = state.session_id;
+      }
+    }
+    fullyTerminated += 1;
+    lastOk = i + 1;
+    lineStartByte = i + 1;
+  }
+  return { terminated: fullyTerminated, last_ok: lastOk };
 }
 function processLine(cl, seq, source_file, state, events, toolResults, batch) {
   const { type, payload, timestamp } = cl;
@@ -4286,6 +4303,14 @@ function prepareStatements(db) {
            error_excerpt = @error_excerpt
        WHERE call_id = @call_id AND duration_ms IS NULL`
     ),
+    setToolCallResult: db.prepare(
+      `UPDATE tool_call
+       SET duration_ms = CAST((julianday(@result_ts) - julianday(ts)) * 86400000 AS INTEGER),
+           is_error = @is_error,
+           result_chars = @result_chars,
+           error_excerpt = @error_excerpt
+       WHERE call_id = @call_id AND session_id = @session_id`
+    ),
     // A file writes only the sessions it holds in full (writableEvents in
     // driver.ts), so its span replaces the stored one, as in a rebuild, which
     // deletes the row first; kept with MIN/MAX, a line the file lost stayed.
@@ -4427,15 +4452,21 @@ function readRange(path, start, end) {
   }
   return buf;
 }
-function appendNewLines(db, stmts, f) {
-  const full = (reason) => ({ kind: "full", reason });
+function readAppended(db, f) {
   const cursor = db.prepare("SELECT path, mtime, size, lines, last_ok FROM file_cursor WHERE path = ?").get(f.path);
-  if (cursor === void 0) return full("no_cursor");
-  if (f.size < cursor.size || f.size < cursor.last_ok) return full("shrunk");
+  if (cursor === void 0) return "no_cursor";
+  if (f.size < cursor.size || f.size < cursor.last_ok) return "shrunk";
   const from = cursor.last_ok > 0 ? cursor.last_ok - 1 : 0;
   const bytes = readRange(f.path, from, f.size);
-  if (bytes === null) return full("shrunk");
-  if (cursor.last_ok > 0 && bytes[0] !== 10) return full("not_line_start");
+  if (bytes === null) return "shrunk";
+  if (cursor.last_ok > 0 && bytes[0] !== 10) return "not_line_start";
+  return { cursor, from, bytes, start: cursor.last_ok - from };
+}
+function appendNewLines(db, stmts, f) {
+  const full = (reason) => ({ kind: "full", reason });
+  const read = readAppended(db, f);
+  if (typeof read === "string") return full(read);
+  const { cursor, from, bytes } = read;
   const batch = {
     counters: /* @__PURE__ */ new Map(),
     session_id: null,
@@ -4445,7 +4476,7 @@ function appendNewLines(db, stmts, f) {
   const toolResults = /* @__PURE__ */ new Map();
   let events = [];
   const meta = { cwd: false, gitBranch: false, version: false, sdkEntrypoint: false };
-  let lineStart = cursor.last_ok - from;
+  let lineStart = read.start;
   let terminated = 0;
   for (let i = lineStart; i < bytes.byteLength; i++) {
     if (bytes[i] !== 10) continue;
@@ -4477,14 +4508,14 @@ function appendNewLines(db, stmts, f) {
     return full("copied_lines");
   }
   if (subagentFile) {
-    const kept = events.filter((p) => p.event.agent_id !== null && p.event.session_id === agentSessionId(p.event.agent_id));
-    const skipped = events.length - kept.length;
+    const kept2 = events.filter((p) => p.event.agent_id !== null && p.event.session_id === agentSessionId(p.event.agent_id));
+    const skipped = events.length - kept2.length;
     if (skipped > 0) {
       const cur = batch.counters.get("subagent_line_skipped");
       if (cur) cur.count += skipped;
       else batch.counters.set("subagent_line_skipped", { count: skipped, detail: null });
     }
-    events = kept;
+    events = kept2;
   }
   const session = db.prepare("SELECT kind, parent_id, started_at, ended_at, cwd, git_branch, version, model_primary FROM session WHERE id = ?").get(own);
   if (session === void 0) return full("no_session_row");
@@ -4503,6 +4534,21 @@ function appendNewLines(db, stmts, f) {
   for (const callId of toolResults.keys()) {
     if (answered.get(callId) !== void 0) return full("result_exists");
   }
+  return finishAppend(db, stmts, {
+    f,
+    cursor,
+    own,
+    session,
+    events,
+    batch,
+    terminated,
+    last_ok: from + lineStart,
+    writeExtra: () => applyToolResults(stmts, toolResults)
+  });
+}
+function finishAppend(db, stmts, args) {
+  const { f, cursor, own, session, events, batch, terminated, last_ok, writeExtra } = args;
+  const full = (reason) => ({ kind: "full", reason });
   assignTurnNumbers(events);
   const last = db.prepare(
     `SELECT MAX(ts) AS ts, MAX(user_turn_no) AS user_turn_no, MAX(assistant_turn_no) AS assistant_turn_no FROM event
@@ -4527,7 +4573,7 @@ function appendNewLines(db, stmts, f) {
       if (p.event.assistant_turn_no !== null) p.event.assistant_turn_no += last.assistant_turn_no ?? 0;
       writeParsedEvent(stmts, p);
     }
-    applyToolResults(stmts, toolResults);
+    writeExtra();
     let startedAt = session.started_at;
     let endedAt = session.ended_at;
     for (const p of events) {
@@ -4560,10 +4606,184 @@ function appendNewLines(db, stmts, f) {
       mtime: f.mtime,
       size: f.size,
       lines: cursor.lines + terminated,
-      last_ok: from + lineStart
+      last_ok
     });
   })();
   return { kind: "appended", events: events.length, parse_errors: batch.counters.get("json_parse_error")?.count ?? 0 };
+}
+
+// src/indexer/codex_skills.ts
+import { existsSync } from "node:fs";
+import { join as join3 } from "node:path";
+function isKnownCodexSkill(name, cwd) {
+  if (existsSync(join3(codexHome(), "skills", name))) return true;
+  if (cwd !== null && existsSync(join3(cwd, ".codex", "skills", name))) return true;
+  return false;
+}
+function filterCodexSkillCandidates(events, cwd, decisions = /* @__PURE__ */ new Map()) {
+  for (const p of events) {
+    if (p.skill_calls.length === 0) continue;
+    for (const sc of p.skill_calls) {
+      if (!decisions.has(sc.skill)) decisions.set(sc.skill, isKnownCodexSkill(sc.skill, cwd));
+    }
+    p.skill_calls = p.skill_calls.filter((sc) => decisions.get(sc.skill) === true);
+  }
+  return decisions;
+}
+function skillDecisionsHold(decisions, cwd) {
+  for (const [name, kept2] of decisions) {
+    if (isKnownCodexSkill(name, cwd) !== kept2) return false;
+  }
+  return true;
+}
+
+// src/indexer/codex_append.ts
+var CODEX_STATES_KEPT = 16;
+var kept = /* @__PURE__ */ new Map();
+function keepCodexState(path, resume, last_ok, lines, skills, prefilled) {
+  kept.delete(path);
+  if (resume === null) return;
+  kept.set(path, { resume, last_ok, lines, skills, prefilled });
+  for (const oldest of kept.keys()) {
+    if (kept.size <= CODEX_STATES_KEPT) break;
+    kept.delete(oldest);
+  }
+}
+function prefilledCallIds(events, into = /* @__PURE__ */ new Set()) {
+  for (const p of events) {
+    for (const c of p.tool_calls) if (c.call_id !== null && c.duration_ms !== null) into.add(c.call_id);
+  }
+  return into;
+}
+function childCounts(p) {
+  return [
+    p.tool_calls.length,
+    p.file_ops.length,
+    p.user_texts.length,
+    p.skill_calls.length,
+    p.agent_calls.length,
+    p.slash_commands.length,
+    p.system_reminders.length,
+    p.hook_blocks.length,
+    p.unknown_blocks.length
+  ];
+}
+var FILE_OPS = 1;
+var HOOK_BLOCKS = 7;
+function appendCodexLines(db, stmts, f) {
+  const full = (reason) => ({ kind: "full", reason });
+  const entry = kept.get(f.path);
+  kept.delete(f.path);
+  const read = readAppended(db, f);
+  if (typeof read === "string") return full(read);
+  const { cursor, from, bytes, start } = read;
+  if (entry === void 0 || entry.last_ok !== cursor.last_ok || entry.lines !== cursor.lines) return full("no_state");
+  const { state, toolResults } = entry.resume;
+  if (!skillDecisionsHold(entry.skills, state.cwd)) return full("skills_changed");
+  const firstEnd = bytes.indexOf(10, start);
+  if (firstEnd !== -1) {
+    try {
+      JSON.parse(bytes.subarray(start, firstEnd).toString("utf8"));
+    } catch {
+      return full("torn_first_line");
+    }
+  }
+  const metaOf = () => [state.session_id, state.cwd, state.git_branch, state.version, state.kind, state.parentId];
+  const metaBefore = metaOf();
+  const countsBefore = /* @__PURE__ */ new Map();
+  for (const p of state.callEvents.values()) countsBefore.set(p, childCounts(p));
+  const resultsBefore = new Map(toolResults);
+  const batch = {
+    counters: /* @__PURE__ */ new Map(),
+    session_id: null,
+    ts: new Date(Math.floor(f.mtime * 1e3)).toISOString(),
+    source_file: f.path
+  };
+  const events = [];
+  const parsed = parseCodexLines({
+    buf: bytes,
+    start,
+    first_seq: cursor.lines + 1,
+    source_file: f.path,
+    resume: entry.resume,
+    batch,
+    events
+  });
+  const skills = filterCodexSkillCandidates(events, state.cwd, new Map(entry.skills));
+  if (metaOf().some((v, i) => v !== metaBefore[i])) return full("meta_changed");
+  const own = state.session_id;
+  if (own === null) return full("no_session_row");
+  const session = db.prepare("SELECT kind, parent_id, started_at, ended_at, cwd, git_branch, version, model_primary FROM session WHERE id = ?").get(own);
+  if (session === void 0) return full("no_session_row");
+  if (db.prepare("SELECT 1 FROM event WHERE source_file = ? AND session_id IS NOT ? LIMIT 1").get(f.path, own) !== void 0) {
+    return full("several_sessions");
+  }
+  if (events.some((p) => p.event.session_id !== own)) return full("other_session");
+  if (db.prepare("SELECT 1 FROM event WHERE session_id = ? AND source_file IS NOT ? LIMIT 1").get(own, f.path) !== void 0) {
+    return full("several_files");
+  }
+  const grown = [];
+  for (const [p, before] of countsBefore) {
+    const now = childCounts(p);
+    if (now.every((n, i) => n === before[i])) continue;
+    if (now.some((n, i) => i !== FILE_OPS && i !== HOOK_BLOCKS && n !== before[i])) return full("earlier_event_changed");
+    grown.push([p, before]);
+  }
+  const knownUuid = db.prepare("SELECT 1 FROM event WHERE uuid = ?");
+  if (events.some((p) => knownUuid.get(p.event.uuid) !== void 0)) return full("known_uuid");
+  const prefilled = prefilledCallIds(events, new Set(entry.prefilled));
+  const elsewhere = db.prepare("SELECT 1 FROM tool_call WHERE call_id = ? AND session_id IS NOT ? LIMIT 1");
+  const ownRows = db.prepare(
+    `SELECT o.call_id AS call_id, o.duration_ms IS NOT NULL AS filled,
+              EXISTS (SELECT 1 FROM tool_call x WHERE x.call_id = o.call_id AND x.session_id IS NOT o.session_id) AS shared
+       FROM tool_call o WHERE o.session_id = ? AND o.call_id IS NOT NULL`
+  ).all(own);
+  const ownIds = /* @__PURE__ */ new Set();
+  for (const r of ownRows) {
+    if (r.shared || r.filled && !resultsBefore.has(r.call_id) && !prefilled.has(r.call_id)) return full("shared_call_id");
+    ownIds.add(r.call_id);
+  }
+  const rowsOf = /* @__PURE__ */ new Map();
+  for (const r of ownRows) rowsOf.set(r.call_id, (rowsOf.get(r.call_id) ?? 0) + 1);
+  for (const p of events) for (const c of p.tool_calls) if (c.call_id !== null) rowsOf.set(c.call_id, (rowsOf.get(c.call_id) ?? 0) + 1);
+  for (const id of prefilled) if ((rowsOf.get(id) ?? 0) > 1) return full("prefilled_result");
+  for (const p of events) {
+    for (const c of p.tool_calls) if (c.call_id !== null && !ownIds.has(c.call_id) && elsewhere.get(c.call_id, own) !== void 0) return full("shared_call_id");
+  }
+  for (const id of toolResults.keys()) if (!ownIds.has(id) && elsewhere.get(id, own) !== void 0) return full("shared_call_id");
+  const newCalls = new Set(events.flatMap((p) => p.tool_calls.map((c) => c.call_id)));
+  const results = [...toolResults].filter(([id, r]) => resultsBefore.get(id) !== r || newCalls.has(id));
+  if (results.some(([id]) => prefilled.has(id))) return full("prefilled_result");
+  const last_ok = from + parsed.last_ok;
+  const lines = cursor.lines + parsed.terminated;
+  const outcome = finishAppend(db, stmts, {
+    f,
+    cursor,
+    own,
+    session,
+    events,
+    batch,
+    terminated: parsed.terminated,
+    last_ok,
+    writeExtra: () => {
+      for (const [p, before] of grown) {
+        for (const r of p.file_ops.slice(before[FILE_OPS])) stmts.insertFileOp.run(toSqlBindable(r));
+        for (const r of p.hook_blocks.slice(before[HOOK_BLOCKS])) stmts.insertHookBlock.run(toSqlBindable(r));
+      }
+      for (const [call_id, r] of results) {
+        stmts.setToolCallResult.run({
+          call_id,
+          session_id: own,
+          result_ts: r.ts,
+          is_error: r.is_error,
+          result_chars: r.result_chars,
+          error_excerpt: r.error_excerpt
+        });
+      }
+    }
+  });
+  if (outcome.kind === "appended") keepCodexState(f.path, entry.resume, last_ok, lines, skills, prefilled);
+  return outcome;
 }
 
 // src/indexer/schema.ts
@@ -4859,9 +5079,9 @@ function getSchemaVersion(db) {
 }
 
 // src/indexer/lang/init.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync } from "node:fs";
+import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
+import { dirname as dirname2, join as join4, resolve as resolve2 } from "node:path";
 
 // src/indexer/lang/ko.ts
 var HANGUL_RE = /[가-힣]/;
@@ -4970,14 +5190,14 @@ async function ensureLanguageAdaptersLoaded() {
 async function tryLoadKorean() {
   if (getLanguageAdapter("ko")) return;
   const modelDir = languageModelDir("ko");
-  if (!existsSync(modelDir)) return;
+  if (!existsSync2(modelDir)) return;
   try {
     const { KiwiBuilder, Match } = await import("kiwi-nlp");
     const kiwiEntry = createRequire(import.meta.url).resolve("kiwi-nlp");
-    const wasmPath = join3(dirname2(kiwiEntry), "kiwi-wasm.wasm");
+    const wasmPath = join4(dirname2(kiwiEntry), "kiwi-wasm.wasm");
     const modelFiles = {};
     for (const name of readdirSync2(modelDir)) {
-      modelFiles[name] = new Uint8Array(readFileSync(join3(modelDir, name)));
+      modelFiles[name] = new Uint8Array(readFileSync(join4(modelDir, name)));
     }
     const builder = await KiwiBuilder.create(wasmPath);
     const kiwi = await builder.build({ modelFiles });
@@ -4993,7 +5213,7 @@ async function tryLoadKorean() {
 function installedLinderaTokenizer(code) {
   const { name, dictionary } = LINDERA_PACKAGES[code];
   const dir = languageModelDir(code);
-  if (!existsSync(join3(dir, "node_modules", name, "package.json"))) return void 0;
+  if (!existsSync2(join4(dir, "node_modules", name, "package.json"))) return void 0;
   const { TokenizerBuilder } = createRequire(resolve2(dir, "package.json"))(name);
   const builder = new TokenizerBuilder();
   builder.setDictionary(dictionary);
@@ -5024,7 +5244,7 @@ var LOCK_RETRY_MS = 100;
 async function acquireLock(path, timeoutMs, onLost = (err) => console.error(`clens: lost lock ${path}:`, err.message)) {
   const start = Date.now();
   mkdirSync(dirname3(path), { recursive: true });
-  if (!existsSync2(path)) {
+  if (!existsSync3(path)) {
     const fs = await import("node:fs");
     fs.writeFileSync(path, "");
   }
@@ -5088,17 +5308,6 @@ function summarizeFile(events) {
     out.primary_model = [...modelCount.entries()].sort((a, b) => b[1] - a[1])[0][0];
   }
   return out;
-}
-function isKnownCodexSkill(name, cwd) {
-  if (existsSync2(join4(codexHome(), "skills", name))) return true;
-  if (cwd !== null && existsSync2(join4(cwd, ".codex", "skills", name))) return true;
-  return false;
-}
-function filterCodexSkillCandidates(events, cwd) {
-  for (const p of events) {
-    if (p.skill_calls.length === 0) continue;
-    p.skill_calls = p.skill_calls.filter((sc) => isKnownCodexSkill(sc.skill, cwd));
-  }
 }
 function commitFile(args) {
   const {
@@ -5194,14 +5403,14 @@ function writableEvents(db, source, source_file, events, batch) {
   const own = events[events.length - 1].event.session_id;
   const hasRows = db.prepare("SELECT 1 FROM event WHERE session_id = ? LIMIT 1");
   const indexed = /* @__PURE__ */ new Map();
-  const kept = events.filter((p) => {
+  const kept2 = events.filter((p) => {
     const sid = p.event.session_id;
     if (sid === own) return true;
     if (!indexed.has(sid)) indexed.set(sid, hasRows.get(sid) !== void 0);
     return !indexed.get(sid);
   });
-  skip("copied_session_line_skipped", events.length - kept.length);
-  return kept;
+  skip("copied_session_line_skipped", events.length - kept2.length);
+  return kept2;
 }
 var FTS_OPTIMIZE_INTERVAL_MS = 60 * 60 * 1e3;
 function optimizeFtsIfDue(db, now, rebuilt, vacuumMinFreeBytes) {
@@ -5251,7 +5460,7 @@ async function runIndex(opts = {}) {
         list.push(r.source_file ?? "");
         sources.set(r.session_id, list);
       }
-      const rederivable = [...sources].filter(([, files]) => files.every((f) => f !== "" && existsSync2(f))).map(([sid]) => sid);
+      const rederivable = [...sources].filter(([, files]) => files.every((f) => f !== "" && existsSync3(f))).map(([sid]) => sid);
       const anomalyFiles = db.prepare("SELECT DISTINCT source_file FROM anomaly").all();
       const cursorPaths = db.prepare("SELECT path FROM file_cursor").all();
       const dropTx = db.transaction(() => {
@@ -5260,10 +5469,10 @@ async function runIndex(opts = {}) {
         for (const sid of rederivable) dropSession.run(sid);
         const dropAnomalies = db.prepare("DELETE FROM anomaly WHERE source_file IS ?");
         for (const { source_file } of anomalyFiles) {
-          if (source_file === null || existsSync2(source_file)) dropAnomalies.run(source_file);
+          if (source_file === null || existsSync3(source_file)) dropAnomalies.run(source_file);
         }
         const dropCursor = db.prepare("DELETE FROM file_cursor WHERE path = ?");
-        for (const { path } of cursorPaths) if (existsSync2(path)) dropCursor.run(path);
+        for (const { path } of cursorPaths) if (existsSync3(path)) dropCursor.run(path);
         db.exec(`DELETE FROM schema_version`);
         db.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
       });
@@ -5284,8 +5493,8 @@ async function runIndex(opts = {}) {
         db.close();
         throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
       }
-      if (!needsRebuild && f.source === "claude") {
-        const appended = appendNewLines(db, stmts, f);
+      if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
+        const appended = f.source === "claude" ? appendNewLines(db, stmts, f) : appendCodexLines(db, stmts, f);
         if (appended.kind === "appended") {
           filesParsed += 1;
           filesAppended += 1;
@@ -5301,10 +5510,9 @@ async function runIndex(opts = {}) {
         ts: new Date(Math.floor(f.mtime * 1e3)).toISOString(),
         source_file: f.path
       };
-      const parsed = getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
-      if (f.source === "codex") {
-        filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd);
-      }
+      const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
+      const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
+      const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
       const { eventsInserted } = commitFile({
         db,
         stmts,
@@ -5319,6 +5527,9 @@ async function runIndex(opts = {}) {
         session_meta: parsed.session_meta,
         source: f.source
       });
+      if (codex !== null) {
+        keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills, prefilledCallIds(parsed.events));
+      }
       filesParsed += 1;
       events += eventsInserted;
       parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
@@ -5371,7 +5582,7 @@ async function indexCommand(flags) {
 
 // src/commands/install_cmd.ts
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname as dirname4, join as join5 } from "node:path";
@@ -5411,7 +5622,7 @@ function linderaInstallArgs(code, dir) {
 }
 function npm(args) {
   const beside = process.platform === "win32" ? join5(dirname4(process.execPath), "node_modules", "npm", "bin", "npm-cli.js") : join5(dirname4(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js");
-  const [file, argv] = existsSync3(beside) ? [process.execPath, [beside, ...args]] : [process.platform === "win32" ? "npm.cmd" : "npm", args];
+  const [file, argv] = existsSync4(beside) ? [process.execPath, [beside, ...args]] : [process.platform === "win32" ? "npm.cmd" : "npm", args];
   const shell = process.platform === "win32" && file === "npm.cmd";
   execFileSync(file, shell ? argv.map((a) => `"${a}"`) : argv, { stdio: ["ignore", 2, 2], shell });
 }
@@ -5472,7 +5683,7 @@ async function mcpCommand() {
 }
 
 // src/commands/stats_cmd.ts
-import { existsSync as existsSync4 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
 import Database2 from "better-sqlite3";
 
 // src/indexer/digest.ts
@@ -5534,7 +5745,7 @@ function collectBasic(db) {
   };
 }
 function statsCommand(flags) {
-  if (!existsSync4(indexDbPath())) {
+  if (!existsSync5(indexDbPath())) {
     process.stderr.write(`clens stats: no index at ${indexDbPath()}. Run 'clens index' first.
 `);
     return 2;

@@ -3,9 +3,11 @@
  * get indexed into clens (Claude Code, Codex, and future sources such as
  * Cursor/Windsurf/Qwen). Adding a new source means adding one adapter object
  * to SOURCE_ADAPTERS below; cursor.ts, driver.ts, and watch.ts all consume
- * the registry generically. The driver branches on a source name in two
+ * the registry generically. The driver branches on a source name in these
  * places only: which lines of a Claude Code transcript it writes
- * (writableEvents) and Codex's skill candidates.
+ * (writableEvents), the append path of each source (append.ts,
+ * codex_append.ts), and a Codex parse, whose end state and skill candidates
+ * it handles itself.
  */
 
 import { basename, dirname } from "node:path";

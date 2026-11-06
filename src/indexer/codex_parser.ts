@@ -494,7 +494,7 @@ function inParentTurn(cl: CodexLine, state: SessionState): boolean {
   return state.inParentTurn;
 }
 
-interface SessionState {
+export interface SessionState {
   session_id: string | null;
   cwd: string | null;
   git_branch: string | null;
@@ -583,16 +583,37 @@ function makeBlankParsed(event: EventRow): ParsedEvent {
   };
 }
 
+/** Where a parse of a rollout stands after its last line: the state the
+ *  next line is read with, and every tool result seen so far, newest per
+ *  call_id. A later line can still change both (codex_append.ts). */
+export interface CodexResume {
+  state: SessionState;
+  toolResults: Map<string, ToolResultInfo>;
+}
+
 export function parseCodexFileBody(args: {
   body: string;
   source_file: string;
   batch: AnomalyBatch;
 }): FileParseResult {
+  return parseCodexFile(args).result;
+}
+
+/** Parse a whole rollout, and return the state it ends with for a later
+ *  parse of the lines appended to it; null for a pretty-printed rollout,
+ *  whose lines were rewritten before parsing and so do not match the file's
+ *  bytes. */
+export function parseCodexFile(args: {
+  body: string;
+  source_file: string;
+  batch: AnomalyBatch;
+}): { result: FileParseResult; resume: CodexResume | null } {
   const { source_file, batch } = args;
   // A rollout that was pretty-printed (each JSON object spread over many
   // lines) yields nothing but parse errors line by line; read it as a
   // sequence of JSON values, one per line.
-  const body = /^\{[ \t\r]*\n/.test(args.body) ? (compactJsonStream(args.body) ?? args.body) : args.body;
+  const pretty = /^\{[ \t\r]*\n/.test(args.body);
+  const body = pretty ? (compactJsonStream(args.body) ?? args.body) : args.body;
   const events: ParsedEvent[] = [];
 
   const state: SessionState = {
@@ -622,53 +643,80 @@ export function parseCodexFileBody(args: {
   };
 
   // tool_results map: call_id → ToolResultInfo — same shape as Claude parser
-  const toolResults = new Map<string, ToolResultInfo>();
-
-  const buf = Buffer.from(body, "utf8");
-  let i = 0;
-  let lineStartByte = 0;
-  let lineSeq = 0;
-  let lastOk = 0;
-  let fullyTerminated = 0;
-
-  while (i < buf.byteLength) {
-    if (buf[i] === 0x0a /* \n */) {
-      const line = buf.slice(lineStartByte, i).toString("utf8");
-      lineSeq += 1;
-
-      const cl = parseLine(line);
-      if (cl === null) {
-        if (line.trim().length > 0) bumpAnomaly(batch, "json_parse_error");
-      } else if (inCopiedHistory(cl, state) || inParentTurn(cl, state)) {
-        bumpAnomaly(batch, "copied_session_line_skipped");
-      } else {
-        processLine(cl, lineSeq, source_file, state, events, toolResults, batch);
-        if (batch.session_id === null && state.session_id !== null) {
-          batch.session_id = state.session_id;
-        }
-      }
-
-      fullyTerminated += 1;
-      lastOk = i + 1;
-      lineStartByte = i + 1;
-    }
-    i += 1;
-  }
+  const resume: CodexResume = { state, toolResults: new Map() };
+  const { terminated, last_ok } = parseCodexLines({
+    buf: Buffer.from(body, "utf8"),
+    start: 0,
+    first_seq: 1,
+    source_file,
+    resume,
+    batch,
+    events,
+  });
 
   return {
-    events,
-    anomalies: batch,
-    fully_terminated_line_count: fullyTerminated,
-    last_ok_byte_offset: lastOk,
-    tool_results: toolResults,
-    session_meta: {
-      cwd: state.cwd,
-      git_branch: state.git_branch,
-      version: state.version,
-      kind: state.kind ?? undefined,
-      parent_id: state.parentId ?? undefined,
+    result: {
+      events,
+      anomalies: batch,
+      fully_terminated_line_count: terminated,
+      last_ok_byte_offset: last_ok,
+      tool_results: resume.toolResults,
+      session_meta: {
+        cwd: state.cwd,
+        git_branch: state.git_branch,
+        version: state.version,
+        kind: state.kind ?? undefined,
+        parent_id: state.parentId ?? undefined,
+      },
     },
+    resume: pretty ? null : resume,
   };
+}
+
+/** Parse the `\n`-terminated lines of `buf` from `start` on, numbering the
+ *  first `first_seq`, with the state and results in `resume`, which go on
+ *  from there. A partial last line is left for a later parse. Returns how
+ *  many lines were terminated and the index in `buf` after the last `\n`
+ *  (`start` when none). */
+export function parseCodexLines(args: {
+  buf: Buffer;
+  start: number;
+  first_seq: number;
+  source_file: string;
+  resume: CodexResume;
+  batch: AnomalyBatch;
+  events: ParsedEvent[];
+}): { terminated: number; last_ok: number } {
+  const { buf, source_file, batch, events } = args;
+  const { state, toolResults } = args.resume;
+  let lineStartByte = args.start;
+  let lineSeq = args.first_seq - 1;
+  let lastOk = args.start;
+  let fullyTerminated = 0;
+
+  for (let i = args.start; i < buf.byteLength; i++) {
+    if (buf[i] !== 0x0a /* \n */) continue;
+    const line = buf.subarray(lineStartByte, i).toString("utf8");
+    lineSeq += 1;
+
+    const cl = parseLine(line);
+    if (cl === null) {
+      if (line.trim().length > 0) bumpAnomaly(batch, "json_parse_error");
+    } else if (inCopiedHistory(cl, state) || inParentTurn(cl, state)) {
+      bumpAnomaly(batch, "copied_session_line_skipped");
+    } else {
+      processLine(cl, lineSeq, source_file, state, events, toolResults, batch);
+      if (batch.session_id === null && state.session_id !== null) {
+        batch.session_id = state.session_id;
+      }
+    }
+
+    fullyTerminated += 1;
+    lastOk = i + 1;
+    lineStartByte = i + 1;
+  }
+
+  return { terminated: fullyTerminated, last_ok: lastOk };
 }
 
 function processLine(
@@ -874,8 +922,8 @@ function processLine(
           result_chars: codepointLength(text),
           error_excerpt: is_error === 1 ? errorExcerpt(excerptText) : null,
         });
-        // Recorded on the call's own event: the driver reads a whole rollout
-        // on every change, so the call and its output are parsed together.
+        // Recorded on the call's own event; when the call was indexed in an
+        // earlier run, codex_append.ts writes the block to that event's rows.
         const reason = preToolUseReason(text);
         if (reason !== undefined && call !== undefined) {
           call.hook_blocks.push({
