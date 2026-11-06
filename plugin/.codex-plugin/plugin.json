@@ -1,6 +1,6 @@
 {
   "name": "clens",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "A memory of your past Claude Code and Codex sessions: search what was decided or tried, see where work stopped, recover after compaction, and count how you work. Local SQLite index, no LLM calls.",
   "author": {
     "name": "wonwoo",
