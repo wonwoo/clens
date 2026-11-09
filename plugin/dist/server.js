@@ -27275,7 +27275,7 @@ function shellWrittenFiles(command, cwd, home) {
 // src/indexer/claude_parser.ts
 var TOOL_INPUT_BYTE_CAP = 2048;
 var SHELL_TOOL_INPUT_BYTE_CAP = 65536;
-var ASSISTANT_TEXT_BYTE_CAP = 4096;
+var ASSISTANT_TEXT_BYTE_CAP = 65536;
 var EVENT_UNKNOWN_BLOCK_CAP = 1024;
 var SYSTEM_REMINDER_EXCERPT_CAP = 512;
 var HOOK_REASON_BYTE_CAP = 512;
@@ -28038,7 +28038,6 @@ function unescape2(code, i) {
 
 // src/indexer/codex_parser.ts
 var TOOL_INPUT_BYTE_CAP2 = 2048;
-var ASSISTANT_TEXT_BYTE_CAP2 = 4096;
 var FILE_OP_TOOLS2 = /* @__PURE__ */ new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 var SKILL_MARKER_RE = /\$([A-Za-z][\w-]*)/g;
 function extractSkillCandidates(text) {
@@ -28890,7 +28889,7 @@ function pushAgentMessage(events, uuid3, session_id, timestamp, source_file, mod
   ev.has_text = 1;
   ev.text_len = [...text].length;
   const parsed = makeBlankParsed(ev);
-  const { out: clipped } = utf8SafeHeadTailTruncate(text, ASSISTANT_TEXT_BYTE_CAP2);
+  const { out: clipped } = utf8SafeHeadTailTruncate(text, ASSISTANT_TEXT_BYTE_CAP);
   const assistantText = {
     event_uuid: uuid3,
     session_id,
@@ -29576,7 +29575,7 @@ function appendCodexLines(db2, stmts, f) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 19;
+var SCHEMA_VERSION = 20;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [

@@ -120,7 +120,7 @@ The agent writes the ledger to `~/.clens/ledger.jsonl`, apart from the index, so
 
 - Search matches words, not meaning. A question worded differently from the conversation can miss it; the agent then retries with other words.
 - Tool output (command results, file contents) is not stored, only the messages and the tool calls. A failed call keeps the first 100 and last 200 characters of its output, which a session's record shows; they are not searched.
-- An assistant reply over 4 KB is stored as its start and end, about 2 KB each, so words in its middle are not found.
+- An assistant reply over 64 KB is stored as its start and end, about 32 KB each, so words in its middle are not found. A reply indexed before 0.2.11 whose transcript is gone keeps only its first and last 2 KB or so.
 - Files a script changes, or whose path is set only when a command runs (`$VAR`, a glob), can be missing from a session's edited files. The same goes for git commands run from inside a script.
 - In Codex, the compaction recovery runs only after you trust the hook, and not after a subagent's compaction.
 - The agent records only what it recognises as set aside. Wording that sounds like agreement ("I guess that can't be helped") can be missed. Likewise it marks a held item done only when it sees that the work it finished is that item. In Codex nothing is recorded until you trust clens's hooks.

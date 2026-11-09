@@ -94,7 +94,11 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // v19: event and event_unknown_block are keyed per session, so a line copied
 // into a resumed session has its own rows there
 // (docs/2026-11-09-per-session-events-design.md).
-export const SCHEMA_VERSION = 19;
+// v20: an assistant reply is stored whole up to 64 KB, not cut at 4 KB
+// (ASSISTANT_TEXT_BYTE_CAP); the version-mismatch rebuild re-reads every
+// transcript still on disk, and a session whose transcript is gone keeps
+// its replies as they were cut.
+export const SCHEMA_VERSION = 20;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population

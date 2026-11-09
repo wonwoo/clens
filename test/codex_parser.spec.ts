@@ -369,6 +369,26 @@ describe("parseCodexFileBody — item_completed chat items", () => {
     ]);
   });
 
+  it("stores an AgentMessage up to 64 KB whole and keeps the start and end of a longer one", () => {
+    const mid = "가".repeat(10000); // 30 KB
+    const long = "A" + "나".repeat(30000) + "Z"; // 90 KB
+    const b =
+      [
+        { timestamp: "2026-09-01T00:00:00Z", type: "session_meta", payload: { id: "sess-2", cwd: "/repo" } },
+        item("2026-09-01T00:00:01Z", { type: "AgentMessage", id: "m1", content: [{ type: "Text", text: mid }], phase: "final_answer" }),
+        item("2026-09-01T00:00:02Z", { type: "AgentMessage", id: "m2", content: [{ type: "Text", text: long }], phase: "final_answer" }),
+      ]
+        .map((l) => JSON.stringify(l))
+        .join("\n") + "\n";
+    const r = parseCodexFileBody({ body: b, source_file: "codex-test.jsonl", batch: freshBatch() });
+    const [whole, cut] = r.events.flatMap((e) => e.user_texts).map((u) => u.text);
+    expect(whole).toBe(mid);
+    expect(Buffer.byteLength(cut!, "utf8")).toBeLessThanOrEqual(65536);
+    expect(cut).toContain("…[truncated]…");
+    expect(cut!.startsWith("A나")).toBe(true);
+    expect(cut!.endsWith("나Z")).toBe(true);
+  });
+
   it("marks the message events the way the legacy user_message / agent_message did", () => {
     const r = parseCodexFileBody({ body, source_file: "codex-test.jsonl", batch: freshBatch() });
     const text = r.events.filter((e) => e.user_texts.length > 0).map((e) => [e.event.role, e.event.has_text]);

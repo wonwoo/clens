@@ -174,6 +174,26 @@ describe("parseEventLine on synthetic events (Skill/system-reminder/slash-comman
     expect(sk[0]!.args_excerpt).toBe("review this diff");
   });
 
+  it("stores an assistant reply up to 64 KB whole and keeps the start and end of a longer one", () => {
+    const reply = (uuid: string, text: string) =>
+      JSON.stringify({
+        uuid,
+        sessionId: "s",
+        type: "assistant",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: { role: "assistant", content: [{ type: "text", text }] },
+      });
+    const mid = "가".repeat(10000); // 30 KB
+    const long = "A" + "나".repeat(30000) + "Z"; // 90 KB
+    const r = parseFileBody({ body: reply("a1", mid) + "\n" + reply("a2", long) + "\n", source_file: "x", batch: freshBatch() });
+    const [whole, cut] = r.events.map((e) => e.user_texts[0]!.text);
+    expect(whole).toBe(mid);
+    expect(Buffer.byteLength(cut!, "utf8")).toBeLessThanOrEqual(65536);
+    expect(cut).toContain("…[truncated]…");
+    expect(cut!.startsWith("A나")).toBe(true);
+    expect(cut!.endsWith("나Z")).toBe(true);
+  });
+
   it("tags <default> when Agent input.subagent_type missing", () => {
     const line = JSON.stringify({
       uuid: "u-agent",

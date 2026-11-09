@@ -26,8 +26,8 @@ export interface SessionMessage {
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 40;
-/** A message longer than this (a pasted log, a long prompt; no stored
- *  assistant reply is) keeps KEPT_END_CHARS at each end unless `full` is set,
+/** A message longer than this (a pasted log, a long prompt or reply)
+ *  keeps KEPT_END_CHARS at each end unless `full` is set,
  *  so one pasted log does not fill the caller's context. */
 const LONG_MESSAGE_CHARS = 20_000;
 const KEPT_END_CHARS = 5_000;

@@ -34,6 +34,7 @@ import type {
   UserTextRow,
 } from "./types.js";
 import {
+  ASSISTANT_TEXT_BYTE_CAP,
   codepointLength,
   errorExcerpt,
   HOOK_REASON_BYTE_CAP,
@@ -45,7 +46,6 @@ import { shellWrittenFiles } from "./shell_writes.js";
 import { execCodeScan } from "../util/codex_exec.js";
 
 const TOOL_INPUT_BYTE_CAP = 2048;
-const ASSISTANT_TEXT_BYTE_CAP = 4096;
 const FILE_OP_TOOLS = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 // Codex has no dedicated skill-invocation event (confirmed against the full

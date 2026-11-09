@@ -43,7 +43,11 @@ const TOOL_INPUT_BYTE_CAP = 2048;
  *  list, which reads the stored command, sees a git command late in a long
  *  one. The longest local shell inputs are under 40 KB. */
 export const SHELL_TOOL_INPUT_BYTE_CAP = 65536;
-const ASSISTANT_TEXT_BYTE_CAP = 4096;
+/** An assistant reply is kept whole up to this, so a search finds a word in
+ *  the middle of a long one. The longest local replies are under 50 KB, and
+ *  storing them whole adds about 8% to the stored reply text against a 4 KB
+ *  cap, which a reply in Korean passed at about 1,400 characters. */
+export const ASSISTANT_TEXT_BYTE_CAP = 65536;
 const EVENT_UNKNOWN_BLOCK_CAP = 1024;
 const SYSTEM_REMINDER_EXCERPT_CAP = 512;
 export const HOOK_REASON_BYTE_CAP = 512;

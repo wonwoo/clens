@@ -220,7 +220,7 @@ describe("migration to per-session event keys (v19)", () => {
     const after = new Database(join(indexDir, "index.db"), { readonly: true });
     expect(kept(after)).toEqual(before);
     expect(getSchemaVersion(after)).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(19);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(19);
     expect(all(after, `SELECT uuid, session_id FROM event WHERE session_id = '${ON_DISK}'`)).toEqual([{ uuid: "u1", session_id: ON_DISK }]);
     // Re-derived from the transcript, which holds no unknown block.
     expect(all(after, "SELECT * FROM event_unknown_block")).toEqual([]);
