@@ -30,15 +30,31 @@ export function workKindClause(alias?: string): string {
 /** Parenthesized SQL that is false for a row copied from another session.
  *  A conversation resumed into a new session starts with the earlier
  *  session's lines, copied with their uuids under the new session id and
- *  marked nowhere as copies, so their rows are stored once per session. The
- *  event table holds one row per uuid (`INSERT OR REPLACE`, so the session
- *  indexed last), and the copy counted is the one in that row's session. A
- *  row whose event is missing is kept. Telling the copies apart at index
- *  time would make one file's rows depend on another file (Gate 2). */
+ *  marked nowhere as copies, so their rows, events included, are stored once
+ *  per session. The copy counted is the one in the smallest session id that
+ *  has an event row for the uuid, as notForkCopyClause keeps the smallest
+ *  uuid: which one counts must not depend on the order files were indexed.
+ *  A session whose copy has no event row (one kept from an index made before
+ *  events were stored per session, whose transcript is gone) does not count
+ *  over one that has it; a row no session has an event for is kept. Telling
+ *  the copies apart at index time would make one file's rows depend on
+ *  another file (Gate 2). */
 export function notCopiedClause(eventUuidColumn: string, sessionIdColumn: string): string {
   return (
-    `(IFNULL((SELECT owner.session_id FROM event owner WHERE owner.uuid = ${eventUuidColumn}),` +
+    `(IFNULL((SELECT MIN(owner.session_id) FROM event owner WHERE owner.uuid = ${eventUuidColumn}),` +
     ` ${sessionIdColumn}) = ${sessionIdColumn})`
+  );
+}
+
+/** Parenthesized SQL that is false for an event row copied from another
+ *  session: one whose uuid a smaller session id also has an event row for.
+ *  The same rule as notCopiedClause, for rows that have their own event.
+ *  Listing the copies once took 524 ms on an all-project timeline against
+ *  2,041 ms for a MIN subquery per row (388 ms with no rule). */
+export function notCopiedEventClause(eventAlias: string): string {
+  return (
+    `(${eventAlias}.rowid NOT IN (SELECT c.rowid FROM event c` +
+    ` JOIN event o ON o.uuid = c.uuid AND o.session_id < c.session_id))`
   );
 }
 
@@ -67,16 +83,21 @@ export type Scope =
   | { mode: "project"; params: { project_id: string; since?: string } }
   | { mode: "since"; params: { since: string } };
 
-/** Returns a SQL fragment (without the WHERE keyword) and bind values. */
+/** Returns a SQL fragment (without the WHERE keyword) and bind values.
+ *  Scopes over more than one session count an event copied into a resumed
+ *  session once (notCopiedEventClause); session scope keeps the session
+ *  whole. */
 export function eventWhere(scope: Scope, eventAlias = "e"): { sql: string; binds: unknown[] } {
+  const notCopied = notCopiedEventClause(eventAlias);
   switch (scope.mode) {
     case "global":
-      return { sql: `${eventAlias}.session_id IN (${WORK_SESSIONS})`, binds: [] };
+      return { sql: `${eventAlias}.session_id IN (${WORK_SESSIONS}) AND ${notCopied}`, binds: [] };
     case "session":
       return { sql: `${eventAlias}.session_id = ?`, binds: [scope.params.session_id] };
     case "project": {
       const parts = [
         `${eventAlias}.session_id IN (SELECT id FROM session WHERE project_id = ? AND ${workKindClause()})`,
+        notCopied,
       ];
       const binds: unknown[] = [scope.params.project_id];
       if (scope.params.since) {
@@ -87,7 +108,7 @@ export function eventWhere(scope: Scope, eventAlias = "e"): { sql: string; binds
     }
     case "since":
       return {
-        sql: `${eventAlias}.ts >= ? AND ${eventAlias}.session_id IN (${WORK_SESSIONS})`,
+        sql: `${eventAlias}.ts >= ? AND ${eventAlias}.session_id IN (${WORK_SESSIONS}) AND ${notCopied}`,
         binds: [scope.params.since],
       };
   }

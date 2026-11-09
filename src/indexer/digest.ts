@@ -23,16 +23,19 @@ const TABLE_ORDER: ReadonlyMap<string, string> = new Map([
   ["file_cursor", "path"],
   ["project", "id"],
   ["session", "id"],
-  ["event", "uuid"],
-  ["event_unknown_block", "event_uuid, block_index"],
-  ["tool_call", "event_uuid, call_id, name"],
-  ["file_op", "event_uuid, tool, path"],
-  ["user_text", "event_uuid, ts, text"],
-  ["skill_call", "event_uuid, ts, skill"],
-  ["agent_call", "event_uuid, ts, subagent_type"],
-  ["slash_command", "event_uuid, ts, name"],
-  ["system_reminder", "event_uuid, ts, category"],
-  ["hook_block", "event_uuid, ts, hook_event, COALESCE(call_id, '')"],
+  // A line copied into a resumed session has rows under the same uuid in
+  // each session that holds it, so session_id follows the uuid; without it
+  // those rows tie and hash in whatever order they were written.
+  ["event", "uuid, session_id"],
+  ["event_unknown_block", "event_uuid, session_id, block_index"],
+  ["tool_call", "event_uuid, session_id, call_id, name"],
+  ["file_op", "event_uuid, session_id, tool, path"],
+  ["user_text", "event_uuid, session_id, ts, text"],
+  ["skill_call", "event_uuid, session_id, ts, skill"],
+  ["agent_call", "event_uuid, session_id, ts, subagent_type"],
+  ["slash_command", "event_uuid, session_id, ts, name"],
+  ["system_reminder", "event_uuid, session_id, ts, category"],
+  ["hook_block", "event_uuid, session_id, ts, hook_event, COALESCE(call_id, '')"],
   ["anomaly", "kind, COALESCE(session_id, ''), ts, count, COALESCE(detail, '')"],
 ]);
 

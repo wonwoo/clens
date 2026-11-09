@@ -7,7 +7,7 @@
  */
 
 import type Database from "better-sqlite3";
-import { workKindClause, type Scope } from "./scope.js";
+import { notCopiedEventClause, workKindClause, type Scope } from "./scope.js";
 
 export interface IdentitySession {
   session_id: string;
@@ -99,7 +99,8 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
         .prepare(
           `SELECT e.model AS model, COUNT(*) AS c
            FROM event e JOIN session s ON e.session_id = s.id
-           WHERE e.role = 'assistant' AND e.model IS NOT NULL AND s.project_id = ? AND ${workKindClause("s")} ${sinceCond}
+           WHERE e.role = 'assistant' AND e.model IS NOT NULL AND s.project_id = ? AND ${workKindClause("s")}
+             AND ${notCopiedEventClause("e")} ${sinceCond}
            GROUP BY e.model ORDER BY c DESC LIMIT 1`,
         )
         .get(scope.params.project_id, ...sinceBind) as { model: string; c: number } | undefined;

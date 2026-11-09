@@ -142,8 +142,8 @@ export function prepareStatements(db: Database.Database): WriterStatements {
        VALUES (@event_uuid, @session_id, @ts, @hook_event, @tool, @call_id, @reason)`,
     ),
     insertEventUnknownBlock: db.prepare(
-      `INSERT OR REPLACE INTO event_unknown_block (event_uuid, block_index, raw_json)
-       VALUES (@event_uuid, @block_index, @raw_json)`,
+      `INSERT OR REPLACE INTO event_unknown_block (event_uuid, session_id, block_index, raw_json)
+       VALUES (@event_uuid, @session_id, @block_index, @raw_json)`,
     ),
     insertAnomaly: db.prepare(
       `INSERT INTO anomaly (session_id, ts, kind, count, detail, source_file)
@@ -156,7 +156,7 @@ export function prepareStatements(db: Database.Database): WriterStatements {
            is_error = @is_error,
            result_chars = @result_chars,
            error_excerpt = @error_excerpt
-       WHERE call_id = @call_id AND duration_ms IS NULL`,
+       WHERE call_id = @call_id AND session_id = @session_id AND duration_ms IS NULL`,
     ),
     setToolCallResult: db.prepare(
       `UPDATE tool_call
@@ -206,9 +206,7 @@ export function prepareStatements(db: Database.Database): WriterStatements {
     wipeSlashCommandsForSession: db.prepare(`DELETE FROM slash_command WHERE session_id = ?`),
     wipeSystemRemindersForSession: db.prepare(`DELETE FROM system_reminder WHERE session_id = ?`),
     wipeHookBlocksForSession: db.prepare(`DELETE FROM hook_block WHERE session_id = ?`),
-    wipeUnknownBlocksForSession: db.prepare(
-      `DELETE FROM event_unknown_block WHERE event_uuid IN (SELECT uuid FROM event WHERE session_id = ?)`,
-    ),
+    wipeUnknownBlocksForSession: db.prepare(`DELETE FROM event_unknown_block WHERE session_id = ?`),
   };
 }
 
@@ -321,13 +319,19 @@ export function flushAnomalyBatch(
 }
 
 /** Cross-event tool_result → tool_call.duration_ms, is_error, result_chars
- *  and error_excerpt fill. */
+ *  and error_excerpt fill, in the call rows of `sessionIds` only: the sessions
+ *  the file writes. A resumed session's copy of a call shares its call id, and
+ *  filling it from another file's result made its rows depend on which file
+ *  was indexed last (gate 2). */
 export function applyToolResults(
   stmts: WriterStatements,
   results: Map<string, ToolResultInfo>,
+  sessionIds: readonly string[],
 ): void {
   for (const [call_id, { ts, is_error, result_chars, error_excerpt }] of results) {
-    stmts.updateToolCallResult.run({ call_id, result_ts: ts, is_error, result_chars, error_excerpt });
+    for (const session_id of sessionIds) {
+      stmts.updateToolCallResult.run({ call_id, session_id, result_ts: ts, is_error, result_chars, error_excerpt });
+    }
   }
 }
 

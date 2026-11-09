@@ -298,6 +298,7 @@ function walkContent(args: {
       const truncRaw = raw.slice(0, EVENT_UNKNOWN_BLOCK_CAP);
       out.unknown_blocks.push({
         event_uuid,
+        session_id,
         block_index: blockIndex,
         raw_json: truncRaw,
       });
@@ -455,6 +456,7 @@ function walkContent(args: {
       const raw = JSON.stringify(block).slice(0, EVENT_UNKNOWN_BLOCK_CAP);
       out.unknown_blocks.push({
         event_uuid,
+        session_id,
         block_index: blockIndex,
         raw_json: raw,
       });

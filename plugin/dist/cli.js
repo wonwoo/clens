@@ -2613,6 +2613,7 @@ function walkContent(args) {
       const truncRaw = raw.slice(0, EVENT_UNKNOWN_BLOCK_CAP);
       out.unknown_blocks.push({
         event_uuid,
+        session_id,
         block_index: blockIndex,
         raw_json: truncRaw
       });
@@ -2746,6 +2747,7 @@ function walkContent(args) {
       const raw = JSON.stringify(block).slice(0, EVENT_UNKNOWN_BLOCK_CAP);
       out.unknown_blocks.push({
         event_uuid,
+        session_id,
         block_index: blockIndex,
         raw_json: raw
       });
@@ -4287,8 +4289,8 @@ function prepareStatements(db) {
        VALUES (@event_uuid, @session_id, @ts, @hook_event, @tool, @call_id, @reason)`
     ),
     insertEventUnknownBlock: db.prepare(
-      `INSERT OR REPLACE INTO event_unknown_block (event_uuid, block_index, raw_json)
-       VALUES (@event_uuid, @block_index, @raw_json)`
+      `INSERT OR REPLACE INTO event_unknown_block (event_uuid, session_id, block_index, raw_json)
+       VALUES (@event_uuid, @session_id, @block_index, @raw_json)`
     ),
     insertAnomaly: db.prepare(
       `INSERT INTO anomaly (session_id, ts, kind, count, detail, source_file)
@@ -4301,7 +4303,7 @@ function prepareStatements(db) {
            is_error = @is_error,
            result_chars = @result_chars,
            error_excerpt = @error_excerpt
-       WHERE call_id = @call_id AND duration_ms IS NULL`
+       WHERE call_id = @call_id AND session_id = @session_id AND duration_ms IS NULL`
     ),
     setToolCallResult: db.prepare(
       `UPDATE tool_call
@@ -4351,9 +4353,7 @@ function prepareStatements(db) {
     wipeSlashCommandsForSession: db.prepare(`DELETE FROM slash_command WHERE session_id = ?`),
     wipeSystemRemindersForSession: db.prepare(`DELETE FROM system_reminder WHERE session_id = ?`),
     wipeHookBlocksForSession: db.prepare(`DELETE FROM hook_block WHERE session_id = ?`),
-    wipeUnknownBlocksForSession: db.prepare(
-      `DELETE FROM event_unknown_block WHERE event_uuid IN (SELECT uuid FROM event WHERE session_id = ?)`
-    )
+    wipeUnknownBlocksForSession: db.prepare(`DELETE FROM event_unknown_block WHERE session_id = ?`)
   };
 }
 function wipeSessions(stmts, sessionIds) {
@@ -4430,9 +4430,11 @@ function flushAnomalyBatch(stmts, batch) {
     });
   }
 }
-function applyToolResults(stmts, results) {
+function applyToolResults(stmts, results, sessionIds) {
   for (const [call_id, { ts, is_error, result_chars, error_excerpt }] of results) {
-    stmts.updateToolCallResult.run({ call_id, result_ts: ts, is_error, result_chars, error_excerpt });
+    for (const session_id of sessionIds) {
+      stmts.updateToolCallResult.run({ call_id, session_id, result_ts: ts, is_error, result_chars, error_excerpt });
+    }
   }
 }
 
@@ -4543,7 +4545,7 @@ function appendNewLines(db, stmts, f) {
     batch,
     terminated,
     last_ok: from + lineStart,
-    writeExtra: () => applyToolResults(stmts, toolResults)
+    writeExtra: () => applyToolResults(stmts, toolResults, [own])
   });
 }
 function finishAppend(db, stmts, args) {
@@ -4787,7 +4789,7 @@ function appendCodexLines(db, stmts, f) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 18;
+var SCHEMA_VERSION = 19;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -4802,6 +4804,43 @@ function languageTableStatements(code) {
          DELETE FROM ${table} WHERE rowid = old.rowid;
        END`
   ];
+}
+function eventTableStatement(name) {
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+     uuid              TEXT NOT NULL,
+     session_id        TEXT NOT NULL,
+     parent_uuid       TEXT,
+     prompt_id         TEXT,
+     agent_id          TEXT,
+     is_sidechain      INTEGER,
+     ts                TEXT NOT NULL,
+     role              TEXT,
+     model             TEXT,
+     in_tok            INTEGER DEFAULT 0,
+     out_tok           INTEGER DEFAULT 0,
+     cache_r           INTEGER DEFAULT 0,
+     cache_w           INTEGER DEFAULT 0,
+     text_len          INTEGER DEFAULT 0,
+     has_tool_use      INTEGER DEFAULT 0,
+     has_text          INTEGER DEFAULT 0,
+     has_tool_res      INTEGER DEFAULT 0,
+     user_turn_no      INTEGER,
+     assistant_turn_no INTEGER,
+     source_file       TEXT,
+     PRIMARY KEY (uuid, session_id),
+     FOREIGN KEY (session_id) REFERENCES session(id)
+   )`;
+}
+var EVENT_COLUMNS = "uuid, session_id, parent_uuid, prompt_id, agent_id, is_sidechain, ts, role, model, in_tok, out_tok, cache_r, cache_w, text_len, has_tool_use, has_text, has_tool_res, user_turn_no, assistant_turn_no, source_file";
+function unknownBlockTableStatement(name) {
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+     event_uuid  TEXT NOT NULL,
+     block_index INTEGER NOT NULL,
+     raw_json    TEXT NOT NULL,
+     session_id  TEXT,
+     PRIMARY KEY (event_uuid, session_id, block_index),
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`;
 }
 var SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`,
@@ -4842,42 +4881,14 @@ var SCHEMA_STATEMENTS = [
      source        TEXT NOT NULL DEFAULT 'claude',
      FOREIGN KEY (project_id) REFERENCES project(id)
    )`,
-  // ----- Event (one row per JSONL line, multi-block messages stay as one) -----
-  `CREATE TABLE IF NOT EXISTS event (
-     uuid              TEXT PRIMARY KEY,
-     session_id        TEXT NOT NULL,
-     parent_uuid       TEXT,
-     prompt_id         TEXT,
-     agent_id          TEXT,
-     is_sidechain      INTEGER,
-     ts                TEXT NOT NULL,
-     role              TEXT,
-     model             TEXT,
-     in_tok            INTEGER DEFAULT 0,
-     out_tok           INTEGER DEFAULT 0,
-     cache_r           INTEGER DEFAULT 0,
-     cache_w           INTEGER DEFAULT 0,
-     text_len          INTEGER DEFAULT 0,
-     has_tool_use      INTEGER DEFAULT 0,
-     has_text          INTEGER DEFAULT 0,
-     has_tool_res      INTEGER DEFAULT 0,
-     user_turn_no      INTEGER,
-     assistant_turn_no INTEGER,
-     source_file       TEXT,
-     FOREIGN KEY (session_id) REFERENCES session(id)
-   )`,
+  // ----- Event (one row per JSONL line and session, multi-block messages stay as one) -----
+  eventTableStatement("event"),
   `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
   `CREATE INDEX IF NOT EXISTS event_session_idx ON event(session_id, ts)`,
   `CREATE INDEX IF NOT EXISTS event_ts_idx ON event(ts)`,
   `CREATE INDEX IF NOT EXISTS event_source_file_idx ON event(source_file)`,
   // ----- Event-unknown-block (forensic store for unrecognized block types) -----
-  `CREATE TABLE IF NOT EXISTS event_unknown_block (
-     event_uuid  TEXT NOT NULL,
-     block_index INTEGER NOT NULL,
-     raw_json    TEXT NOT NULL,
-     PRIMARY KEY (event_uuid, block_index),
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
+  unknownBlockTableStatement("event_unknown_block"),
   // ----- Tool calls -----
   `CREATE TABLE IF NOT EXISTS tool_call (
      event_uuid  TEXT NOT NULL,
@@ -5050,6 +5061,7 @@ function applySchema(db) {
   db.pragma("busy_timeout = 30000");
   db.pragma("foreign_keys = OFF");
   db.pragma("synchronous = NORMAL");
+  migrateToSessionKeys(db);
   const initTx = db.transaction(() => {
     for (const stmt of SCHEMA_STATEMENTS) db.exec(stmt);
     const toolCallColumns = db.prepare("PRAGMA table_info(tool_call)").all();
@@ -5068,6 +5080,31 @@ function applySchema(db) {
     }
   });
   initTx();
+}
+function migrateToSessionKeys(db) {
+  const columns = (table) => db.prepare(`PRAGMA table_info(${table})`).all();
+  db.transaction(() => {
+    const blockColumns = columns("event_unknown_block");
+    if (blockColumns.length > 0 && !blockColumns.some((c) => c.name === "session_id")) {
+      db.exec(unknownBlockTableStatement("event_unknown_block_v19"));
+      db.exec(
+        `INSERT INTO event_unknown_block_v19 (event_uuid, session_id, block_index, raw_json)
+         SELECT k.event_uuid, e.session_id, k.block_index, k.raw_json
+         FROM event_unknown_block k JOIN event e ON e.uuid = k.event_uuid`
+      );
+      db.exec("DROP TABLE event_unknown_block");
+      db.exec("ALTER TABLE event_unknown_block_v19 RENAME TO event_unknown_block");
+    } else if (blockColumns.length > 0) {
+      db.exec("DELETE FROM event_unknown_block WHERE session_id IS NULL");
+    }
+    const eventKey = columns("event").filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
+    if (eventKey.length === 1 && eventKey[0] === "uuid") {
+      db.exec(eventTableStatement("event_v19"));
+      db.exec(`INSERT INTO event_v19 (${EVENT_COLUMNS}) SELECT ${EVENT_COLUMNS} FROM event ORDER BY uuid, session_id`);
+      db.exec("DROP TABLE event");
+      db.exec("ALTER TABLE event_v19 RENAME TO event");
+    }
+  })();
 }
 function getSchemaVersion(db) {
   try {
@@ -5374,7 +5411,7 @@ function commitFile(args) {
       assignTurnNumbers(list);
       for (const p of list) writeParsedEvent(stmts, p, known);
     }
-    applyToolResults(stmts, tool_results);
+    applyToolResults(stmts, tool_results, [...summary.affected_sessions]);
     flushAnomalyBatch(stmts, batch);
     upsertCursor(db, {
       path: source_file,
@@ -5693,16 +5730,19 @@ var TABLE_ORDER = /* @__PURE__ */ new Map([
   ["file_cursor", "path"],
   ["project", "id"],
   ["session", "id"],
-  ["event", "uuid"],
-  ["event_unknown_block", "event_uuid, block_index"],
-  ["tool_call", "event_uuid, call_id, name"],
-  ["file_op", "event_uuid, tool, path"],
-  ["user_text", "event_uuid, ts, text"],
-  ["skill_call", "event_uuid, ts, skill"],
-  ["agent_call", "event_uuid, ts, subagent_type"],
-  ["slash_command", "event_uuid, ts, name"],
-  ["system_reminder", "event_uuid, ts, category"],
-  ["hook_block", "event_uuid, ts, hook_event, COALESCE(call_id, '')"],
+  // A line copied into a resumed session has rows under the same uuid in
+  // each session that holds it, so session_id follows the uuid; without it
+  // those rows tie and hash in whatever order they were written.
+  ["event", "uuid, session_id"],
+  ["event_unknown_block", "event_uuid, session_id, block_index"],
+  ["tool_call", "event_uuid, session_id, call_id, name"],
+  ["file_op", "event_uuid, session_id, tool, path"],
+  ["user_text", "event_uuid, session_id, ts, text"],
+  ["skill_call", "event_uuid, session_id, ts, skill"],
+  ["agent_call", "event_uuid, session_id, ts, subagent_type"],
+  ["slash_command", "event_uuid, session_id, ts, name"],
+  ["system_reminder", "event_uuid, session_id, ts, category"],
+  ["hook_block", "event_uuid, session_id, ts, hook_event, COALESCE(call_id, '')"],
   ["anomaly", "kind, COALESCE(session_id, ''), ts, count, COALESCE(detail, '')"]
 ]);
 function stableStringify(obj) {

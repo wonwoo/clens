@@ -309,7 +309,7 @@ function commitFile(args: {
 
     // 5) Cross-event tool_result → tool_call.duration_ms, is_error,
     //    result_chars and error_excerpt.
-    applyToolResults(stmts, tool_results);
+    applyToolResults(stmts, tool_results, [...summary.affected_sessions]);
 
     // 6) Anomaly batch flush.
     flushAnomalyBatch(stmts, batch);

@@ -394,7 +394,7 @@ function latest<T>(rows: T[]): T[] {
 function segmentsOf(db: Database.Database, sessionId: string, changes: number[]): SessionSegment[] {
   const messages = (db.prepare(`
     SELECT ut.ts, ut.role, ut.text, e.model, ${COMPACT_ROW("ut")} AS compact
-    FROM user_text ut LEFT JOIN event e ON e.uuid = ut.event_uuid
+    FROM user_text ut LEFT JOIN event e ON e.uuid = ut.event_uuid AND e.session_id = ut.session_id
     WHERE ut.session_id = ? AND ${REAL_MESSAGE("ut")}
     ORDER BY ut.ts`).all(sessionId) as { ts: string; role: string; text: string; model: string | null; compact: number }[])
     .filter((m) => !isCompact(m));

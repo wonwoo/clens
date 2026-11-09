@@ -27434,6 +27434,7 @@ function walkContent(args) {
       const truncRaw = raw.slice(0, EVENT_UNKNOWN_BLOCK_CAP);
       out.unknown_blocks.push({
         event_uuid,
+        session_id,
         block_index: blockIndex,
         raw_json: truncRaw
       });
@@ -27567,6 +27568,7 @@ function walkContent(args) {
       const raw = JSON.stringify(block).slice(0, EVENT_UNKNOWN_BLOCK_CAP);
       out.unknown_blocks.push({
         event_uuid,
+        session_id,
         block_index: blockIndex,
         raw_json: raw
       });
@@ -29074,8 +29076,8 @@ function prepareStatements(db2) {
        VALUES (@event_uuid, @session_id, @ts, @hook_event, @tool, @call_id, @reason)`
     ),
     insertEventUnknownBlock: db2.prepare(
-      `INSERT OR REPLACE INTO event_unknown_block (event_uuid, block_index, raw_json)
-       VALUES (@event_uuid, @block_index, @raw_json)`
+      `INSERT OR REPLACE INTO event_unknown_block (event_uuid, session_id, block_index, raw_json)
+       VALUES (@event_uuid, @session_id, @block_index, @raw_json)`
     ),
     insertAnomaly: db2.prepare(
       `INSERT INTO anomaly (session_id, ts, kind, count, detail, source_file)
@@ -29088,7 +29090,7 @@ function prepareStatements(db2) {
            is_error = @is_error,
            result_chars = @result_chars,
            error_excerpt = @error_excerpt
-       WHERE call_id = @call_id AND duration_ms IS NULL`
+       WHERE call_id = @call_id AND session_id = @session_id AND duration_ms IS NULL`
     ),
     setToolCallResult: db2.prepare(
       `UPDATE tool_call
@@ -29138,9 +29140,7 @@ function prepareStatements(db2) {
     wipeSlashCommandsForSession: db2.prepare(`DELETE FROM slash_command WHERE session_id = ?`),
     wipeSystemRemindersForSession: db2.prepare(`DELETE FROM system_reminder WHERE session_id = ?`),
     wipeHookBlocksForSession: db2.prepare(`DELETE FROM hook_block WHERE session_id = ?`),
-    wipeUnknownBlocksForSession: db2.prepare(
-      `DELETE FROM event_unknown_block WHERE event_uuid IN (SELECT uuid FROM event WHERE session_id = ?)`
-    )
+    wipeUnknownBlocksForSession: db2.prepare(`DELETE FROM event_unknown_block WHERE session_id = ?`)
   };
 }
 function wipeSessions(stmts, sessionIds) {
@@ -29217,9 +29217,11 @@ function flushAnomalyBatch(stmts, batch) {
     });
   }
 }
-function applyToolResults(stmts, results) {
+function applyToolResults(stmts, results, sessionIds) {
   for (const [call_id, { ts, is_error, result_chars, error_excerpt }] of results) {
-    stmts.updateToolCallResult.run({ call_id, result_ts: ts, is_error, result_chars, error_excerpt });
+    for (const session_id of sessionIds) {
+      stmts.updateToolCallResult.run({ call_id, session_id, result_ts: ts, is_error, result_chars, error_excerpt });
+    }
   }
 }
 
@@ -29330,7 +29332,7 @@ function appendNewLines(db2, stmts, f) {
     batch,
     terminated,
     last_ok: from + lineStart,
-    writeExtra: () => applyToolResults(stmts, toolResults)
+    writeExtra: () => applyToolResults(stmts, toolResults, [own])
   });
 }
 function finishAppend(db2, stmts, args) {
@@ -29574,7 +29576,7 @@ function appendCodexLines(db2, stmts, f) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 18;
+var SCHEMA_VERSION = 19;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -29589,6 +29591,43 @@ function languageTableStatements(code) {
          DELETE FROM ${table} WHERE rowid = old.rowid;
        END`
   ];
+}
+function eventTableStatement(name) {
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+     uuid              TEXT NOT NULL,
+     session_id        TEXT NOT NULL,
+     parent_uuid       TEXT,
+     prompt_id         TEXT,
+     agent_id          TEXT,
+     is_sidechain      INTEGER,
+     ts                TEXT NOT NULL,
+     role              TEXT,
+     model             TEXT,
+     in_tok            INTEGER DEFAULT 0,
+     out_tok           INTEGER DEFAULT 0,
+     cache_r           INTEGER DEFAULT 0,
+     cache_w           INTEGER DEFAULT 0,
+     text_len          INTEGER DEFAULT 0,
+     has_tool_use      INTEGER DEFAULT 0,
+     has_text          INTEGER DEFAULT 0,
+     has_tool_res      INTEGER DEFAULT 0,
+     user_turn_no      INTEGER,
+     assistant_turn_no INTEGER,
+     source_file       TEXT,
+     PRIMARY KEY (uuid, session_id),
+     FOREIGN KEY (session_id) REFERENCES session(id)
+   )`;
+}
+var EVENT_COLUMNS = "uuid, session_id, parent_uuid, prompt_id, agent_id, is_sidechain, ts, role, model, in_tok, out_tok, cache_r, cache_w, text_len, has_tool_use, has_text, has_tool_res, user_turn_no, assistant_turn_no, source_file";
+function unknownBlockTableStatement(name) {
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+     event_uuid  TEXT NOT NULL,
+     block_index INTEGER NOT NULL,
+     raw_json    TEXT NOT NULL,
+     session_id  TEXT,
+     PRIMARY KEY (event_uuid, session_id, block_index),
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`;
 }
 var SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`,
@@ -29629,42 +29668,14 @@ var SCHEMA_STATEMENTS = [
      source        TEXT NOT NULL DEFAULT 'claude',
      FOREIGN KEY (project_id) REFERENCES project(id)
    )`,
-  // ----- Event (one row per JSONL line, multi-block messages stay as one) -----
-  `CREATE TABLE IF NOT EXISTS event (
-     uuid              TEXT PRIMARY KEY,
-     session_id        TEXT NOT NULL,
-     parent_uuid       TEXT,
-     prompt_id         TEXT,
-     agent_id          TEXT,
-     is_sidechain      INTEGER,
-     ts                TEXT NOT NULL,
-     role              TEXT,
-     model             TEXT,
-     in_tok            INTEGER DEFAULT 0,
-     out_tok           INTEGER DEFAULT 0,
-     cache_r           INTEGER DEFAULT 0,
-     cache_w           INTEGER DEFAULT 0,
-     text_len          INTEGER DEFAULT 0,
-     has_tool_use      INTEGER DEFAULT 0,
-     has_text          INTEGER DEFAULT 0,
-     has_tool_res      INTEGER DEFAULT 0,
-     user_turn_no      INTEGER,
-     assistant_turn_no INTEGER,
-     source_file       TEXT,
-     FOREIGN KEY (session_id) REFERENCES session(id)
-   )`,
+  // ----- Event (one row per JSONL line and session, multi-block messages stay as one) -----
+  eventTableStatement("event"),
   `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
   `CREATE INDEX IF NOT EXISTS event_session_idx ON event(session_id, ts)`,
   `CREATE INDEX IF NOT EXISTS event_ts_idx ON event(ts)`,
   `CREATE INDEX IF NOT EXISTS event_source_file_idx ON event(source_file)`,
   // ----- Event-unknown-block (forensic store for unrecognized block types) -----
-  `CREATE TABLE IF NOT EXISTS event_unknown_block (
-     event_uuid  TEXT NOT NULL,
-     block_index INTEGER NOT NULL,
-     raw_json    TEXT NOT NULL,
-     PRIMARY KEY (event_uuid, block_index),
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
+  unknownBlockTableStatement("event_unknown_block"),
   // ----- Tool calls -----
   `CREATE TABLE IF NOT EXISTS tool_call (
      event_uuid  TEXT NOT NULL,
@@ -29837,6 +29848,7 @@ function applySchema(db2) {
   db2.pragma("busy_timeout = 30000");
   db2.pragma("foreign_keys = OFF");
   db2.pragma("synchronous = NORMAL");
+  migrateToSessionKeys(db2);
   const initTx = db2.transaction(() => {
     for (const stmt of SCHEMA_STATEMENTS) db2.exec(stmt);
     const toolCallColumns = db2.prepare("PRAGMA table_info(tool_call)").all();
@@ -29855,6 +29867,31 @@ function applySchema(db2) {
     }
   });
   initTx();
+}
+function migrateToSessionKeys(db2) {
+  const columns = (table) => db2.prepare(`PRAGMA table_info(${table})`).all();
+  db2.transaction(() => {
+    const blockColumns = columns("event_unknown_block");
+    if (blockColumns.length > 0 && !blockColumns.some((c) => c.name === "session_id")) {
+      db2.exec(unknownBlockTableStatement("event_unknown_block_v19"));
+      db2.exec(
+        `INSERT INTO event_unknown_block_v19 (event_uuid, session_id, block_index, raw_json)
+         SELECT k.event_uuid, e.session_id, k.block_index, k.raw_json
+         FROM event_unknown_block k JOIN event e ON e.uuid = k.event_uuid`
+      );
+      db2.exec("DROP TABLE event_unknown_block");
+      db2.exec("ALTER TABLE event_unknown_block_v19 RENAME TO event_unknown_block");
+    } else if (blockColumns.length > 0) {
+      db2.exec("DELETE FROM event_unknown_block WHERE session_id IS NULL");
+    }
+    const eventKey = columns("event").filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
+    if (eventKey.length === 1 && eventKey[0] === "uuid") {
+      db2.exec(eventTableStatement("event_v19"));
+      db2.exec(`INSERT INTO event_v19 (${EVENT_COLUMNS}) SELECT ${EVENT_COLUMNS} FROM event ORDER BY uuid, session_id`);
+      db2.exec("DROP TABLE event");
+      db2.exec("ALTER TABLE event_v19 RENAME TO event");
+    }
+  })();
 }
 function getSchemaVersion(db2) {
   try {
@@ -30161,7 +30198,7 @@ function commitFile(args) {
       assignTurnNumbers(list);
       for (const p of list) writeParsedEvent(stmts, p, known);
     }
-    applyToolResults(stmts, tool_results);
+    applyToolResults(stmts, tool_results, [...summary.affected_sessions]);
     flushAnomalyBatch(stmts, batch);
     upsertCursor(db2, {
       path: source_file,
@@ -30457,21 +30494,26 @@ function workKindClause(alias) {
   return `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec' AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`;
 }
 function notCopiedClause(eventUuidColumn, sessionIdColumn) {
-  return `(IFNULL((SELECT owner.session_id FROM event owner WHERE owner.uuid = ${eventUuidColumn}), ${sessionIdColumn}) = ${sessionIdColumn})`;
+  return `(IFNULL((SELECT MIN(owner.session_id) FROM event owner WHERE owner.uuid = ${eventUuidColumn}), ${sessionIdColumn}) = ${sessionIdColumn})`;
+}
+function notCopiedEventClause(eventAlias) {
+  return `(${eventAlias}.rowid NOT IN (SELECT c.rowid FROM event c JOIN event o ON o.uuid = c.uuid AND o.session_id < c.session_id))`;
 }
 function notForkCopyClause(eventUuidColumn) {
   return `(${eventUuidColumn} NOT IN (SELECT copy.event_uuid FROM tool_call copy JOIN tool_call kept ON kept.call_id = copy.call_id AND kept.event_uuid < copy.event_uuid WHERE copy.name = 'Agent'))`;
 }
 var WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
 function eventWhere(scope, eventAlias = "e") {
+  const notCopied = notCopiedEventClause(eventAlias);
   switch (scope.mode) {
     case "global":
-      return { sql: `${eventAlias}.session_id IN (${WORK_SESSIONS})`, binds: [] };
+      return { sql: `${eventAlias}.session_id IN (${WORK_SESSIONS}) AND ${notCopied}`, binds: [] };
     case "session":
       return { sql: `${eventAlias}.session_id = ?`, binds: [scope.params.session_id] };
     case "project": {
       const parts = [
-        `${eventAlias}.session_id IN (SELECT id FROM session WHERE project_id = ? AND ${workKindClause()})`
+        `${eventAlias}.session_id IN (SELECT id FROM session WHERE project_id = ? AND ${workKindClause()})`,
+        notCopied
       ];
       const binds = [scope.params.project_id];
       if (scope.params.since) {
@@ -30482,7 +30524,7 @@ function eventWhere(scope, eventAlias = "e") {
     }
     case "since":
       return {
-        sql: `${eventAlias}.ts >= ? AND ${eventAlias}.session_id IN (${WORK_SESSIONS})`,
+        sql: `${eventAlias}.ts >= ? AND ${eventAlias}.session_id IN (${WORK_SESSIONS}) AND ${notCopied}`,
         binds: [scope.params.since]
       };
   }
@@ -31909,7 +31951,7 @@ function latest(rows) {
 function segmentsOf(db2, sessionId, changes) {
   const messages = db2.prepare(`
     SELECT ut.ts, ut.role, ut.text, e.model, ${COMPACT_ROW("ut")} AS compact
-    FROM user_text ut LEFT JOIN event e ON e.uuid = ut.event_uuid
+    FROM user_text ut LEFT JOIN event e ON e.uuid = ut.event_uuid AND e.session_id = ut.session_id
     WHERE ut.session_id = ? AND ${REAL_MESSAGE("ut")}
     ORDER BY ut.ts`).all(sessionId).filter((m) => !isCompact(m));
   const breaks = db2.prepare(`
@@ -32636,7 +32678,8 @@ function analyzeIdentity(db2, scope) {
       const modelRow = db2.prepare(
         `SELECT e.model AS model, COUNT(*) AS c
            FROM event e JOIN session s ON e.session_id = s.id
-           WHERE e.role = 'assistant' AND e.model IS NOT NULL AND s.project_id = ? AND ${workKindClause("s")} ${sinceCond}
+           WHERE e.role = 'assistant' AND e.model IS NOT NULL AND s.project_id = ? AND ${workKindClause("s")}
+             AND ${notCopiedEventClause("e")} ${sinceCond}
            GROUP BY e.model ORDER BY c DESC LIMIT 1`
       ).get(scope.params.project_id, ...sinceBind);
       return {

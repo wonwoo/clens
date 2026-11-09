@@ -7,7 +7,8 @@
  * seeded with the current SCHEMA_VERSION constant on init only.
  *
  * Upgrades: a column added to an existing table is added with ALTER TABLE
- * in applySchema(); anything else bumps SCHEMA_VERSION, and runIndex()
+ * in applySchema(), a changed key is migrated by copying the table
+ * (migrateToSessionKeys); anything else bumps SCHEMA_VERSION, and runIndex()
  * rebuilds on the mismatch. Down-migration is not supported.
  */
 
@@ -90,7 +91,10 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // so a search for a verb finds it conjugated; the version-mismatch rebuild
 // re-reads every transcript still on disk, and a session whose transcript is
 // gone keeps the forms it was indexed with.
-export const SCHEMA_VERSION = 18;
+// v19: event and event_unknown_block are keyed per session, so a line copied
+// into a resumed session has its own rows there
+// (docs/2026-11-09-per-session-events-design.md).
+export const SCHEMA_VERSION = 19;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population
@@ -114,6 +118,60 @@ function languageTableStatements(code: string): string[] {
          DELETE FROM ${table} WHERE rowid = old.rowid;
        END`,
   ];
+}
+
+/** The event table. A line copied into a resumed session keeps its uuid
+ *  under the new session id, so the key is (uuid, session_id): each session
+ *  holding the line has its own row. The child tables still declare
+ *  `REFERENCES event(uuid)`, which no longer names a unique key; that is
+ *  harmless while foreign keys are off (applySchema), and a connection with
+ *  them on gets "foreign key mismatch" when it writes a child row. */
+function eventTableStatement(name: string): string {
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+     uuid              TEXT NOT NULL,
+     session_id        TEXT NOT NULL,
+     parent_uuid       TEXT,
+     prompt_id         TEXT,
+     agent_id          TEXT,
+     is_sidechain      INTEGER,
+     ts                TEXT NOT NULL,
+     role              TEXT,
+     model             TEXT,
+     in_tok            INTEGER DEFAULT 0,
+     out_tok           INTEGER DEFAULT 0,
+     cache_r           INTEGER DEFAULT 0,
+     cache_w           INTEGER DEFAULT 0,
+     text_len          INTEGER DEFAULT 0,
+     has_tool_use      INTEGER DEFAULT 0,
+     has_text          INTEGER DEFAULT 0,
+     has_tool_res      INTEGER DEFAULT 0,
+     user_turn_no      INTEGER,
+     assistant_turn_no INTEGER,
+     source_file       TEXT,
+     PRIMARY KEY (uuid, session_id),
+     FOREIGN KEY (session_id) REFERENCES session(id)
+   )`;
+}
+
+/** The columns of the event table, in their order. */
+const EVENT_COLUMNS =
+  "uuid, session_id, parent_uuid, prompt_id, agent_id, is_sidechain, ts, role, model, " +
+  "in_tok, out_tok, cache_r, cache_w, text_len, has_tool_use, has_text, has_tool_res, " +
+  "user_turn_no, assistant_turn_no, source_file";
+
+/** The unknown-block table, keyed per session like the event table.
+ *  session_id comes last and may be NULL so that an older clens, whose insert
+ *  names only the three columns before it, can still write to a migrated
+ *  index; this version always fills it. */
+function unknownBlockTableStatement(name: string): string {
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+     event_uuid  TEXT NOT NULL,
+     block_index INTEGER NOT NULL,
+     raw_json    TEXT NOT NULL,
+     session_id  TEXT,
+     PRIMARY KEY (event_uuid, session_id, block_index),
+     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
+   )`;
 }
 
 /** Statement list in declaration order; applySchema() runs each on its own. */
@@ -161,43 +219,15 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      FOREIGN KEY (project_id) REFERENCES project(id)
    )`,
 
-  // ----- Event (one row per JSONL line, multi-block messages stay as one) -----
-  `CREATE TABLE IF NOT EXISTS event (
-     uuid              TEXT PRIMARY KEY,
-     session_id        TEXT NOT NULL,
-     parent_uuid       TEXT,
-     prompt_id         TEXT,
-     agent_id          TEXT,
-     is_sidechain      INTEGER,
-     ts                TEXT NOT NULL,
-     role              TEXT,
-     model             TEXT,
-     in_tok            INTEGER DEFAULT 0,
-     out_tok           INTEGER DEFAULT 0,
-     cache_r           INTEGER DEFAULT 0,
-     cache_w           INTEGER DEFAULT 0,
-     text_len          INTEGER DEFAULT 0,
-     has_tool_use      INTEGER DEFAULT 0,
-     has_text          INTEGER DEFAULT 0,
-     has_tool_res      INTEGER DEFAULT 0,
-     user_turn_no      INTEGER,
-     assistant_turn_no INTEGER,
-     source_file       TEXT,
-     FOREIGN KEY (session_id) REFERENCES session(id)
-   )`,
+  // ----- Event (one row per JSONL line and session, multi-block messages stay as one) -----
+  eventTableStatement("event"),
   `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
   `CREATE INDEX IF NOT EXISTS event_session_idx ON event(session_id, ts)`,
   `CREATE INDEX IF NOT EXISTS event_ts_idx ON event(ts)`,
   `CREATE INDEX IF NOT EXISTS event_source_file_idx ON event(source_file)`,
 
   // ----- Event-unknown-block (forensic store for unrecognized block types) -----
-  `CREATE TABLE IF NOT EXISTS event_unknown_block (
-     event_uuid  TEXT NOT NULL,
-     block_index INTEGER NOT NULL,
-     raw_json    TEXT NOT NULL,
-     PRIMARY KEY (event_uuid, block_index),
-     FOREIGN KEY (event_uuid) REFERENCES event(uuid)
-   )`,
+  unknownBlockTableStatement("event_unknown_block"),
 
   // ----- Tool calls -----
   `CREATE TABLE IF NOT EXISTS tool_call (
@@ -390,6 +420,8 @@ export function applySchema(db: Database.Database): void {
   db.pragma("foreign_keys = OFF"); // we manage FK integrity at parse time; OFF avoids reorder constraints
   db.pragma("synchronous = NORMAL");
 
+  migrateToSessionKeys(db);
+
   const initTx = db.transaction(() => {
     for (const stmt of SCHEMA_STATEMENTS) db.exec(stmt);
     // v5 upgrade: CREATE TABLE IF NOT EXISTS leaves a v4 tool_call without
@@ -415,6 +447,50 @@ export function applySchema(db: Database.Database): void {
     }
   });
   initTx();
+}
+
+/** v19: re-key event and event_unknown_block per session in an index made
+ *  before it. A no-op on a fresh or already migrated index. Runs with foreign
+ *  keys off, as applySchema sets them: with them on, dropping the old event
+ *  table checked every child row and ran for minutes on a real index. Rows
+ *  are copied in key order, which took 5-7 s for 857,893 events. One
+ *  transaction, so a failure leaves the old tables for the next run. */
+function migrateToSessionKeys(db: Database.Database): void {
+  const columns = (table: string) =>
+    db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; pk: number }[];
+  db.transaction(() => {
+    const blockColumns = columns("event_unknown_block");
+    if (blockColumns.length > 0 && !blockColumns.some((c) => c.name === "session_id")) {
+      // The old event table has one row per uuid, so each block gets one
+      // session; a block whose event is missing is dropped (nothing reads it).
+      db.exec(unknownBlockTableStatement("event_unknown_block_v19"));
+      db.exec(
+        `INSERT INTO event_unknown_block_v19 (event_uuid, session_id, block_index, raw_json)
+         SELECT k.event_uuid, e.session_id, k.block_index, k.raw_json
+         FROM event_unknown_block k JOIN event e ON e.uuid = k.event_uuid`,
+      );
+      db.exec("DROP TABLE event_unknown_block");
+      db.exec("ALTER TABLE event_unknown_block_v19 RENAME TO event_unknown_block");
+    } else if (blockColumns.length > 0) {
+      // Only an older clens writes a block without a session. Its writes also
+      // set the stored version back, so the rebuild that follows writes the
+      // block again with one; this version wipes blocks by session and would
+      // never delete these.
+      db.exec("DELETE FROM event_unknown_block WHERE session_id IS NULL");
+    }
+    const eventKey = columns("event")
+      .filter((c) => c.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+      .map((c) => c.name);
+    if (eventKey.length === 1 && eventKey[0] === "uuid") {
+      // The event indexes go with the old table; SCHEMA_STATEMENTS, which run
+      // next, create them again.
+      db.exec(eventTableStatement("event_v19"));
+      db.exec(`INSERT INTO event_v19 (${EVENT_COLUMNS}) SELECT ${EVENT_COLUMNS} FROM event ORDER BY uuid, session_id`);
+      db.exec("DROP TABLE event");
+      db.exec("ALTER TABLE event_v19 RENAME TO event");
+    }
+  })();
 }
 
 /** Read the currently stored schema version (or null if uninitialized). */

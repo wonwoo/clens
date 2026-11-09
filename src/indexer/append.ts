@@ -221,7 +221,7 @@ export function appendNewLines(
     batch,
     terminated,
     last_ok: from + lineStart,
-    writeExtra: () => applyToolResults(stmts, toolResults),
+    writeExtra: () => applyToolResults(stmts, toolResults, [own]),
   });
 }
 

@@ -109,6 +109,7 @@ export interface HookBlockRow {
 
 export interface EventUnknownBlockRow {
   event_uuid: string;
+  session_id: string;
   block_index: number;
   raw_json: string;
 }

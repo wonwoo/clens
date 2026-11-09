@@ -390,7 +390,8 @@ describe("Codex append path — X4 changes that re-derive the session", () => {
 
 describe("Codex append path — X7 results written as a re-derivation writes them", () => {
   // Re-deriving writes each call's newest result onto every row of that call
-  // id whose duration is still empty, in any session (updateToolCallResult).
+  // id in the rollout's own session whose duration is still empty
+  // (updateToolCallResult).
   const mcpItem = (s: number, id: string) =>
     line(s, "event_msg", {
       type: "item_completed",
@@ -429,11 +430,9 @@ describe("Codex append path — X7 results written as a re-derivation writes the
     await expectDigestEqualsRebuild();
   });
 
-  // Re-deriving a rollout before this change also changed other sessions'
-  // rows (its results fill their empty rows of the same call id) and reset
-  // its own (another file's result may have filled one). The rows then
-  // depend on which file was indexed last, so these compare the outcome, not
-  // a rebuild's digest.
+  // Before v19 re-deriving a rollout also filled other sessions' empty rows
+  // of its call ids, so its rows depended on which file was indexed last.
+  // The guard that came of it stays, stricter than needed.
   it("an earlier result whose call id a session indexed later also holds goes the full way", async () => {
     const first = rollout("s-x7d1");
     write(first, meta(0, "s-x7d1") + userMsg(1, "go") + fcall(2, "c7", "exec_command", { cmd: "npm test" }) + fout(3, "c7", exited(1)));
@@ -445,16 +444,16 @@ describe("Codex append path — X7 results written as a re-derivation writes the
     expect((await runIndex({})).files_appended).toBe(0);
   });
 
-  it("a call another rollout's result filled goes the full way", async () => {
+  it("another rollout's result for a call id leaves this rollout's call empty, and appending to it equals a rebuild", async () => {
     const first = rollout("s-x7e1");
     write(first, meta(0, "s-x7e1") + userMsg(1, "go") + fcall(2, "c8", "exec_command", { cmd: "npm test" }));
     await runIndex({});
     write(rollout("s-x7e2"), meta(0, "s-x7e2") + userMsg(1, "go") + fout(2, "c8", exited(1)));
     await runIndex({});
-    expect(query("SELECT is_error FROM tool_call WHERE call_id = 'c8'")).toEqual({ is_error: 1 });
+    expect(query("SELECT duration_ms, is_error FROM tool_call WHERE call_id = 'c8'")).toEqual({ duration_ms: null, is_error: 0 });
     add(first, userMsg(3, "again"));
-    expect(appendOutcome(first)).toBe("shared_call_id");
-    expect((await runIndex({})).files_appended).toBe(0);
+    expect((await runIndex({})).files_appended).toBe(1);
+    await expectDigestEqualsRebuild();
   });
 
   it("a call id with a row parsed with its duration and another row goes the full way", async () => {

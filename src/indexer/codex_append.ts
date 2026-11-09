@@ -64,8 +64,9 @@ export function keepCodexState(
 }
 
 /** Add to `into` the call ids of `events` whose tool_call row was parsed with
- *  its duration (a McpToolCall item): updateToolCallResult leaves such a row
- *  as it is. */
+ *  its duration (a McpToolCall item): a re-derivation fills only the empty
+ *  rows of a call id in the rollout's own session (updateToolCallResult), so
+ *  it leaves such a row as it is. */
 export function prefilledCallIds(events: ParsedEvent[], into: Set<string> = new Set()): Set<string> {
   for (const p of events) {
     for (const c of p.tool_calls) if (c.call_id !== null && c.duration_ms !== null) into.add(c.call_id);
@@ -190,12 +191,12 @@ export function appendCodexLines(db: Database.Database, stmts: WriterStatements,
 
   // Results. Re-deriving this rollout deletes its tool_call rows, writes
   // them again, and runs its results through applyToolResults: each call's
-  // newest result fills every row of that call id whose duration is still
-  // empty, in any session. So the rows written below equal a re-derivation's
-  // only while no call id of this rollout, of a row, a new call or a result,
-  // is held by another session's row (that row would take this rollout's
-  // result too), and while each own row holds only what this rollout's own
-  // results gave it (another file's result can fill an empty own row).
+  // newest result fills the rows of that call id in the rollout's own
+  // session whose duration is still empty. Before v19 it filled them in any
+  // session, so the checks below go the full way when a call id of this
+  // rollout, of a row, a new call or a result, is held by another session's
+  // row, or when an own row holds what none of this rollout's own results
+  // gave it. They are now stricter than needed, which costs only a fallback.
   const prefilled = prefilledCallIds(events, new Set(entry.prefilled));
   const elsewhere = db.prepare("SELECT 1 FROM tool_call WHERE call_id = ? AND session_id IS NOT ? LIMIT 1");
   const ownRows = db
