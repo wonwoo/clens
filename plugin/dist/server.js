@@ -30385,13 +30385,44 @@ function startWatch(onIndexed, debounceMs = 500, retryMs = 3e4) {
   let timer;
   const watchers = [];
   const retries = [];
+  let running = false;
+  let again = false;
+  let stopped = false;
+  let lastError;
   function schedule() {
     if (timer !== void 0) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = void 0;
-      runIndex({ rebuild: false }).then(() => onIndexed()).catch(() => {
-      });
+      void run();
     }, debounceMs);
+  }
+  async function run() {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    try {
+      await runIndex({ rebuild: false });
+      lastError = void 0;
+      try {
+        await onIndexed();
+      } catch {
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message !== lastError) {
+        console.error(`clens watch: indexing failed: ${message}`);
+        lastError = message;
+      }
+      if (err?.exitCode === 4) again = true;
+    } finally {
+      running = false;
+      if (again && !stopped) {
+        again = false;
+        schedule();
+      }
+    }
   }
   function watchRoot(root) {
     try {
@@ -30423,6 +30454,7 @@ function startWatch(onIndexed, debounceMs = 500, retryMs = 3e4) {
   schedule();
   return {
     stop() {
+      stopped = true;
       if (timer !== void 0) {
         clearTimeout(timer);
         timer = void 0;
@@ -32807,9 +32839,11 @@ function analyzeHealth(db2, scope) {
                            WHERE cr.session_id = ut.session_id AND cr.category = 'compaction')`
   ).get(...utScope.binds).c;
   const ctxRows = db2.prepare(
-    `SELECT session_id, ts, (in_tok + cache_r + cache_w) AS ctx
-       FROM event e
-       WHERE role = 'assistant' AND ${eventScope.sql}
+    `SELECT e.session_id, e.ts,
+              CASE WHEN s.source = 'codex' THEN e.in_tok
+                   ELSE e.in_tok + e.cache_r + e.cache_w END AS ctx
+       FROM event e LEFT JOIN session s ON s.id = e.session_id
+       WHERE e.role = 'assistant' AND ${eventScope.sql}
        ORDER BY ctx`
   ).all(...eventScope.binds);
   let bloat = null;

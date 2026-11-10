@@ -195,6 +195,67 @@ describe("startWatch", () => {
     expect(onIndexed).not.toHaveBeenCalled();
   });
 
+  // A run that waited 30 s for the lock and gave up dropped the change: the
+  // lines it would have indexed stayed out until some other transcript changed.
+  it("runs again after a run fails because the index is busy, and logs the failure", async () => {
+    currentTestDir = makeTmpDir();
+    dirs.push(currentTestDir);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const onIndexed = vi.fn();
+    const handle = await startSettled(onIndexed, 100);
+    mockedRunIndex.mockRejectedValueOnce(Object.assign(new Error("indexer busy"), { exitCode: 4 }));
+
+    await writeUntilIndexed(join(currentTestDir, "busy.jsonl"));
+    await vi.waitFor(
+      () => expect(mockedRunIndex.mock.calls.length, "index runs after a busy failure, with no other change").toBe(2),
+      REACT_TIMEOUT,
+    );
+    await vi.waitFor(() => expect(onIndexed).toHaveBeenCalledTimes(1), REACT_TIMEOUT);
+    handle.stop();
+
+    expect(logged.mock.calls.flat().join(" "), "logged failure").toContain("indexer busy");
+    logged.mockRestore();
+  });
+
+  // A second run started while the first still held the lock, and gave up
+  // after 30 s when the first (a full rebuild) took longer.
+  it("runs once more after a run that a change arrived during, never two at once", async () => {
+    currentTestDir = makeTmpDir();
+    dirs.push(currentTestDir);
+
+    const onIndexed = vi.fn();
+    const handle = await startSettled(onIndexed, 50);
+    const finishers: Array<() => void> = [];
+    let running = 0;
+    let most = 0;
+    mockedRunIndex.mockImplementation(() => {
+      running++;
+      most = Math.max(most, running);
+      return new Promise<void>((resolve) => {
+        finishers.push(() => {
+          running--;
+          resolve();
+        });
+      });
+    });
+
+    await writeUntilIndexed(join(currentTestDir, "long.jsonl"));
+    writeFileSync(join(currentTestDir, "during.jsonl"), '{"x":1}\n');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(
+      { calls: mockedRunIndex.mock.calls.length, most },
+      "index runs started while one was running",
+    ).toEqual({ calls: 1, most: 1 });
+
+    finishers.shift()!();
+    await vi.waitFor(() => expect(mockedRunIndex).toHaveBeenCalledTimes(2), REACT_TIMEOUT);
+    finishers.shift()!();
+    await vi.waitFor(() => expect(onIndexed).toHaveBeenCalledTimes(2), REACT_TIMEOUT);
+    handle.stop();
+    expect(most).toBe(1);
+  });
+
   it("does not crash when onIndexed throws", async () => {
     currentTestDir = makeTmpDir();
     dirs.push(currentTestDir);

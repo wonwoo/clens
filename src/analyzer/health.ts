@@ -6,8 +6,9 @@
  *   per compaction (a Claude Code compact_boundary line or a Codex
  *   `compacted` item; see the parsers), plus the summary messages of a
  *   session that has no such row.
- * - context_bloat_ratio: max(event.in_tok + cache_r + cache_w) /
- *   median(in_tok + cache_r + cache_w) for assistant events in the scope.
+ * - context_bloat_ratio: max(ctx) / median(ctx) for assistant events in the
+ *   scope, where ctx is in_tok + cache_r + cache_w for a Claude Code event and
+ *   in_tok alone for a Codex event, whose cached tokens are part of its input.
  *   Heuristic surfacing of "context grew unmanageable".
  */
 
@@ -66,14 +67,21 @@ export function analyzeHealth(db: Database.Database, scope: Scope): HealthFacts 
       .get(...utScope.binds) as { c: number }
   ).c;
 
-  // Context bloat: assistant events' in_tok+cache_r+cache_w distribution.
+  // Context bloat: the distribution of assistant events' context size.
+  // Claude Code reports cache reads and writes apart from input_tokens, so its
+  // context is the sum. Codex's input_tokens already holds its
+  // cached_input_tokens (the parser stores them as in_tok and cache_r), so a
+  // Codex event counts in_tok only; the sum would count the cache twice. An
+  // event with no session row is counted as before, by the sum.
   // session_id/ts ride along so a caller can find which turn the max was,
   // not just the ratio.
   const ctxRows = db
     .prepare(
-      `SELECT session_id, ts, (in_tok + cache_r + cache_w) AS ctx
-       FROM event e
-       WHERE role = 'assistant' AND ${eventScope.sql}
+      `SELECT e.session_id, e.ts,
+              CASE WHEN s.source = 'codex' THEN e.in_tok
+                   ELSE e.in_tok + e.cache_r + e.cache_w END AS ctx
+       FROM event e LEFT JOIN session s ON s.id = e.session_id
+       WHERE e.role = 'assistant' AND ${eventScope.sql}
        ORDER BY ctx`,
     )
     .all(...eventScope.binds) as Array<{ session_id: string; ts: string; ctx: number }>;
