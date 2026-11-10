@@ -9,7 +9,9 @@
  * - context_bloat_ratio: max(ctx) / median(ctx) for assistant events in the
  *   scope, where ctx is in_tok + cache_r + cache_w for a Claude Code event and
  *   in_tok alone for a Codex event, whose cached tokens are part of its input.
- *   Heuristic surfacing of "context grew unmanageable".
+ *   Events with no token counts (a Codex reply or tool call, a Claude Code
+ *   line without usage) are left out. Heuristic surfacing of "context grew
+ *   unmanageable".
  */
 
 import type Database from "better-sqlite3";
@@ -73,6 +75,11 @@ export function analyzeHealth(db: Database.Database, scope: Scope): HealthFacts 
   // cached_input_tokens (the parser stores them as in_tok and cache_r), so a
   // Codex event counts in_tok only; the sum would count the cache twice. An
   // event with no session row is counted as before, by the sum.
+  // Events with no token counts are left out: a Codex turn writes its counts
+  // on one event, so its replies and tool calls carry 0, as does a Claude Code
+  // line without usage; counted, they pulled the median down (to 0 for a
+  // Codex session, leaving the ratio n/a). The WHERE repeats the expression:
+  // reading the ctx alias there is a SQLite extension, not standard SQL.
   // session_id/ts ride along so a caller can find which turn the max was,
   // not just the ratio.
   const ctxRows = db
@@ -82,6 +89,8 @@ export function analyzeHealth(db: Database.Database, scope: Scope): HealthFacts 
                    ELSE e.in_tok + e.cache_r + e.cache_w END AS ctx
        FROM event e LEFT JOIN session s ON s.id = e.session_id
        WHERE e.role = 'assistant' AND ${eventScope.sql}
+         AND (CASE WHEN s.source = 'codex' THEN e.in_tok
+                   ELSE e.in_tok + e.cache_r + e.cache_w END) > 0
        ORDER BY ctx`,
     )
     .all(...eventScope.binds) as Array<{ session_id: string; ts: string; ctx: number }>;

@@ -48,4 +48,31 @@ describe("context size", () => {
       "largest context in a project with Codex and Claude Code",
     ).toEqual({ max_ctx: 420, max_session_id: "cc" });
   });
+
+  // A Codex turn writes its token counts on one event (its task_complete);
+  // its replies and tool calls carry none, so most Codex assistant events
+  // have in_tok 0. Counted as context size 0, they made the median 0 and the
+  // ratio n/a for a Codex session.
+  it("leaves out assistant events that carry no token counts", () => {
+    const d = db();
+    d.exec(`
+      INSERT INTO session (id, project_id, kind, source) VALUES ('cz', '-q', 'interactive', 'codex');
+      INSERT INTO event (uuid, session_id, ts, role, in_tok, cache_r, cache_w) VALUES
+        ('z1', 'cz', '2026-07-01T00:00:01.000Z', 'assistant', 0, 0, 0),
+        ('z2', 'cz', '2026-07-01T00:00:02.000Z', 'assistant', 0, 0, 0),
+        ('z3', 'cz', '2026-07-01T00:00:03.000Z', 'assistant', 100, 90, 0),
+        ('z4', 'cz', '2026-07-01T00:00:04.000Z', 'assistant', 0, 0, 0),
+        ('z5', 'cz', '2026-07-01T00:00:05.000Z', 'assistant', 0, 0, 0),
+        ('z6', 'cz', '2026-07-01T00:00:06.000Z', 'assistant', 200, 180, 0),
+        ('z7', 'cz', '2026-07-01T00:00:07.000Z', 'assistant', 0, 0, 0),
+        ('z8', 'cz', '2026-07-01T00:00:08.000Z', 'assistant', 300, 270, 0),
+        ('z9', 'cz', '2026-07-01T00:00:09.000Z', 'assistant', 0, 0, 0),
+        ('za', 'cz', '2026-07-01T00:00:10.000Z', 'assistant', 400, 360, 0);
+    `);
+    const facts = analyzeHealth(d, { mode: "session", params: { session_id: "cz" } });
+    expect(
+      { ratio: facts.context_bloat_ratio, ...facts.context_bloat_detail },
+      "context size of a Codex session with token-less events",
+    ).toEqual({ ratio: 1.33, max_ctx: 400, median_ctx: 300, sample_size: 4, max_session_id: "cz", max_ts: "2026-07-01T00:00:10.000Z" });
+  });
 });

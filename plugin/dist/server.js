@@ -28392,6 +28392,7 @@ function parseCodexFile(args) {
     pendingInTok: 0,
     pendingCachedTok: 0,
     pendingOutTok: 0,
+    pendingTok: false,
     callEvents: /* @__PURE__ */ new Map(),
     openExec: /* @__PURE__ */ new Map(),
     failedExec: /* @__PURE__ */ new Map(),
@@ -28644,23 +28645,18 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
   if (msgType === null) return;
   const uuid3 = syntheticUuid(source_file, seq);
   if (msgType === "task_started" || msgType === "turn_started") {
+    if (state.pendingTok) pushTurnTokens(events, uuid3, session_id, timestamp, source_file, state);
     state.pendingInTok = 0;
     state.pendingCachedTok = 0;
     state.pendingOutTok = 0;
     return;
   }
   if (msgType === "task_complete" || msgType === "turn_complete") {
-    const ev = makeBlankEvent(uuid3, session_id, timestamp, source_file);
-    ev.role = "assistant";
-    ev.model = state.model;
-    ev.in_tok = state.pendingInTok;
-    ev.cache_r = state.pendingCachedTok;
-    ev.out_tok = state.pendingOutTok;
-    state.pendingInTok = 0;
-    state.pendingCachedTok = 0;
-    state.pendingOutTok = 0;
-    const parsed = makeBlankParsed(ev);
-    events.push(parsed);
+    pushTurnTokens(events, uuid3, session_id, timestamp, source_file, state);
+    return;
+  }
+  if (msgType === "turn_aborted") {
+    if (state.pendingTok) pushTurnTokens(events, uuid3, session_id, timestamp, source_file, state);
     return;
   }
   if (msgType === "token_count") {
@@ -28671,6 +28667,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
         if (typeof last.input_tokens === "number") state.pendingInTok = last.input_tokens;
         if (typeof last.cached_input_tokens === "number") state.pendingCachedTok = last.cached_input_tokens;
         if (typeof last.output_tokens === "number") state.pendingOutTok += last.output_tokens;
+        state.pendingTok = true;
       }
     }
     return;
@@ -28767,6 +28764,19 @@ function itemText(item) {
     if ((p.type === "text" || p.type === "Text") && typeof p.text === "string") parts.push(p.text);
   }
   return parts.length > 0 ? parts.join("\n") : null;
+}
+function pushTurnTokens(events, uuid3, session_id, timestamp, source_file, state) {
+  const ev = makeBlankEvent(uuid3, session_id, timestamp, source_file);
+  ev.role = "assistant";
+  ev.model = state.model;
+  ev.in_tok = state.pendingInTok;
+  ev.cache_r = state.pendingCachedTok;
+  ev.out_tok = state.pendingOutTok;
+  state.pendingInTok = 0;
+  state.pendingCachedTok = 0;
+  state.pendingOutTok = 0;
+  state.pendingTok = false;
+  events.push(makeBlankParsed(ev));
 }
 function pushUserMessage(events, uuid3, session_id, timestamp, source_file, text) {
   if (text === null || text.trim().length === 0) return;
@@ -29575,7 +29585,7 @@ function appendCodexLines(db2, stmts, f) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 20;
+var SCHEMA_VERSION = 21;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -32844,6 +32854,8 @@ function analyzeHealth(db2, scope) {
                    ELSE e.in_tok + e.cache_r + e.cache_w END AS ctx
        FROM event e LEFT JOIN session s ON s.id = e.session_id
        WHERE e.role = 'assistant' AND ${eventScope.sql}
+         AND (CASE WHEN s.source = 'codex' THEN e.in_tok
+                   ELSE e.in_tok + e.cache_r + e.cache_w END) > 0
        ORDER BY ctx`
   ).all(...eventScope.binds);
   let bloat = null;

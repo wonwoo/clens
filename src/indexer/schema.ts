@@ -98,7 +98,11 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // (ASSISTANT_TEXT_BYTE_CAP); the version-mismatch rebuild re-reads every
 // transcript still on disk, and a session whose transcript is gone keeps
 // its replies as they were cut.
-export const SCHEMA_VERSION = 20;
+// v21: a Codex turn that ends at turn_aborted, or is cut off by the next
+// task_started, keeps its token counts (pushTurnTokens in codex_parser.ts);
+// the version-mismatch rebuild re-reads every rollout still on disk, and a
+// session whose rollout is gone keeps the rows it has.
+export const SCHEMA_VERSION = 21;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population

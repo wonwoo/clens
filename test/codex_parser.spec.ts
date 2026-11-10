@@ -972,3 +972,47 @@ describe("parseCodexFileBody — MCP calls exec code made", () => {
     ]).map((c) => c.name)).toEqual(["mcp__clens__clens_search"]);
   });
 });
+
+// The parser wrote a turn's token counts only at task_complete. A turn the
+// user interrupted (turn_aborted), or one a new task_started cut off, lost
+// its counts: 773 + 77 of 13,404 turns in the rollouts on disk on 2026-11-10.
+describe("parseCodexFileBody — token counts of a turn that does not complete", () => {
+  const ev = (s: number, payload: object) => ({
+    timestamp: `2026-07-01T00:00:${String(s).padStart(2, "0")}Z`,
+    type: "event_msg",
+    payload,
+  });
+  const usage = (input_tokens: number, cached_input_tokens: number, output_tokens: number) => ({
+    type: "token_count",
+    info: { last_token_usage: { input_tokens, cached_input_tokens, output_tokens } },
+  });
+
+  it("writes them at turn_aborted, or at the task_started that cuts the turn off", () => {
+    const body = [
+      { timestamp: "2026-07-01T00:00:00Z", type: "session_meta", payload: { id: "sess-ab", cwd: "/repo", cli_version: "1.0.0" } },
+      { timestamp: "2026-07-01T00:00:01Z", type: "turn_context", payload: { model: "gpt-5", cwd: "/repo" } },
+      ev(2, { type: "task_started", turn_id: "t1" }),
+      ev(3, usage(1000, 800, 50)),
+      ev(4, { type: "turn_aborted", turn_id: "t1", reason: "interrupted" }),
+      ev(5, { type: "task_started", turn_id: "t2" }),
+      ev(6, usage(2000, 1500, 60)),
+      ev(7, { type: "task_started", turn_id: "t3" }),
+      ev(8, usage(3000, 2500, 70)),
+      ev(9, { type: "task_complete", turn_id: "t3", last_agent_message: "done" }),
+      // Interrupted before any model call: nothing to write.
+      ev(10, { type: "task_started", turn_id: "t4" }),
+      ev(11, { type: "turn_aborted", turn_id: "t4", reason: "interrupted" }),
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+
+    const result = parseCodexFileBody({ body, source_file: "codex-test.jsonl", batch: freshBatch() });
+
+    expect(
+      result.events.map((p) => [p.event.ts, p.event.role, p.event.in_tok, p.event.cache_r, p.event.out_tok]),
+      "token rows of interrupted turns",
+    ).toEqual([
+      ["2026-07-01T00:00:04Z", "assistant", 1000, 800, 50],
+      ["2026-07-01T00:00:07Z", "assistant", 2000, 1500, 60],
+      ["2026-07-01T00:00:09Z", "assistant", 3000, 2500, 70],
+    ]);
+  });
+});

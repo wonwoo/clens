@@ -214,6 +214,40 @@ describe("Codex append path — X1 growth", () => {
   }, 120_000);
 });
 
+describe("Codex append path — token counts of a turn that does not complete", () => {
+  const started = (s: number) => line(s, "event_msg", { type: "task_started" });
+  const aborted = (s: number) => line(s, "event_msg", { type: "turn_aborted", reason: "interrupted" });
+
+  // An interrupted turn writes its counts at turn_aborted, one cut off by the
+  // next task_started at that line; the counts come from the state an earlier
+  // run left when the token_count line was appended alone.
+  it("writes them on the run that appends turn_aborted or task_started, and matches a rebuild after every run", async () => {
+    const lines = [
+      meta(0, "s-ab"),
+      turn(1, "m-1"),
+      started(2),
+      tokens(3),
+      aborted(4),
+      started(5),
+      tokens(6),
+      started(7),
+      tokens(8),
+      taskDone(9),
+    ];
+    const file = rollout("s-ab");
+    for (const [i, l] of lines.entries()) {
+      const indexed = i > 0 && hasSession("s-ab");
+      if (i === 0) write(file, l);
+      else add(file, l);
+      const r = await runIndex({});
+      expect(r.files_parsed).toBe(1);
+      expect(r.files_appended).toBe(indexed ? 1 : 0);
+      await expectDigestEqualsRebuild();
+    }
+    expect(query("SELECT COUNT(*) AS n FROM event WHERE session_id = 's-ab' AND in_tok > 0")).toEqual({ n: 3 });
+  }, 120_000);
+});
+
 describe("Codex append path — X2 rows added to earlier events", () => {
   it("writes the file op a CommandExecution item adds to an exec call of an earlier run", async () => {
     const file = rollout("s-x2");

@@ -504,6 +504,8 @@ export interface SessionState {
   pendingInTok: number;
   pendingCachedTok: number;
   pendingOutTok: number;
+  /** A token_count line of the current turn has not been written yet. */
+  pendingTok: boolean;
   /** call_id → the parsed event of that function or custom tool call, for
    *  the hook block its output may report. */
   callEvents: Map<string, ParsedEvent>;
@@ -625,6 +627,7 @@ export function parseCodexFile(args: {
     pendingInTok: 0,
     pendingCachedTok: 0,
     pendingOutTok: 0,
+    pendingTok: false,
     callEvents: new Map(),
     openExec: new Map(),
     failedExec: new Map(),
@@ -949,27 +952,28 @@ function processLine(
 
   const uuid = syntheticUuid(source_file, seq);
 
-  // task_started / turn_started
+  // task_started / turn_started — a turn that started before this one and
+  // has counts not yet written was cut off: write them on this line.
   if (msgType === "task_started" || msgType === "turn_started") {
+    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
     state.pendingInTok = 0;
     state.pendingCachedTok = 0;
     state.pendingOutTok = 0;
     return;
   }
 
-  // task_complete / turn_complete — emit one event row with accumulated tokens
+  // task_complete / turn_complete — emit one event row with accumulated
+  // tokens, also when the turn had no token_count line (a row with 0 counts,
+  // as before).
   if (msgType === "task_complete" || msgType === "turn_complete") {
-    const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
-    ev.role = "assistant";
-    ev.model = state.model;
-    ev.in_tok = state.pendingInTok;
-    ev.cache_r = state.pendingCachedTok;
-    ev.out_tok = state.pendingOutTok;
-    state.pendingInTok = 0;
-    state.pendingCachedTok = 0;
-    state.pendingOutTok = 0;
-    const parsed = makeBlankParsed(ev);
-    events.push(parsed);
+    pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
+    return;
+  }
+
+  // turn_aborted — an interrupted turn keeps its counts; one interrupted
+  // before any token_count line writes nothing.
+  if (msgType === "turn_aborted") {
+    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
     return;
   }
 
@@ -987,6 +991,7 @@ function processLine(
         if (typeof last.input_tokens === "number") state.pendingInTok = last.input_tokens;
         if (typeof last.cached_input_tokens === "number") state.pendingCachedTok = last.cached_input_tokens;
         if (typeof last.output_tokens === "number") state.pendingOutTok += last.output_tokens;
+        state.pendingTok = true;
       }
     }
     return;
@@ -1114,6 +1119,28 @@ function itemText(item: Record<string, unknown>): string | null {
     if ((p.type === "text" || p.type === "Text") && typeof p.text === "string") parts.push(p.text);
   }
   return parts.length > 0 ? parts.join("\n") : null;
+}
+
+/** The turn's token counts so far, on one assistant event; resets them. */
+function pushTurnTokens(
+  events: ParsedEvent[],
+  uuid: string,
+  session_id: string,
+  timestamp: string,
+  source_file: string,
+  state: SessionState,
+): void {
+  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  ev.role = "assistant";
+  ev.model = state.model;
+  ev.in_tok = state.pendingInTok;
+  ev.cache_r = state.pendingCachedTok;
+  ev.out_tok = state.pendingOutTok;
+  state.pendingInTok = 0;
+  state.pendingCachedTok = 0;
+  state.pendingOutTok = 0;
+  state.pendingTok = false;
+  events.push(makeBlankParsed(ev));
 }
 
 function pushUserMessage(
