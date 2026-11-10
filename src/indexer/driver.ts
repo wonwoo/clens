@@ -456,6 +456,16 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
     // would do, which re-derives every session whose transcripts are still
     // on disk.
     const storedVersion = getSchemaVersion(db);
+    // A newer clens wrote this index, and a process left over from before an
+    // update would rebuild it with the old rules and set the version back.
+    // An explicit rebuild still goes ahead, the way back after a downgrade.
+    if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
+      db.close();
+      throw new Error(
+        `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); ` +
+          "restart the sessions still running the old one",
+      );
+    }
     const needsRebuild =
       opts.rebuild === true || (storedVersion !== null && storedVersion !== SCHEMA_VERSION);
     const stmts = prepareStatements(db);

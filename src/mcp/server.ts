@@ -388,6 +388,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           item: {
             type: "string",
+            maxLength: 300,
             description: "What was set aside, in one line that makes sense without this conversation. New items only.",
           },
           status: {
@@ -397,10 +398,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           words: {
             type: "string",
+            maxLength: 500,
             description: "The user's own words that set it aside or changed it, quoted.",
           },
           waits_for: {
             type: "string",
+            maxLength: 200,
             description: "What a held item waits for, when the user said so.",
           },
         },

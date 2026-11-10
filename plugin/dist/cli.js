@@ -5487,6 +5487,12 @@ async function runIndex(opts = {}) {
   try {
     const db = openIndex();
     const storedVersion = getSchemaVersion(db);
+    if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
+      db.close();
+      throw new Error(
+        `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); restart the sessions still running the old one`
+      );
+    }
     const needsRebuild = opts.rebuild === true || storedVersion !== null && storedVersion !== SCHEMA_VERSION;
     const stmts = prepareStatements(db);
     if (needsRebuild) {

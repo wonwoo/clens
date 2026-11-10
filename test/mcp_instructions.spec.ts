@@ -65,4 +65,9 @@ describe("text sent to the agent", () => {
     expect(SERVER_INSTRUCTIONS).not.toContain("already in this conversation");
     expect(SEARCH_DESCRIPTION).toContain("unless a compaction dropped them");
   });
+
+  // "session_id and ts" sent agents to pass `ts`, which clens_session rejects.
+  it("names clens_session's around_ts", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("session_id and ts as around_ts");
+  });
 });

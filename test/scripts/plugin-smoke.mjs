@@ -97,6 +97,9 @@ try {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort().join(",");
   check("tools", names === "clens_hold,clens_left_off,clens_pending,clens_recent,clens_search,clens_session,clens_stats", names);
+  const holdProps = tools.find((t) => t.name === "clens_hold").inputSchema.properties;
+  const holdLimits = [holdProps.item.maxLength, holdProps.words.maxLength, holdProps.waits_for.maxLength].join(",");
+  check("clens_hold length limits", holdLimits === "300,500,200", holdLimits);
   const found = await client.callTool({ name: "clens_search", arguments: { query: "brainstorming", project_id: "-fixture-cwd", limit: 3 } });
   const text = found.content?.[0]?.text ?? "";
   check("search", !found.isError && text.includes("session:test"), text);
@@ -126,6 +129,8 @@ try {
     encoding: "utf8",
   });
   check("compact hook", hook.includes('"additionalContext":"clens work record of this session'), hook.slice(0, 500));
+  const compactGarbage = execFileSync("node", [join(plugin, "hooks", "compact.mjs")], { env, input: "", encoding: "utf8" });
+  check("compact hook (bad input)", compactGarbage === "", compactGarbage.slice(0, 500));
   const guidance = execFileSync("node", [join(plugin, "hooks", "hold_guidance.mjs")], {
     env,
     input: JSON.stringify({ source: "startup" }),

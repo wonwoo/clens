@@ -1138,7 +1138,13 @@ var MAX_CHARS = 9e3;
 var END = "END-OF-CLENS-RECORD";
 var input = "";
 for await (const chunk of process.stdin) input += chunk;
-var { session_id: sessionId, source } = JSON.parse(input);
+var sessionId;
+var source;
+try {
+  ({ session_id: sessionId, source } = JSON.parse(input));
+} catch {
+  process.exit(0);
+}
 if (source !== "compact" || typeof sessionId !== "string") process.exit(0);
 var record;
 try {

@@ -30274,6 +30274,12 @@ async function runIndex(opts = {}) {
   try {
     const db2 = openIndex();
     const storedVersion = getSchemaVersion(db2);
+    if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
+      db2.close();
+      throw new Error(
+        `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); restart the sessions still running the old one`
+      );
+    }
     const needsRebuild = opts.rebuild === true || storedVersion !== null && storedVersion !== SCHEMA_VERSION;
     const stmts = prepareStatements(db2);
     if (needsRebuild) {
@@ -32427,8 +32433,8 @@ DON'T USE IT for the current code (read the files), for what is still in your co
 
 HOW:
 1. clens_search (limit 5-10) with distinctive words the conversation would contain: identifiers, error text, file names, product terms. Keyword search; see its query rules.
-2. clens_session with a hit's session_id and ts, to read the conversation around it before answering.
-3. Nothing relevant? Retry before concluding it is absent: the other language, spelling variants, split forms (uploadImages / upload images), OR, another project, a wider time range.
+2. clens_session with a hit's session_id and ts as around_ts, to read the conversation around it before answering.
+3. Nothing relevant? Retry before giving up: the other language, spelling variants, split forms (uploadImages / upload images), OR, another project, a wider time range.
 4. clens_left_off: latest sessions of a project or file, with last request, reply and edits; session_id "current" after compaction. clens_recent: a time window. clens_stats: counts.
 
 Report when and in which session something was said, quote the key line, and keep what the record shows apart from your inference. Use these tools instead of reading ~/.clens/index.db or transcript files.
@@ -33462,6 +33468,7 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           item: {
             type: "string",
+            maxLength: 300,
             description: "What was set aside, in one line that makes sense without this conversation. New items only."
           },
           status: {
@@ -33471,10 +33478,12 @@ server2.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           words: {
             type: "string",
+            maxLength: 500,
             description: "The user's own words that set it aside or changed it, quoted."
           },
           waits_for: {
             type: "string",
+            maxLength: 200,
             description: "What a held item waits for, when the user said so."
           }
         },

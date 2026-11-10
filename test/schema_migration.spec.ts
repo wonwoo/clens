@@ -227,3 +227,42 @@ describe("migration to per-session event keys (v19)", () => {
     after.close();
   });
 });
+
+// A process left over from before an update rebuilt the newer index with its
+// own rules and wrote its older version back.
+describe("an index written by a newer clens", () => {
+  it("is left as it is, unless a rebuild is asked for", async () => {
+    const claude = join(root, ".claude");
+    const indexDir = join(root, ".clens");
+    const proj = join(claude, "projects", "-repo");
+    mkdirSync(proj, { recursive: true });
+    mkdirSync(join(root, ".codex"), { recursive: true });
+    process.env.CLENS_HOME = claude;
+    process.env.CLENS_CODEX_HOME = join(root, ".codex");
+    process.env.CLENS_INDEX_DIR = indexDir;
+    const line = (uuid: string, ts: string) =>
+      JSON.stringify({
+        uuid, sessionId: "s1", type: "user", timestamp: ts,
+        message: { role: "user", content: "hello" },
+      }) + "\n";
+    writeFileSync(join(proj, "s1.jsonl"), line("u1", "2026-07-01T00:00:01.000Z"));
+    await runIndex({});
+    const newer = SCHEMA_VERSION + 1;
+    const db = new Database(join(indexDir, "index.db"));
+    db.prepare("UPDATE schema_version SET v = ?").run(newer);
+    db.close();
+    writeFileSync(join(proj, "s1.jsonl"), line("u1", "2026-07-01T00:00:01.000Z") + line("u2", "2026-07-01T00:00:02.000Z"));
+
+    await expect(runIndex({})).rejects.toThrow(`schema ${newer}, this clens reads ${SCHEMA_VERSION}`);
+    const kept = new Database(join(indexDir, "index.db"), { readonly: true });
+    expect(getSchemaVersion(kept)).toBe(newer);
+    expect(all(kept, "SELECT uuid FROM event ORDER BY uuid")).toEqual([{ uuid: "u1" }]);
+    kept.close();
+
+    await runIndex({ rebuild: true });
+    const rebuilt = new Database(join(indexDir, "index.db"), { readonly: true });
+    expect(getSchemaVersion(rebuilt)).toBe(SCHEMA_VERSION);
+    expect(all(rebuilt, "SELECT uuid FROM event ORDER BY uuid")).toEqual([{ uuid: "u1" }, { uuid: "u2" }]);
+    rebuilt.close();
+  });
+});

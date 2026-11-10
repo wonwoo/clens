@@ -24,7 +24,13 @@ const END = "END-OF-CLENS-RECORD";
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const { session_id: sessionId, source } = JSON.parse(input);
+let sessionId: unknown;
+let source: unknown;
+try {
+  ({ session_id: sessionId, source } = JSON.parse(input));
+} catch {
+  process.exit(0);
+}
 if (source !== "compact" || typeof sessionId !== "string") process.exit(0);
 
 let record;
