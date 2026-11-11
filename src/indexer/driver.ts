@@ -41,6 +41,7 @@ import {
   type WriterStatements,
 } from "./writer.js";
 import { clensHome, indexDbPath, indexLockPath, judgeCwdDir } from "../util/paths.js";
+import { projectIdOf } from "../util/project_id.js";
 import { ensureLanguageAdaptersLoaded } from "./lang/init.js";
 import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 import type { AnomalyBatch, FileParseResult, ParsedEvent, ToolResultInfo } from "./types.js";
@@ -152,7 +153,8 @@ function deriveSessionKind(args: {
 
 /** Project id derivation. Default: the parent directory name of the JSONL
  *  file is the canonical key (~/.claude/projects/<dir>/<sessionId>.jsonl),
- *  which is already the cwd with slashes replaced by dashes. Sources whose
+ *  which is the cwd with every character other than a letter or digit
+ *  replaced by a dash (projectIdOf). Sources whose
  *  file layout doesn't map to a project key this way (e.g. Codex, sharded
  *  under sessions/YYYY/MM/DD/) override via adapter.deriveProjectId. */
 function deriveProjectId(
@@ -449,142 +451,164 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
   const t0 = Date.now();
   try {
     const db = openIndex();
-    // CREATE TABLE IF NOT EXISTS never adds columns to an already-existing
-    // table, so a schema change (e.g. adding session.source) is invisible to
-    // a pre-existing index.db until it hits a hard SQL error on write.
-    // So on a version mismatch we force the same full rebuild --rebuild
-    // would do, which re-derives every session whose transcripts are still
-    // on disk.
-    const storedVersion = getSchemaVersion(db);
-    // A newer clens wrote this index, and a process left over from before an
-    // update would rebuild it with the old rules and set the version back.
-    // An explicit rebuild still goes ahead, the way back after a downgrade.
-    if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
-      db.close();
-      throw new Error(
-        `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); ` +
-          "restart the sessions still running the old one",
-      );
-    }
-    const needsRebuild =
-      opts.rebuild === true || (storedVersion !== null && storedVersion !== SCHEMA_VERSION);
-    const stmts = prepareStatements(db);
-    if (needsRebuild) {
-      // A rebuild re-derives what the transcripts on disk still hold. Claude
-      // Code deletes old transcripts, which leaves the index as the only copy
-      // of those sessions, so a session any of whose source files is gone is
-      // kept as it is. Emptying every table here deleted them for good.
-      const sources = new Map<string, string[]>();
-      for (const r of db.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate() as Iterable<{
-        session_id: string;
-        source_file: string | null;
-      }>) {
-        const list = sources.get(r.session_id) ?? [];
-        list.push(r.source_file ?? "");
-        sources.set(r.session_id, list);
+    try {
+      // CREATE TABLE IF NOT EXISTS never adds columns to an already-existing
+      // table, so a schema change (e.g. adding session.source) is invisible to
+      // a pre-existing index.db until it hits a hard SQL error on write.
+      // So on a version mismatch we force the same full rebuild --rebuild
+      // would do, which re-derives every session whose transcripts are still
+      // on disk.
+      const storedVersion = getSchemaVersion(db);
+      // A newer clens wrote this index, and a process left over from before an
+      // update would rebuild it with the old rules and set the version back.
+      // An explicit rebuild still goes ahead, the way back after a downgrade.
+      if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
+        throw new Error(
+          `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); ` +
+            "restart the sessions still running the old one",
+        );
       }
-      const rederivable = [...sources]
-        .filter(([, files]) => files.every((f) => f !== "" && existsSync(f)))
-        .map(([sid]) => sid);
-      const anomalyFiles = db.prepare("SELECT DISTINCT source_file FROM anomaly").all() as { source_file: string | null }[];
-      const cursorPaths = db.prepare("SELECT path FROM file_cursor").all() as { path: string }[];
-      const dropTx = db.transaction(() => {
-        wipeSessions(stmts, rederivable);
-        const dropSession = db.prepare("DELETE FROM session WHERE id = ?");
-        for (const sid of rederivable) dropSession.run(sid);
-        const dropAnomalies = db.prepare("DELETE FROM anomaly WHERE source_file IS ?");
-        for (const { source_file } of anomalyFiles) {
-          if (source_file === null || existsSync(source_file)) dropAnomalies.run(source_file);
+      const needsRebuild =
+        opts.rebuild === true || (storedVersion !== null && storedVersion !== SCHEMA_VERSION);
+      const stmts = prepareStatements(db);
+      if (needsRebuild) {
+        // A rebuild re-derives what the transcripts on disk still hold. Claude
+        // Code deletes old transcripts, which leaves the index as the only copy
+        // of those sessions, so a session any of whose source files is gone is
+        // kept as it is. Emptying every table here deleted them for good.
+        const sources = new Map<string, string[]>();
+        for (const r of db.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate() as Iterable<{
+          session_id: string;
+          source_file: string | null;
+        }>) {
+          const list = sources.get(r.session_id) ?? [];
+          list.push(r.source_file ?? "");
+          sources.set(r.session_id, list);
         }
-        // Every file on disk gets re-read; a gone file's cursor stays, as it
-        // does in the incremental path.
-        const dropCursor = db.prepare("DELETE FROM file_cursor WHERE path = ?");
-        for (const { path } of cursorPaths) if (existsSync(path)) dropCursor.run(path);
-        db.exec(`DELETE FROM schema_version`);
-        db.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
-      });
-      dropTx();
-    }
-
-    const now = opts.now ?? Date.now();
-    const discovered: DiscoveredFile[] = discoverFiles(db, {
-      forceRebuild: needsRebuild,
-    });
-
-    let filesParsed = 0;
-    let filesAppended = 0;
-    let events = 0;
-    let parseErrors = 0;
-    for (const f of discovered) {
-      if (!f.needs_parse) continue;
-      // Let the lock refresh timers run between files; a run over many files
-      // otherwise holds the event loop for minutes and looks abandoned (see
-      // acquireLock). Each file is committed on its own, so stopping here once
-      // another writer has the lock leaves the index consistent.
-      await new Promise((r) => setImmediate(r));
-      if (lock.lost) {
-        db.close();
-        throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+        const rederivable = [...sources]
+          .filter(([, files]) => files.every((f) => f !== "" && existsSync(f)))
+          .map(([sid]) => sid);
+        const anomalyFiles = db.prepare("SELECT DISTINCT source_file FROM anomaly").all() as { source_file: string | null }[];
+        const cursorPaths = db.prepare("SELECT path FROM file_cursor").all() as { path: string }[];
+        const dropTx = db.transaction(() => {
+          wipeSessions(stmts, rederivable);
+          const dropSession = db.prepare("DELETE FROM session WHERE id = ?");
+          for (const sid of rederivable) dropSession.run(sid);
+          // Only kept sessions are left. Kept Codex sessions get the project id
+          // a re-derivation would give (projectIdOf); their other rows stay.
+          const keptCodex = db
+            .prepare("SELECT id, cwd, project_id FROM session WHERE source = 'codex' AND cwd IS NOT NULL")
+            .all() as { id: string; cwd: string; project_id: string | null }[];
+          const setProject = db.prepare("UPDATE session SET project_id = ? WHERE id = ?");
+          for (const s of keptCodex) {
+            const id = projectIdOf(s.cwd);
+            if (id === s.project_id) continue;
+            setProject.run(id, s.id);
+            stmts.upsertProject.run({ id, cwd: s.cwd, display: id });
+          }
+          const dropAnomalies = db.prepare("DELETE FROM anomaly WHERE source_file IS ?");
+          for (const { source_file } of anomalyFiles) {
+            if (source_file === null || existsSync(source_file)) dropAnomalies.run(source_file);
+          }
+          // Every file on disk gets re-read; a gone file's cursor stays, as it
+          // does in the incremental path.
+          const dropCursor = db.prepare("DELETE FROM file_cursor WHERE path = ?");
+          for (const { path } of cursorPaths) if (existsSync(path)) dropCursor.run(path);
+          db.exec(`DELETE FROM schema_version`);
+          db.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
+        });
+        dropTx();
       }
-      // A Claude Code transcript or Codex rollout that only grew gets its new
-      // lines appended when append.ts or codex_append.ts can prove that
-      // equals re-deriving it; rebuilds always re-derive.
-      if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
-        const appended = f.source === "claude" ? appendNewLines(db, stmts, f) : appendCodexLines(db, stmts, f);
-        if (appended.kind === "appended") {
+
+      const now = opts.now ?? Date.now();
+      const discovered: DiscoveredFile[] = discoverFiles(db, {
+        forceRebuild: needsRebuild,
+      });
+
+      let filesParsed = 0;
+      let filesAppended = 0;
+      let events = 0;
+      let parseErrors = 0;
+      for (const f of discovered) {
+        if (!f.needs_parse) continue;
+        // Let the lock refresh timers run between files; a run over many files
+        // otherwise holds the event loop for minutes and looks abandoned (see
+        // acquireLock). Each file is committed on its own, so stopping here once
+        // another writer has the lock leaves the index consistent.
+        await new Promise((r) => setImmediate(r));
+        if (lock.lost) {
+          throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+        }
+        // A file that throws (no permission, removed since discovery, too large
+        // for one string) is skipped so the files after it are still indexed.
+        // The append paths and commitFile each write in one transaction, so a
+        // throw leaves no partial rows and the file's cursor where it was: the
+        // next run reads it again.
+        try {
+          // A Claude Code transcript or Codex rollout that only grew gets its new
+          // lines appended when append.ts or codex_append.ts can prove that
+          // equals re-deriving it; rebuilds always re-derive.
+          if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
+            const appended = f.source === "claude" ? appendNewLines(db, stmts, f) : appendCodexLines(db, stmts, f);
+            if (appended.kind === "appended") {
+              filesParsed += 1;
+              filesAppended += 1;
+              events += appended.events;
+              parseErrors += appended.parse_errors;
+              continue;
+            }
+          }
+          const body = readFileSync(f.path, "utf8");
+          const batch: AnomalyBatch = {
+            counters: new Map(),
+            session_id: null,
+            ts: new Date(Math.floor(f.mtime * 1000)).toISOString(),
+            source_file: f.path,
+          };
+          // A Codex parse also returns the state it ends with, kept below for the
+          // next append to this rollout.
+          const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
+          const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
+          const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
+          const { eventsInserted } = commitFile({
+            db,
+            stmts,
+            source_file: f.path,
+            mtime: f.mtime,
+            size: f.size,
+            fully_terminated_line_count: parsed.fully_terminated_line_count,
+            last_ok_byte_offset: parsed.last_ok_byte_offset,
+            events: parsed.events,
+            tool_results: parsed.tool_results,
+            batch,
+            session_meta: parsed.session_meta,
+            source: f.source,
+          });
+          if (codex !== null) {
+            keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills!, prefilledCallIds(parsed.events));
+          }
           filesParsed += 1;
-          filesAppended += 1;
-          events += appended.events;
-          parseErrors += appended.parse_errors;
-          continue;
+          events += eventsInserted;
+          parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
+        } catch (e) {
+          process.stderr.write(`clens index: skipped ${f.path}: ${e instanceof Error ? e.message : String(e)}\n`);
         }
       }
-      const body = readFileSync(f.path, "utf8");
-      const batch: AnomalyBatch = {
-        counters: new Map(),
-        session_id: null,
-        ts: new Date(Math.floor(f.mtime * 1000)).toISOString(),
-        source_file: f.path,
-      };
-      // A Codex parse also returns the state it ends with, kept below for the
-      // next append to this rollout.
-      const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
-      const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
-      const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
-      const { eventsInserted } = commitFile({
-        db,
-        stmts,
-        source_file: f.path,
-        mtime: f.mtime,
-        size: f.size,
-        fully_terminated_line_count: parsed.fully_terminated_line_count,
-        last_ok_byte_offset: parsed.last_ok_byte_offset,
-        events: parsed.events,
-        tool_results: parsed.tool_results,
-        batch,
-        session_meta: parsed.session_meta,
-        source: f.source,
-      });
-      if (codex !== null) {
-        keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills!, prefilledCallIds(parsed.events));
-      }
-      filesParsed += 1;
-      events += eventsInserted;
-      parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
-    }
 
-    if (filesParsed > 0 && !lock.lost) {
-      optimizeFtsIfDue(db, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
+      if (filesParsed > 0 && !lock.lost) {
+        optimizeFtsIfDue(db, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
+      }
+      return {
+        files_total: discovered.length,
+        files_parsed: filesParsed,
+        events_inserted: events,
+        parse_errors: parseErrors,
+        files_appended: filesAppended,
+        elapsed_ms: Date.now() - t0,
+      };
+    } finally {
+      db.close();
     }
-    db.close();
-    return {
-      files_total: discovered.length,
-      files_parsed: filesParsed,
-      events_inserted: events,
-      parse_errors: parseErrors,
-      files_appended: filesAppended,
-      elapsed_ms: Date.now() - t0,
-    };
   } finally {
     await release();
   }

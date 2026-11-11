@@ -14,6 +14,7 @@ import { workKindClause } from "../analyzer/scope.js";
 import { errorExcerpt } from "../indexer/claude_parser.js";
 import { cutChars, escapeRegExp } from "../mcp/search.js";
 import { execCodeCommands } from "../util/codex_exec.js";
+import { projectIdOf } from "../util/project_id.js";
 import { localTs } from "../util/time.js";
 
 export type FailureKind = "missing" | "network" | "permission";
@@ -26,7 +27,6 @@ export interface FailureKey {
 export interface FailureInput {
   sessionId: string;
   cwd: string | null;
-  command: string;
   output: string;
 }
 
@@ -184,7 +184,7 @@ export function failureHint(db: Database.Database, input: FailureInput, now: num
   // so the sessions that ran in this cwd say which project ids it has.
   const projects = new Set<string>();
   if (input.cwd !== null) {
-    projects.add(input.cwd.replace(/\//g, "-"));
+    projects.add(projectIdOf(input.cwd));
     const rows = db.prepare("SELECT DISTINCT project_id FROM session WHERE cwd = ? AND project_id IS NOT NULL").all(input.cwd) as {
       project_id: string;
     }[];

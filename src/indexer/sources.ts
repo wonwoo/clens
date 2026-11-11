@@ -13,6 +13,7 @@
 import { basename, dirname } from "node:path";
 
 import { projectsDir, codexSessionsDir } from "../util/paths.js";
+import { projectIdOf } from "../util/project_id.js";
 import { parseFileBody } from "./claude_parser.js";
 import { parseCodexFileBody } from "./codex_parser.js";
 import type { AnomalyBatch, FileParseResult } from "./types.js";
@@ -50,8 +51,8 @@ const codexAdapter: SourceAdapter = {
   parse: parseCodexFileBody,
   // Codex shards sessions under sessions/YYYY/MM/DD/, so the parent directory
   // is a date fragment, not a project key. Derive from the session cwd
-  // instead, matching Claude's slash→dash convention so both sources align.
-  deriveProjectId: (_source_file, cwd) => (cwd !== null ? cwd.replace(/\//g, "-") : null),
+  // instead: the id Claude Code gives the directory, so both sources align.
+  deriveProjectId: (_source_file, cwd) => (cwd !== null ? projectIdOf(cwd) : null),
 };
 
 export const SOURCE_ADAPTERS: readonly SourceAdapter[] = [claudeAdapter, codexAdapter];

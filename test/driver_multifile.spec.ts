@@ -1,8 +1,8 @@
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runIndex } from "../src/indexer/driver.js";
 import { digestAllTables } from "../src/indexer/digest.js";
@@ -220,6 +220,43 @@ describe("indexer — a transcript that loses lines", () => {
     const incremental = digest();
     await runIndex({ rebuild: true });
     expect(digest()).toBe(incremental);
+  });
+});
+
+describe("indexer — a transcript that cannot be read", () => {
+  // A file that throws when read (no permission, removed between discovery
+  // and reading, too large for one string) used to end the run there: the
+  // files after it were not indexed, on every run while it stayed so.
+  // Root reads a file whatever its mode, so the test needs another user.
+  it.skipIf(process.getuid?.() === 0)("is skipped with a message, the other files are indexed, and it is read once it can be", async () => {
+    const locked = join(env.proj, `${A}.jsonl`);
+    writeFileSync(locked, line("a1", A, "user", "locked question", "2026-09-01T00:00:01Z"));
+    bump(locked);
+    const open = join(env.proj, `${B}.jsonl`);
+    writeFileSync(open, line("b1", B, "user", "open question", "2026-09-01T00:00:02Z"));
+    bump(open);
+    chmodSync(locked, 0o000);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let outcome: string;
+    try {
+      outcome = await runIndex().then(
+        () => "resolved",
+        (e: Error) => `rejected: ${e.message}`,
+      );
+    } finally {
+      chmodSync(locked, 0o644);
+    }
+    const said = stderr.mock.calls.some(([s]) => String(s).includes(`clens index: skipped ${locked}: `));
+    stderr.mockRestore();
+    expect({ outcome, said, open: texts(B), locked: texts(A) }, "index run with one unreadable transcript").toEqual({
+      outcome: "resolved",
+      said: true,
+      open: ["open question"],
+      locked: [],
+    });
+
+    await runIndex();
+    expect(texts(A), "the transcript once it can be read").toEqual(["locked question"]);
   });
 });
 

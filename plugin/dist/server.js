@@ -26399,6 +26399,19 @@ function judgeCwdDir() {
   return join(clensHome(), "judge-cwd");
 }
 
+// src/util/project_id.ts
+var MAX_NAME = 200;
+function projectIdOf(path) {
+  const name = path.replace(/[^a-zA-Z0-9]/g, "-");
+  if (name.length <= MAX_NAME) return name;
+  let h = 0;
+  for (let i = 0; i < path.length; i++) h = (h << 5) - h + path.charCodeAt(i) | 0;
+  return `${name.slice(0, MAX_NAME)}-${Math.abs(h).toString(36)}`;
+}
+function normalizeProjectId(id) {
+  return id.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
 // src/util/time.ts
 var pad = (n) => String(n).padStart(2, "0");
 var STORED_TS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
@@ -28932,8 +28945,8 @@ var codexAdapter = {
   parse: parseCodexFileBody,
   // Codex shards sessions under sessions/YYYY/MM/DD/, so the parent directory
   // is a date fragment, not a project key. Derive from the session cwd
-  // instead, matching Claude's slash→dash convention so both sources align.
-  deriveProjectId: (_source_file, cwd) => cwd !== null ? cwd.replace(/\//g, "-") : null
+  // instead: the id Claude Code gives the directory, so both sources align.
+  deriveProjectId: (_source_file, cwd) => cwd !== null ? projectIdOf(cwd) : null
 };
 var SOURCE_ADAPTERS = [claudeAdapter, codexAdapter];
 function getSourceAdapter(name) {
@@ -29585,7 +29598,7 @@ function appendCodexLines(db2, stmts, f) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 21;
+var SCHEMA_VERSION = 22;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -30283,108 +30296,122 @@ async function runIndex(opts = {}) {
   const t0 = Date.now();
   try {
     const db2 = openIndex();
-    const storedVersion = getSchemaVersion(db2);
-    if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
-      db2.close();
-      throw new Error(
-        `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); restart the sessions still running the old one`
-      );
-    }
-    const needsRebuild = opts.rebuild === true || storedVersion !== null && storedVersion !== SCHEMA_VERSION;
-    const stmts = prepareStatements(db2);
-    if (needsRebuild) {
-      const sources = /* @__PURE__ */ new Map();
-      for (const r of db2.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate()) {
-        const list = sources.get(r.session_id) ?? [];
-        list.push(r.source_file ?? "");
-        sources.set(r.session_id, list);
+    try {
+      const storedVersion = getSchemaVersion(db2);
+      if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
+        throw new Error(
+          `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); restart the sessions still running the old one`
+        );
       }
-      const rederivable = [...sources].filter(([, files]) => files.every((f) => f !== "" && existsSync3(f))).map(([sid]) => sid);
-      const anomalyFiles = db2.prepare("SELECT DISTINCT source_file FROM anomaly").all();
-      const cursorPaths = db2.prepare("SELECT path FROM file_cursor").all();
-      const dropTx = db2.transaction(() => {
-        wipeSessions(stmts, rederivable);
-        const dropSession = db2.prepare("DELETE FROM session WHERE id = ?");
-        for (const sid of rederivable) dropSession.run(sid);
-        const dropAnomalies = db2.prepare("DELETE FROM anomaly WHERE source_file IS ?");
-        for (const { source_file } of anomalyFiles) {
-          if (source_file === null || existsSync3(source_file)) dropAnomalies.run(source_file);
+      const needsRebuild = opts.rebuild === true || storedVersion !== null && storedVersion !== SCHEMA_VERSION;
+      const stmts = prepareStatements(db2);
+      if (needsRebuild) {
+        const sources = /* @__PURE__ */ new Map();
+        for (const r of db2.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate()) {
+          const list = sources.get(r.session_id) ?? [];
+          list.push(r.source_file ?? "");
+          sources.set(r.session_id, list);
         }
-        const dropCursor = db2.prepare("DELETE FROM file_cursor WHERE path = ?");
-        for (const { path } of cursorPaths) if (existsSync3(path)) dropCursor.run(path);
-        db2.exec(`DELETE FROM schema_version`);
-        db2.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
-      });
-      dropTx();
-    }
-    const now = opts.now ?? Date.now();
-    const discovered = discoverFiles(db2, {
-      forceRebuild: needsRebuild
-    });
-    let filesParsed = 0;
-    let filesAppended = 0;
-    let events = 0;
-    let parseErrors = 0;
-    for (const f of discovered) {
-      if (!f.needs_parse) continue;
-      await new Promise((r) => setImmediate(r));
-      if (lock.lost) {
-        db2.close();
-        throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+        const rederivable = [...sources].filter(([, files]) => files.every((f) => f !== "" && existsSync3(f))).map(([sid]) => sid);
+        const anomalyFiles = db2.prepare("SELECT DISTINCT source_file FROM anomaly").all();
+        const cursorPaths = db2.prepare("SELECT path FROM file_cursor").all();
+        const dropTx = db2.transaction(() => {
+          wipeSessions(stmts, rederivable);
+          const dropSession = db2.prepare("DELETE FROM session WHERE id = ?");
+          for (const sid of rederivable) dropSession.run(sid);
+          const keptCodex = db2.prepare("SELECT id, cwd, project_id FROM session WHERE source = 'codex' AND cwd IS NOT NULL").all();
+          const setProject = db2.prepare("UPDATE session SET project_id = ? WHERE id = ?");
+          for (const s of keptCodex) {
+            const id = projectIdOf(s.cwd);
+            if (id === s.project_id) continue;
+            setProject.run(id, s.id);
+            stmts.upsertProject.run({ id, cwd: s.cwd, display: id });
+          }
+          const dropAnomalies = db2.prepare("DELETE FROM anomaly WHERE source_file IS ?");
+          for (const { source_file } of anomalyFiles) {
+            if (source_file === null || existsSync3(source_file)) dropAnomalies.run(source_file);
+          }
+          const dropCursor = db2.prepare("DELETE FROM file_cursor WHERE path = ?");
+          for (const { path } of cursorPaths) if (existsSync3(path)) dropCursor.run(path);
+          db2.exec(`DELETE FROM schema_version`);
+          db2.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
+        });
+        dropTx();
       }
-      if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
-        const appended = f.source === "claude" ? appendNewLines(db2, stmts, f) : appendCodexLines(db2, stmts, f);
-        if (appended.kind === "appended") {
+      const now = opts.now ?? Date.now();
+      const discovered = discoverFiles(db2, {
+        forceRebuild: needsRebuild
+      });
+      let filesParsed = 0;
+      let filesAppended = 0;
+      let events = 0;
+      let parseErrors = 0;
+      for (const f of discovered) {
+        if (!f.needs_parse) continue;
+        await new Promise((r) => setImmediate(r));
+        if (lock.lost) {
+          throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+        }
+        try {
+          if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
+            const appended = f.source === "claude" ? appendNewLines(db2, stmts, f) : appendCodexLines(db2, stmts, f);
+            if (appended.kind === "appended") {
+              filesParsed += 1;
+              filesAppended += 1;
+              events += appended.events;
+              parseErrors += appended.parse_errors;
+              continue;
+            }
+          }
+          const body = readFileSync2(f.path, "utf8");
+          const batch = {
+            counters: /* @__PURE__ */ new Map(),
+            session_id: null,
+            ts: new Date(Math.floor(f.mtime * 1e3)).toISOString(),
+            source_file: f.path
+          };
+          const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
+          const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
+          const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
+          const { eventsInserted } = commitFile({
+            db: db2,
+            stmts,
+            source_file: f.path,
+            mtime: f.mtime,
+            size: f.size,
+            fully_terminated_line_count: parsed.fully_terminated_line_count,
+            last_ok_byte_offset: parsed.last_ok_byte_offset,
+            events: parsed.events,
+            tool_results: parsed.tool_results,
+            batch,
+            session_meta: parsed.session_meta,
+            source: f.source
+          });
+          if (codex !== null) {
+            keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills, prefilledCallIds(parsed.events));
+          }
           filesParsed += 1;
-          filesAppended += 1;
-          events += appended.events;
-          parseErrors += appended.parse_errors;
-          continue;
+          events += eventsInserted;
+          parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
+        } catch (e) {
+          process.stderr.write(`clens index: skipped ${f.path}: ${e instanceof Error ? e.message : String(e)}
+`);
         }
       }
-      const body = readFileSync2(f.path, "utf8");
-      const batch = {
-        counters: /* @__PURE__ */ new Map(),
-        session_id: null,
-        ts: new Date(Math.floor(f.mtime * 1e3)).toISOString(),
-        source_file: f.path
-      };
-      const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
-      const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
-      const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
-      const { eventsInserted } = commitFile({
-        db: db2,
-        stmts,
-        source_file: f.path,
-        mtime: f.mtime,
-        size: f.size,
-        fully_terminated_line_count: parsed.fully_terminated_line_count,
-        last_ok_byte_offset: parsed.last_ok_byte_offset,
-        events: parsed.events,
-        tool_results: parsed.tool_results,
-        batch,
-        session_meta: parsed.session_meta,
-        source: f.source
-      });
-      if (codex !== null) {
-        keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills, prefilledCallIds(parsed.events));
+      if (filesParsed > 0 && !lock.lost) {
+        optimizeFtsIfDue(db2, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
       }
-      filesParsed += 1;
-      events += eventsInserted;
-      parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
+      return {
+        files_total: discovered.length,
+        files_parsed: filesParsed,
+        events_inserted: events,
+        parse_errors: parseErrors,
+        files_appended: filesAppended,
+        elapsed_ms: Date.now() - t0
+      };
+    } finally {
+      db2.close();
     }
-    if (filesParsed > 0 && !lock.lost) {
-      optimizeFtsIfDue(db2, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
-    }
-    db2.close();
-    return {
-      files_total: discovered.length,
-      files_parsed: filesParsed,
-      events_inserted: events,
-      parse_errors: parseErrors,
-      files_appended: filesAppended,
-      elapsed_ms: Date.now() - t0
-    };
   } finally {
     await release();
   }
@@ -31111,7 +31138,7 @@ function recentUserText(db2, params) {
     AND ${notNoise("ut")}
     AND ${notCopiedClause("ut.event_uuid", "ut.session_id")}`;
   if (params.query) {
-    const like = `%${params.query}%`;
+    const like = `%${params.query.replace(/[\\%_]/g, "\\$&")}%`;
     const reply = `SELECT a.text FROM user_text a
          WHERE a.session_id = t.session_id AND a.role = 'assistant'
            AND a.ts > t.ts AND a.ts <= COALESCE(t.next_ts, '9999')`;
@@ -31123,11 +31150,11 @@ function recentUserText(db2, params) {
         ${userRows}
       )
       SELECT session_id, ts, text,
-        CASE WHEN text LIKE ? THEN (${reply} ORDER BY a.ts ASC LIMIT 1)
-             ELSE (${reply} AND a.text LIKE ? ORDER BY a.ts ASC LIMIT 1)
+        CASE WHEN text LIKE ? ESCAPE '\\' THEN (${reply} ORDER BY a.ts ASC LIMIT 1)
+             ELSE (${reply} AND a.text LIKE ? ESCAPE '\\' ORDER BY a.ts ASC LIMIT 1)
         END AS assistant_response
       FROM t
-      WHERE text LIKE ? OR EXISTS (${reply} AND a.text LIKE ?)
+      WHERE text LIKE ? ESCAPE '\\' OR EXISTS (${reply} AND a.text LIKE ? ESCAPE '\\')
       ORDER BY ts DESC
       LIMIT ?`;
     return db2.prepare(sql2).all(...bindings, like, like, like, like, limit);
@@ -32588,7 +32615,7 @@ function readLedger(path) {
     }
     byId.set(e.id, {
       id: e.id,
-      project_id: e.project_id,
+      project_id: normalizeProjectId(e.project_id),
       item: e.item,
       status: e.status,
       words: e.words,
@@ -33229,6 +33256,8 @@ function detectCurrentSessionId(pid, env) {
 }
 
 // src/mcp/server.ts
+var projectIdParam = external_exports.string().transform(normalizeProjectId);
+var requiredProjectIdParam = external_exports.string().min(1).transform(normalizeProjectId);
 var SessionParamsSchema = external_exports.strictObject({
   session_id: external_exports.string(),
   around_ts: timeParam,
@@ -33236,7 +33265,7 @@ var SessionParamsSchema = external_exports.strictObject({
   full: external_exports.boolean().optional()
 });
 var RecentParamsSchema = external_exports.strictObject({
-  project_id: external_exports.string(),
+  project_id: projectIdParam,
   since: timeParam.optional(),
   until: timeParam.optional(),
   query: external_exports.string().optional(),
@@ -33247,7 +33276,7 @@ var ONE_OF_QUERY = "Pass exactly one of query or queries.";
 var SearchParamsSchema = external_exports.strictObject({
   query: external_exports.string().min(1).optional(),
   queries: external_exports.array(external_exports.string().min(1)).min(2).max(5).optional(),
-  project_id: external_exports.string().optional(),
+  project_id: projectIdParam.optional(),
   since: timeParam.optional(),
   until: timeParam.optional(),
   role: external_exports.enum(["user", "assistant"]).optional(),
@@ -33257,7 +33286,7 @@ var SearchParamsSchema = external_exports.strictObject({
   context: external_exports.number().int().min(0).max(5).optional()
 }).refine((p) => p.query === void 0 !== (p.queries === void 0), { message: ONE_OF_QUERY });
 var LeftOffParamsSchema = external_exports.strictObject({
-  project_id: external_exports.string().optional(),
+  project_id: projectIdParam.optional(),
   file: external_exports.string().min(1).optional(),
   since: timeParam.optional(),
   until: timeParam.optional(),
@@ -33271,14 +33300,14 @@ var LeftOffParamsSchema = external_exports.strictObject({
 var MIN_TEXT_CHARS = 20;
 var StatsParamsSchema = external_exports.strictObject({
   // min(1): an empty string would otherwise fall through to a wider scope.
-  project_id: external_exports.string().min(1).optional(),
+  project_id: requiredProjectIdParam.optional(),
   session_id: external_exports.string().min(1).optional(),
   since: timeParam.optional(),
   sections: external_exports.array(external_exports.enum(STATS_SECTIONS)).min(1).optional(),
   name: external_exports.string().min(1).optional()
 });
 var HoldParamsSchema = external_exports.strictObject({
-  project_id: external_exports.string().min(1),
+  project_id: requiredProjectIdParam,
   id: external_exports.string().regex(/^[0-9a-f]{8}$/).optional(),
   item: external_exports.string().min(1).max(300).optional(),
   status: external_exports.enum(HOLD_STATUSES),
@@ -33286,7 +33315,7 @@ var HoldParamsSchema = external_exports.strictObject({
   waits_for: external_exports.string().min(1).max(200).optional()
 });
 var PendingParamsSchema = external_exports.strictObject({
-  project_id: external_exports.string().min(1).optional(),
+  project_id: requiredProjectIdParam.optional(),
   maxBytes: external_exports.number().int().min(256).max(1e6).optional()
 });
 var db = null;

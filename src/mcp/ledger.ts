@@ -16,6 +16,7 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync,
 import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 
+import { normalizeProjectId } from "../util/project_id.js";
 import { localTs } from "../util/time.js";
 
 export const HOLD_STATUSES = ["held", "dropped", "done", "removed"] as const;
@@ -133,7 +134,7 @@ export function readLedger(path: string): { items: LedgerItem[]; unreadable: num
     }
     byId.set(e.id, {
       id: e.id,
-      project_id: e.project_id,
+      project_id: normalizeProjectId(e.project_id),
       item: e.item,
       status: e.status,
       words: e.words,

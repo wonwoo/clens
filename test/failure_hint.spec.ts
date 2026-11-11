@@ -98,7 +98,7 @@ describe("failureKey", () => {
 });
 
 describe("failureHint", () => {
-  const ghNow = { sessionId: "now", cwd: "/w/app", command: "gh run list", output: GH };
+  const ghNow = { sessionId: "now", cwd: "/w/app", output: GH };
 
   it("shows an earlier session's failure of the same missing command, from any project, with the reply after it", () => {
     failed("web1", "2026-10-20T01:00:00Z", "gh pr list", GH);
@@ -120,9 +120,9 @@ describe("failureHint", () => {
   it("keeps a refused operation to the same project", () => {
     const ps = "Exit code 1\nzsh:1: operation not permitted: ps";
     failed("web1", "2026-10-20T01:00:00Z", "ps -ax", ps);
-    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "ps -ax", output: ps }, NOW)).toBeNull();
+    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", output: ps }, NOW)).toBeNull();
     failed("app1", "2026-10-21T01:00:00Z", "ps -ax", ps, "exec_command");
-    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "ps -ax", output: ps }, NOW)).toContain("app1");
+    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", output: ps }, NOW)).toContain("app1");
   });
 
   it("finds a failure inside Codex exec code, showing the command that failed", () => {
@@ -142,7 +142,7 @@ describe("failureHint", () => {
     db.exec("UPDATE session SET project_id = '-w-app-renamed' WHERE id = 'app1'");
     const ps = "zsh:1: operation not permitted: ps";
     failed("app1", "2026-10-21T01:00:00Z", "ps -ax", ps);
-    expect(failureHint(db, { sessionId: "elsewhere", cwd: "/w/app", command: "ps", output: ps }, NOW)).toContain("app1");
+    expect(failureHint(db, { sessionId: "elsewhere", cwd: "/w/app", output: ps }, NOW)).toContain("app1");
   });
 
   it("leaves out one-shot runs and judge transcripts", () => {
@@ -193,8 +193,8 @@ describe("failureHint", () => {
     failed("web1", "2026-10-20T01:00:00Z", "node-gyp rebuild", missing);
     const filler = "npm warn deprecated some-package@1.0.0\n".repeat(10);
     const output = `Exit code 1\n${filler}${missing}\n${filler}npm error A complete log of this run can be found in: /tmp/x.log`;
-    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "npm install", output }, NOW)).toBeNull();
-    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "node-gyp rebuild", output: missing }, NOW)).toContain("web1");
+    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", output }, NOW)).toBeNull();
+    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", output: missing }, NOW)).toContain("web1");
   });
 
   it("lists at most two earlier sessions, newest first, and a reply only from the minutes after the failure", () => {
@@ -237,14 +237,14 @@ describe("failureHint", () => {
     failed("app1", "2026-10-21T01:00:00Z", "ps -ax | rg codex", ps);
     reply("app1", "2026-10-21T01:00:10Z", "Looking at the process list another way.");
     reply("app1", "2026-10-21T01:00:20Z", "The sandbox blocks ps, so I read the PID file instead.");
-    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "ps -ax", output: ps }, NOW)).toContain(
+    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", output: ps }, NOW)).toContain(
       "next reply: The sandbox blocks ps, so I read the PID file instead.",
     );
     const host = "curl: (6) Could not resolve host: registry.example.com";
     failed("app1", "2026-10-21T02:00:00Z", "curl -sS https://registry.example.com/x", host);
     reply("app1", "2026-10-21T02:00:10Z", "Retrying with a longer timeout.");
     reply("app1", "2026-10-21T02:00:20Z", "registry.example.com only resolves on the VPN.");
-    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", command: "curl x", output: host }, NOW)).toContain(
+    expect(failureHint(db, { sessionId: "now", cwd: "/w/app", output: host }, NOW)).toContain(
       "next reply: registry.example.com only resolves on the VPN.",
     );
   });

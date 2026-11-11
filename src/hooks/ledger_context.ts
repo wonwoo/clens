@@ -6,6 +6,7 @@
 // better-sqlite3 nor the MCP server.
 import { formatLedgerList, readLedger } from "../mcp/ledger.js";
 import { ledgerPath } from "../util/paths.js";
+import { projectIdOf } from "../util/project_id.js";
 
 /** The ledger list for the project of a SessionStart hook input (the JSON
  *  text the hook reads from stdin), or null when there is nothing to add.
@@ -20,8 +21,8 @@ export function ledgerContext(input: string): string | null {
   if (typeof event !== "object" || event === null) return null;
   const { cwd } = event as { cwd?: unknown };
   if (typeof cwd !== "string" || cwd === "") return null;
-  // The project_id the tools tell the agent to pass (HOLD_DESCRIPTION).
-  const project_id = cwd.replace(/\//g, "-");
+  // Claude Code's id for the cwd, the id clens_hold stores.
+  const project_id = projectIdOf(cwd);
   let ledger;
   try {
     ledger = readLedger(ledgerPath());

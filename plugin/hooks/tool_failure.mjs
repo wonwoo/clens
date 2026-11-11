@@ -268,6 +268,16 @@ function unescape(code, i) {
   return { text: n, end: i + 2 };
 }
 
+// src/util/project_id.ts
+var MAX_NAME = 200;
+function projectIdOf(path) {
+  const name = path.replace(/[^a-zA-Z0-9]/g, "-");
+  if (name.length <= MAX_NAME) return name;
+  let h = 0;
+  for (let i = 0; i < path.length; i++) h = (h << 5) - h + path.charCodeAt(i) | 0;
+  return `${name.slice(0, MAX_NAME)}-${Math.abs(h).toString(36)}`;
+}
+
 // src/hooks/failure_hint.ts
 var MAX_SESSIONS = 2;
 var OWN_FAILURE_MS = 3e4;
@@ -364,7 +374,7 @@ function failureHint(db, input2, now) {
   if (!key2) return null;
   const projects = /* @__PURE__ */ new Set();
   if (input2.cwd !== null) {
-    projects.add(input2.cwd.replace(/\//g, "-"));
+    projects.add(projectIdOf(input2.cwd));
     const rows = db.prepare("SELECT DISTINCT project_id FROM session WHERE cwd = ? AND project_id IS NOT NULL").all(input2.cwd);
     for (const r of rows) projects.add(r.project_id);
   }
@@ -453,7 +463,7 @@ try {
   db.pragma("busy_timeout = 2000");
   hint = failureHint(
     db,
-    { sessionId, cwd: typeof event.cwd === "string" ? event.cwd : null, command: String(event.tool_input?.command ?? ""), output },
+    { sessionId, cwd: typeof event.cwd === "string" ? event.cwd : null, output },
     Date.now()
   );
   db.close();

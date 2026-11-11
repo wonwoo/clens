@@ -68,4 +68,35 @@ describe("commands/install_cmd.ts — ja and zh", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // The analyzer is in place once npm succeeds; a failed rebuild after it
+  // (another clens holding the index lock, say) must say so, so the user
+  // rebuilds instead of installing again.
+  it("returns 1 and says the analyzer is installed when the reindex fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "clens-install-"));
+    const saved = process.env.CLENS_INDEX_DIR;
+    process.env.CLENS_INDEX_DIR = dir;
+    execFileSync.mockImplementationOnce(() => Buffer.from("") as never);
+    runIndex.mockRejectedValueOnce(Object.assign(new Error("indexer busy"), { exitCode: 4 }));
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const code = await installCommand({ lang: "ja" }).catch((e: Error) => `threw: ${e.message}`);
+      const said = stderr.mock.calls.map(([s]) => String(s)).join("");
+      expect(
+        {
+          code,
+          said: said.includes(
+            "clens install ja: failed: the analyzer is installed, but the index rebuild failed: indexer busy. " +
+              "Run `start.mjs index --rebuild` to rebuild it.\n",
+          ),
+        },
+        "install whose reindex fails",
+      ).toEqual({ code: 1, said: true });
+    } finally {
+      stderr.mockRestore();
+      if (saved === undefined) delete process.env.CLENS_INDEX_DIR;
+      else process.env.CLENS_INDEX_DIR = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

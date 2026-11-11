@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
-import { runIndex } from "../indexer/driver.js";
+import { runIndex, type IndexResult } from "../indexer/driver.js";
 import { LINDERA_PACKAGES } from "../indexer/lang/init.js";
 import { languageModelDir } from "../util/paths.js";
 
@@ -116,7 +116,19 @@ export async function installCommand(flags: InstallCmdFlags): Promise<number> {
     return 1;
   }
   process.stderr.write(`clens install ${flags.lang}: model installed, reindexing...\n`);
-  const result = await runIndex({ rebuild: true });
+  let result: IndexResult;
+  try {
+    result = await runIndex({ rebuild: true });
+  } catch (e) {
+    // The analyzer is in place by now; say so, so the user rebuilds instead
+    // of installing again.
+    const err = e as { message?: string };
+    process.stderr.write(
+      `clens install ${flags.lang}: failed: the analyzer is installed, but the index rebuild failed: ${err.message ?? e}. ` +
+        "Run `start.mjs index --rebuild` to rebuild it.\n",
+    );
+    return 1;
+  }
   process.stderr.write(
     `clens install ${flags.lang}: done. parsed ${result.files_parsed}/${result.files_total} files, ` +
       `${result.events_inserted} events, ${result.elapsed_ms}ms. ` +

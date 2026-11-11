@@ -35,6 +35,7 @@ import {
 import { z } from "zod";
 
 import { indexDbPath, ledgerPath, watchLockPath } from "../util/paths.js";
+import { normalizeProjectId } from "../util/project_id.js";
 import { timeParam } from "./time_param.js";
 import { startWatch, type WatchHandle } from "../indexer/watch.js";
 import { acquireLock } from "../indexer/driver.js";
@@ -55,6 +56,12 @@ import { formatPending, HOLD_STATUSES, readLedger, recordHold } from "./ledger.j
 import { formatStats, projectStats, STATS_SECTIONS } from "./stats.js";
 import { codexSessionFromMeta, detectCurrentSessionId, resolveSessionId } from "./current_session.js";
 
+// An agent derives project_id from its cwd by replacing the slashes, as the
+// tool descriptions say; the server turns it into Claude Code's id, the one
+// the index and the ledger store, so a path with a dot or a space matches too.
+const projectIdParam = z.string().transform(normalizeProjectId);
+const requiredProjectIdParam = z.string().min(1).transform(normalizeProjectId);
+
 // Strict: a key a tool does not take is an error, not dropped without a word.
 // Agents passed `ts` for around_ts and `project` for project_id; the dropped
 // `project` turned a one-project clens_left_off into a list of every project.
@@ -66,7 +73,7 @@ const SessionParamsSchema = z.strictObject({
 });
 
 const RecentParamsSchema = z.strictObject({
-  project_id: z.string(),
+  project_id: projectIdParam,
   since: timeParam.optional(),
   until: timeParam.optional(),
   query: z.string().optional(),
@@ -80,7 +87,7 @@ const SearchParamsSchema = z
   .strictObject({
     query: z.string().min(1).optional(),
     queries: z.array(z.string().min(1)).min(2).max(5).optional(),
-    project_id: z.string().optional(),
+    project_id: projectIdParam.optional(),
     since: timeParam.optional(),
     until: timeParam.optional(),
     role: z.enum(["user", "assistant"]).optional(),
@@ -92,7 +99,7 @@ const SearchParamsSchema = z
   .refine((p) => (p.query === undefined) !== (p.queries === undefined), { message: ONE_OF_QUERY });
 
 const LeftOffParamsSchema = z.strictObject({
-  project_id: z.string().optional(),
+  project_id: projectIdParam.optional(),
   file: z.string().min(1).optional(),
   since: timeParam.optional(),
   until: timeParam.optional(),
@@ -109,7 +116,7 @@ const MIN_TEXT_CHARS = 20;
 
 const StatsParamsSchema = z.strictObject({
   // min(1): an empty string would otherwise fall through to a wider scope.
-  project_id: z.string().min(1).optional(),
+  project_id: requiredProjectIdParam.optional(),
   session_id: z.string().min(1).optional(),
   since: timeParam.optional(),
   sections: z.array(z.enum(STATS_SECTIONS)).min(1).optional(),
@@ -117,7 +124,7 @@ const StatsParamsSchema = z.strictObject({
 });
 
 const HoldParamsSchema = z.strictObject({
-  project_id: z.string().min(1),
+  project_id: requiredProjectIdParam,
   id: z.string().regex(/^[0-9a-f]{8}$/).optional(),
   item: z.string().min(1).max(300).optional(),
   status: z.enum(HOLD_STATUSES),
@@ -126,7 +133,7 @@ const HoldParamsSchema = z.strictObject({
 });
 
 const PendingParamsSchema = z.strictObject({
-  project_id: z.string().min(1).optional(),
+  project_id: requiredProjectIdParam.optional(),
   maxBytes: z.number().int().min(256).max(1_000_000).optional(),
 });
 

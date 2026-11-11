@@ -3,6 +3,21 @@ import { createRequire as __clensRequire } from 'node:module'; const require = _
 
 // src/mcp/ledger.ts
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+
+// src/util/project_id.ts
+var MAX_NAME = 200;
+function projectIdOf(path) {
+  const name = path.replace(/[^a-zA-Z0-9]/g, "-");
+  if (name.length <= MAX_NAME) return name;
+  let h = 0;
+  for (let i = 0; i < path.length; i++) h = (h << 5) - h + path.charCodeAt(i) | 0;
+  return `${name.slice(0, MAX_NAME)}-${Math.abs(h).toString(36)}`;
+}
+function normalizeProjectId(id) {
+  return id.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+// src/mcp/ledger.ts
 var HOLD_STATUSES = ["held", "dropped", "done", "removed"];
 var ID = /^[0-9a-f]{8}$/;
 function parseEvent(line) {
@@ -51,7 +66,7 @@ function readLedger(path) {
     }
     byId.set(e.id, {
       id: e.id,
-      project_id: e.project_id,
+      project_id: normalizeProjectId(e.project_id),
       item: e.item,
       status: e.status,
       words: e.words,
@@ -121,7 +136,7 @@ function ledgerContext(input2) {
   if (typeof event !== "object" || event === null) return null;
   const { cwd } = event;
   if (typeof cwd !== "string" || cwd === "") return null;
-  const project_id = cwd.replace(/\//g, "-");
+  const project_id = projectIdOf(cwd);
   let ledger;
   try {
     ledger = readLedger(ledgerPath());

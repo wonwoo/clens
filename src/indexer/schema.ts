@@ -102,7 +102,10 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // task_started, keeps its token counts (pushTurnTokens in codex_parser.ts);
 // the version-mismatch rebuild re-reads every rollout still on disk, and a
 // session whose rollout is gone keeps the rows it has.
-export const SCHEMA_VERSION = 21;
+// v22: a Codex session's project id is the one Claude Code gives its cwd
+// (projectIdOf); the version-mismatch rebuild re-reads every rollout still
+// on disk and gives a session whose rollout is gone the id of its stored cwd.
+export const SCHEMA_VERSION = 22;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population

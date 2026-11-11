@@ -61,6 +61,26 @@ describe("mcp/recent.ts — optional query filter", () => {
     expect(results.map((r) => r.session_id)).toEqual(["s3"]);
   });
 
+  it("query matches _ and % as themselves, not as LIKE wildcards", () => {
+    db.exec(`
+      INSERT INTO event (uuid, session_id, ts, role) VALUES
+        ('e4', 's2', '2026-06-16T10:00:00Z', 'user'),
+        ('e5', 's2', '2026-06-17T10:00:00Z', 'user'),
+        ('e6', 's2', '2026-06-18T10:00:00Z', 'user'),
+        ('e7', 's2', '2026-06-19T10:00:00Z', 'user');
+      INSERT INTO user_text (event_uuid, session_id, ts, text) VALUES
+        ('e4', 's2', '2026-06-16T10:00:00Z', 'rename snake_case keys'),
+        ('e5', 's2', '2026-06-17T10:00:00Z', 'rename snakeXcase keys'),
+        ('e6', 's2', '2026-06-18T10:00:00Z', 'coverage at 100%'),
+        ('e7', 's2', '2026-06-19T10:00:00Z', 'coverage at 1000 lines');
+    `);
+    const texts = (query: string) => recentUserText(db, { project_id: "proj-a", query }).map((r) => r.text);
+    expect({ underscore: texts("snake_case"), percent: texts("100%") }, "clens_recent query with _ and %").toEqual({
+      underscore: ["rename snake_case keys"],
+      percent: ["coverage at 100%"],
+    });
+  });
+
   it("query with no match returns empty, not an error", () => {
     const results = recentUserText(db, { project_id: "proj-a", query: "존재하지않는단어" });
     expect(results).toEqual([]);

@@ -36,8 +36,13 @@ index so past messages are indexed with it.
    done.` Tell the user the analyzer is installed and that every open Claude
    Code and Codex session, this one included, must be closed and started
    again: a session already running keeps indexing without the analyzer. On
-   failure, quote the `failed:` line; nothing else changed, and search keeps
-   working by characters.
+   failure, quote the `failed:` line. When it says the analyzer is installed,
+   run `node "<plugin folder>/start.mjs" index --rebuild` with the same
+   timeout as step 3; when it worked it
+   exits 0 and prints a line starting with `clens index: parsed`, and then
+   the same restart applies. If it fails too, quote its line and tell the
+   user to run it again later. Otherwise nothing else changed, and search
+   keeps working by characters.
 
 ## Limits
 

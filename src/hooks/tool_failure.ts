@@ -24,7 +24,6 @@ let event: {
   session_id?: unknown;
   cwd?: unknown;
   tool_name?: unknown;
-  tool_input?: { command?: unknown };
   error?: unknown;
   tool_response?: unknown;
 };
@@ -50,7 +49,7 @@ try {
   db.pragma("busy_timeout = 2000");
   hint = failureHint(
     db,
-    { sessionId, cwd: typeof event.cwd === "string" ? event.cwd : null, command: String(event.tool_input?.command ?? ""), output },
+    { sessionId, cwd: typeof event.cwd === "string" ? event.cwd : null, output },
     Date.now(),
   );
   db.close();

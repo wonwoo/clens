@@ -60,6 +60,21 @@ describe("adapter deriveProjectId", () => {
     );
   });
 
+  // Claude Code names a project's directory by turning every character
+  // other than a letter or digit into a dash, and cuts a name over 200
+  // characters to 200 plus a dash and a hash of the path (Claude Code
+  // 2.1.322). A Codex session in the same directory must get the same id.
+  it("codexAdapter derives the project id Claude Code gives the same directory", () => {
+    const ids = ["/Users/x/.claude/mascot", "/Users/x/Documents/New project", "/w/" + "a".repeat(250) + "/b.c"].map((cwd) =>
+      codexAdapter.deriveProjectId!("any/path.jsonl", cwd),
+    );
+    expect(ids, "Codex project ids of /Users/x/.claude/mascot, a path with a space, a 257-character path").toEqual([
+      "-Users-x--claude-mascot",
+      "-Users-x-Documents-New-project",
+      "-w-" + "a".repeat(197) + "-nio7yp",
+    ]);
+  });
+
   it("codexAdapter returns null when cwd is unavailable, signalling fallback", () => {
     expect(codexAdapter.deriveProjectId!("any/path.jsonl", null)).toBeNull();
   });

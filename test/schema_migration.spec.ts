@@ -266,3 +266,40 @@ describe("an index written by a newer clens", () => {
     rebuilt.close();
   });
 });
+
+// A Codex session's project id was its cwd with only the slashes turned into
+// dashes, which differs from Claude Code's for a path with any other
+// non-alphanumeric character. A rebuild re-derives the sessions still on
+// disk; one whose rollout is gone gets its id from its stored cwd.
+describe("a kept Codex session after the project id change", () => {
+  it("gets Claude Code's project id for its cwd", async () => {
+    const indexDir = join(root, ".clens");
+    mkdirSync(join(root, ".claude", "projects"), { recursive: true });
+    mkdirSync(join(root, ".codex", "sessions"), { recursive: true });
+    mkdirSync(indexDir, { recursive: true });
+    process.env.CLENS_HOME = join(root, ".claude");
+    process.env.CLENS_CODEX_HOME = join(root, ".codex");
+    process.env.CLENS_INDEX_DIR = indexDir;
+    const db = new Database(join(indexDir, "index.db"));
+    applySchema(db);
+    db.exec(`
+      INSERT INTO project (id, cwd, display) VALUES ('-w-a.b', '/w/a.b', '-w-a.b');
+      INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('cx', '-w-a.b', 'interactive', '/w/a.b', 'codex');
+      INSERT INTO event (uuid, session_id, ts, role, source_file)
+        VALUES ('x1', 'cx', '2026-07-01T00:00:01.000Z', 'user', '/gone/rollout-cx.jsonl');
+    `);
+    db.prepare("UPDATE schema_version SET v = ?").run(SCHEMA_VERSION - 1);
+    db.close();
+
+    await runIndex({});
+    const after = new Database(join(indexDir, "index.db"), { readonly: true });
+    expect(
+      {
+        session: all(after, "SELECT project_id FROM session WHERE id = 'cx'"),
+        project: all(after, "SELECT id, cwd FROM project WHERE id = '-w-a-b'"),
+      },
+      "kept Codex session in /w/a.b after the rebuild",
+    ).toEqual({ session: [{ project_id: "-w-a-b" }], project: [{ id: "-w-a-b", cwd: "/w/a.b" }] });
+    after.close();
+  });
+});

@@ -122,6 +122,18 @@ try {
       pendingText.includes("Add a due date to tasks") && pendingText.includes(`words: "let's park it"`),
     `${heldText}\n${pendingText}`,
   );
+  // An agent that replaces only the slashes sends -fixture.cwd for a
+  // directory /fixture.cwd; the server turns it into Claude Code's id.
+  const dotFound = await client.callTool({ name: "clens_search", arguments: { query: "brainstorming", project_id: "-fixture.cwd", limit: 3 } });
+  const dotFoundText = dotFound.content?.[0]?.text ?? "";
+  const dotPending = await client.callTool({ name: "clens_pending", arguments: { project_id: "-fixture.cwd" } });
+  const dotPendingText = dotPending.content?.[0]?.text ?? "";
+  check(
+    "project id with a dot",
+    !dotFound.isError && dotFoundText.includes("session:test") && !dotPending.isError &&
+      dotPendingText.includes("Ledger for -fixture-cwd: 1 held, 0 dropped, 0 done"),
+    `${dotFoundText}\n${dotPendingText}`,
+  );
 
   const hook = execFileSync("node", [join(plugin, "hooks", "compact.mjs")], {
     env,

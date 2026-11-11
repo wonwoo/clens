@@ -85,7 +85,8 @@ export function recentUserText(db: Database.Database, params: RecentParams): Rec
   // reply shown is the first one that does, since a turn's first reply is
   // often a short "let me check" rather than the answer.
   if (params.query) {
-    const like = `%${params.query}%`;
+    // `_` and `%` in the query match only themselves.
+    const like = `%${params.query.replace(/[\\%_]/g, "\\$&")}%`;
     // Same turn as inTurn, computed once per user row: the turn ends at the
     // session's next user message. Both ends are plain comparisons so the
     // (session_id, ts) index bounds the range; inTurn's NOT EXISTS, or an OR
@@ -102,11 +103,11 @@ export function recentUserText(db: Database.Database, params: RecentParams): Rec
         ${userRows}
       )
       SELECT session_id, ts, text,
-        CASE WHEN text LIKE ? THEN (${reply} ORDER BY a.ts ASC LIMIT 1)
-             ELSE (${reply} AND a.text LIKE ? ORDER BY a.ts ASC LIMIT 1)
+        CASE WHEN text LIKE ? ESCAPE '\\' THEN (${reply} ORDER BY a.ts ASC LIMIT 1)
+             ELSE (${reply} AND a.text LIKE ? ESCAPE '\\' ORDER BY a.ts ASC LIMIT 1)
         END AS assistant_response
       FROM t
-      WHERE text LIKE ? OR EXISTS (${reply} AND a.text LIKE ?)
+      WHERE text LIKE ? ESCAPE '\\' OR EXISTS (${reply} AND a.text LIKE ? ESCAPE '\\')
       ORDER BY ts DESC
       LIMIT ?`;
     return db.prepare(sql).all(...bindings, like, like, like, like, limit) as RecentResult[];

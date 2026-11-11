@@ -114,6 +114,11 @@ describe("ledgerContext", () => {
         // So that an empty cwd lists nothing because it is refused, not
         // because no item has an empty project.
         event("0a0b0c0d", "", "Item of no project"),
+        // A directory with a dot: Claude Code's project id turns the dot
+        // into a dash too; the second item was recorded with only the
+        // slashes turned into dashes.
+        event("1a2b3c4d", "-work-a-b", "Dotted project's item"),
+        event("5e6f7a8b", "-work-a.b", "Dotted project's older item"),
       ].join("\n") + "\n",
     );
     process.env.CLENS_INDEX_DIR = indexDir;
@@ -128,6 +133,14 @@ describe("ledgerContext", () => {
     const list = ledgerContext('{"source":"startup","cwd":"/work/app"}');
     expect(list).toContain("a1b2c3d4  This project's item");
     expect(list).not.toContain("Other project's item");
+  });
+
+  it("lists the items of a directory whose path holds a dot, by Claude Code's project id", () => {
+    const list = ledgerContext('{"source":"startup","cwd":"/work/a.b"}') ?? "";
+    expect(
+      { item: list.includes("1a2b3c4d  Dotted project's item"), older: list.includes("5e6f7a8b  Dotted project's older item") },
+      "ledger items listed for /work/a.b",
+    ).toEqual({ item: true, older: true });
   });
 
   it("returns null when the input carries no usable cwd", () => {
@@ -160,5 +173,18 @@ describe("Claude Code hook registration", () => {
     };
     const entry = config.hooks.SessionStart.find((e) => e.hooks.some((h) => h.command.includes("hooks/ledger_list.mjs")));
     expect(entry?.matcher).toBe("startup|resume|clear|compact");
+  });
+});
+
+// Codex sends SessionStart with source "fork" for a forked thread
+// (codex-rs/hooks/src/events/session_start.rs, SessionStartSource::Fork),
+// and matches a hook's matcher against that source.
+describe("Codex hook registration", () => {
+  it("runs the ledger guidance hook at startup, resume, clear, compact and fork", () => {
+    const config = JSON.parse(readFileSync(join(process.cwd(), "plugin/.codex-plugin/hooks.json"), "utf8")) as {
+      hooks: { SessionStart: { matcher: string; hooks: { command: string }[] }[] };
+    };
+    const entry = config.hooks.SessionStart.find((e) => e.hooks.some((h) => h.command.includes("hooks/hold_guidance.mjs")));
+    expect(entry?.matcher, "Codex SessionStart matcher of the ledger guidance hook").toBe("startup|resume|clear|compact|fork");
   });
 });

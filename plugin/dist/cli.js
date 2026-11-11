@@ -3050,6 +3050,16 @@ function judgeCwdDir() {
   return join(clensHome(), "judge-cwd");
 }
 
+// src/util/project_id.ts
+var MAX_NAME = 200;
+function projectIdOf(path) {
+  const name = path.replace(/[^a-zA-Z0-9]/g, "-");
+  if (name.length <= MAX_NAME) return name;
+  let h = 0;
+  for (let i = 0; i < path.length; i++) h = (h << 5) - h + path.charCodeAt(i) | 0;
+  return `${name.slice(0, MAX_NAME)}-${Math.abs(h).toString(36)}`;
+}
+
 // src/indexer/codex_parser.ts
 import { homedir as homedir3 } from "node:os";
 import { isAbsolute, resolve } from "node:path";
@@ -4148,8 +4158,8 @@ var codexAdapter = {
   parse: parseCodexFileBody,
   // Codex shards sessions under sessions/YYYY/MM/DD/, so the parent directory
   // is a date fragment, not a project key. Derive from the session cwd
-  // instead, matching Claude's slash→dash convention so both sources align.
-  deriveProjectId: (_source_file, cwd) => cwd !== null ? cwd.replace(/\//g, "-") : null
+  // instead: the id Claude Code gives the directory, so both sources align.
+  deriveProjectId: (_source_file, cwd) => cwd !== null ? projectIdOf(cwd) : null
 };
 var SOURCE_ADAPTERS = [claudeAdapter, codexAdapter];
 function getSourceAdapter(name) {
@@ -4798,7 +4808,7 @@ function appendCodexLines(db, stmts, f) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 21;
+var SCHEMA_VERSION = 22;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -5496,108 +5506,122 @@ async function runIndex(opts = {}) {
   const t0 = Date.now();
   try {
     const db = openIndex();
-    const storedVersion = getSchemaVersion(db);
-    if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
-      db.close();
-      throw new Error(
-        `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); restart the sessions still running the old one`
-      );
-    }
-    const needsRebuild = opts.rebuild === true || storedVersion !== null && storedVersion !== SCHEMA_VERSION;
-    const stmts = prepareStatements(db);
-    if (needsRebuild) {
-      const sources = /* @__PURE__ */ new Map();
-      for (const r of db.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate()) {
-        const list = sources.get(r.session_id) ?? [];
-        list.push(r.source_file ?? "");
-        sources.set(r.session_id, list);
+    try {
+      const storedVersion = getSchemaVersion(db);
+      if (storedVersion !== null && storedVersion > SCHEMA_VERSION && opts.rebuild !== true) {
+        throw new Error(
+          `the index was written by a newer clens (schema ${storedVersion}, this clens reads ${SCHEMA_VERSION}); restart the sessions still running the old one`
+        );
       }
-      const rederivable = [...sources].filter(([, files]) => files.every((f) => f !== "" && existsSync3(f))).map(([sid]) => sid);
-      const anomalyFiles = db.prepare("SELECT DISTINCT source_file FROM anomaly").all();
-      const cursorPaths = db.prepare("SELECT path FROM file_cursor").all();
-      const dropTx = db.transaction(() => {
-        wipeSessions(stmts, rederivable);
-        const dropSession = db.prepare("DELETE FROM session WHERE id = ?");
-        for (const sid of rederivable) dropSession.run(sid);
-        const dropAnomalies = db.prepare("DELETE FROM anomaly WHERE source_file IS ?");
-        for (const { source_file } of anomalyFiles) {
-          if (source_file === null || existsSync3(source_file)) dropAnomalies.run(source_file);
+      const needsRebuild = opts.rebuild === true || storedVersion !== null && storedVersion !== SCHEMA_VERSION;
+      const stmts = prepareStatements(db);
+      if (needsRebuild) {
+        const sources = /* @__PURE__ */ new Map();
+        for (const r of db.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate()) {
+          const list = sources.get(r.session_id) ?? [];
+          list.push(r.source_file ?? "");
+          sources.set(r.session_id, list);
         }
-        const dropCursor = db.prepare("DELETE FROM file_cursor WHERE path = ?");
-        for (const { path } of cursorPaths) if (existsSync3(path)) dropCursor.run(path);
-        db.exec(`DELETE FROM schema_version`);
-        db.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
-      });
-      dropTx();
-    }
-    const now = opts.now ?? Date.now();
-    const discovered = discoverFiles(db, {
-      forceRebuild: needsRebuild
-    });
-    let filesParsed = 0;
-    let filesAppended = 0;
-    let events = 0;
-    let parseErrors = 0;
-    for (const f of discovered) {
-      if (!f.needs_parse) continue;
-      await new Promise((r) => setImmediate(r));
-      if (lock.lost) {
-        db.close();
-        throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+        const rederivable = [...sources].filter(([, files]) => files.every((f) => f !== "" && existsSync3(f))).map(([sid]) => sid);
+        const anomalyFiles = db.prepare("SELECT DISTINCT source_file FROM anomaly").all();
+        const cursorPaths = db.prepare("SELECT path FROM file_cursor").all();
+        const dropTx = db.transaction(() => {
+          wipeSessions(stmts, rederivable);
+          const dropSession = db.prepare("DELETE FROM session WHERE id = ?");
+          for (const sid of rederivable) dropSession.run(sid);
+          const keptCodex = db.prepare("SELECT id, cwd, project_id FROM session WHERE source = 'codex' AND cwd IS NOT NULL").all();
+          const setProject = db.prepare("UPDATE session SET project_id = ? WHERE id = ?");
+          for (const s of keptCodex) {
+            const id = projectIdOf(s.cwd);
+            if (id === s.project_id) continue;
+            setProject.run(id, s.id);
+            stmts.upsertProject.run({ id, cwd: s.cwd, display: id });
+          }
+          const dropAnomalies = db.prepare("DELETE FROM anomaly WHERE source_file IS ?");
+          for (const { source_file } of anomalyFiles) {
+            if (source_file === null || existsSync3(source_file)) dropAnomalies.run(source_file);
+          }
+          const dropCursor = db.prepare("DELETE FROM file_cursor WHERE path = ?");
+          for (const { path } of cursorPaths) if (existsSync3(path)) dropCursor.run(path);
+          db.exec(`DELETE FROM schema_version`);
+          db.prepare("INSERT INTO schema_version (v) VALUES (?)").run(SCHEMA_VERSION);
+        });
+        dropTx();
       }
-      if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
-        const appended = f.source === "claude" ? appendNewLines(db, stmts, f) : appendCodexLines(db, stmts, f);
-        if (appended.kind === "appended") {
+      const now = opts.now ?? Date.now();
+      const discovered = discoverFiles(db, {
+        forceRebuild: needsRebuild
+      });
+      let filesParsed = 0;
+      let filesAppended = 0;
+      let events = 0;
+      let parseErrors = 0;
+      for (const f of discovered) {
+        if (!f.needs_parse) continue;
+        await new Promise((r) => setImmediate(r));
+        if (lock.lost) {
+          throw new Error(`clens index: lost the index lock, stopped: ${lock.lost.message}`);
+        }
+        try {
+          if (!needsRebuild && (f.source === "claude" || f.source === "codex")) {
+            const appended = f.source === "claude" ? appendNewLines(db, stmts, f) : appendCodexLines(db, stmts, f);
+            if (appended.kind === "appended") {
+              filesParsed += 1;
+              filesAppended += 1;
+              events += appended.events;
+              parseErrors += appended.parse_errors;
+              continue;
+            }
+          }
+          const body = readFileSync2(f.path, "utf8");
+          const batch = {
+            counters: /* @__PURE__ */ new Map(),
+            session_id: null,
+            ts: new Date(Math.floor(f.mtime * 1e3)).toISOString(),
+            source_file: f.path
+          };
+          const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
+          const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
+          const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
+          const { eventsInserted } = commitFile({
+            db,
+            stmts,
+            source_file: f.path,
+            mtime: f.mtime,
+            size: f.size,
+            fully_terminated_line_count: parsed.fully_terminated_line_count,
+            last_ok_byte_offset: parsed.last_ok_byte_offset,
+            events: parsed.events,
+            tool_results: parsed.tool_results,
+            batch,
+            session_meta: parsed.session_meta,
+            source: f.source
+          });
+          if (codex !== null) {
+            keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills, prefilledCallIds(parsed.events));
+          }
           filesParsed += 1;
-          filesAppended += 1;
-          events += appended.events;
-          parseErrors += appended.parse_errors;
-          continue;
+          events += eventsInserted;
+          parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
+        } catch (e) {
+          process.stderr.write(`clens index: skipped ${f.path}: ${e instanceof Error ? e.message : String(e)}
+`);
         }
       }
-      const body = readFileSync2(f.path, "utf8");
-      const batch = {
-        counters: /* @__PURE__ */ new Map(),
-        session_id: null,
-        ts: new Date(Math.floor(f.mtime * 1e3)).toISOString(),
-        source_file: f.path
-      };
-      const codex = f.source === "codex" ? parseCodexFile({ body, source_file: f.path, batch }) : null;
-      const parsed = codex?.result ?? getSourceAdapter(f.source).parse({ body, source_file: f.path, batch });
-      const skills = codex !== null ? filterCodexSkillCandidates(parsed.events, parsed.session_meta.cwd) : null;
-      const { eventsInserted } = commitFile({
-        db,
-        stmts,
-        source_file: f.path,
-        mtime: f.mtime,
-        size: f.size,
-        fully_terminated_line_count: parsed.fully_terminated_line_count,
-        last_ok_byte_offset: parsed.last_ok_byte_offset,
-        events: parsed.events,
-        tool_results: parsed.tool_results,
-        batch,
-        session_meta: parsed.session_meta,
-        source: f.source
-      });
-      if (codex !== null) {
-        keepCodexState(f.path, codex.resume, parsed.last_ok_byte_offset, parsed.fully_terminated_line_count, skills, prefilledCallIds(parsed.events));
+      if (filesParsed > 0 && !lock.lost) {
+        optimizeFtsIfDue(db, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
       }
-      filesParsed += 1;
-      events += eventsInserted;
-      parseErrors += parsed.anomalies.counters.get("json_parse_error")?.count ?? 0;
+      return {
+        files_total: discovered.length,
+        files_parsed: filesParsed,
+        events_inserted: events,
+        parse_errors: parseErrors,
+        files_appended: filesAppended,
+        elapsed_ms: Date.now() - t0
+      };
+    } finally {
+      db.close();
     }
-    if (filesParsed > 0 && !lock.lost) {
-      optimizeFtsIfDue(db, now, needsRebuild, opts.vacuumMinFreeBytes ?? VACUUM_MIN_FREE_BYTES);
-    }
-    db.close();
-    return {
-      files_total: discovered.length,
-      files_parsed: filesParsed,
-      events_inserted: events,
-      parse_errors: parseErrors,
-      files_appended: filesAppended,
-      elapsed_ms: Date.now() - t0
-    };
   } finally {
     await release();
   }
@@ -5711,7 +5735,17 @@ async function installCommand(flags) {
   }
   process.stderr.write(`clens install ${flags.lang}: model installed, reindexing...
 `);
-  const result = await runIndex({ rebuild: true });
+  let result;
+  try {
+    result = await runIndex({ rebuild: true });
+  } catch (e) {
+    const err = e;
+    process.stderr.write(
+      `clens install ${flags.lang}: failed: the analyzer is installed, but the index rebuild failed: ${err.message ?? e}. Run \`start.mjs index --rebuild\` to rebuild it.
+`
+    );
+    return 1;
+  }
   process.stderr.write(
     `clens install ${flags.lang}: done. parsed ${result.files_parsed}/${result.files_total} files, ${result.events_inserted} events, ${result.elapsed_ms}ms. Close every open Claude Code and Codex session and start again to use it.
 `
