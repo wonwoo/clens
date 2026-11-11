@@ -298,7 +298,7 @@ var HOST = [
   // npm, node
 ];
 var NETWORK = new RegExp(`${NET}(?:ssl certificate problem|network is unreachable|received http code \\d+ from proxy|proxy connect aborted)`);
-var PERMISSION = /^(?:[\w-]+|\(eval\)|\/bin\/\w+|[\w.-]+@[\w.-]+)(?::(?: line)? ?\d+)?: .*(?:operation not permitted|permission denied|read-only file system)/;
+var PERMISSION = /^(?:(?!\d+:)[\w-]+|\(eval\)|\/bin\/\w+|[\w.-]+@[\w.-]+)(?::(?: line)? ?\d+)?: .*(?:operation not permitted|permission denied|read-only file system)/;
 function normalized(line) {
   return line.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 200);
 }

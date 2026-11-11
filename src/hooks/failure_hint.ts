@@ -58,8 +58,9 @@ const HOST = [
 ];
 const NETWORK = new RegExp(`${NET}(?:ssl certificate problem|network is unreachable|received http code \\d+ from proxy|proxy connect aborted)`);
 // "program: …", "zsh:1: …", "bash: line 1: …" or "user@host: …"; not a path
-// such as a search hit's "src/a.ts:12: …".
-const PERMISSION = /^(?:[\w-]+|\(eval\)|\/bin\/\w+|[\w.-]+@[\w.-]+)(?::(?: line)? ?\d+)?: .*(?:operation not permitted|permission denied|read-only file system)/;
+// such as a search hit's "src/a.ts:12: …", nor the bare line number grep -n
+// prints for one file ("12: …").
+const PERMISSION = /^(?:(?!\d+:)[\w-]+|\(eval\)|\/bin\/\w+|[\w.-]+@[\w.-]+)(?::(?: line)? ?\d+)?: .*(?:operation not permitted|permission denied|read-only file system)/;
 
 function normalized(line: string): string {
   return line.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 200);

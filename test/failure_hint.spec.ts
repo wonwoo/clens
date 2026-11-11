@@ -93,6 +93,8 @@ describe("failureKey", () => {
     expect(failureKey('+      tool_input: { command: "gh run list" }, error: "Exit code 127\\n(eval):1: command not found: gh",')).toBeNull();
     expect(failureKey("Package 'gh' is not installed, so not removed")).toBeNull();
     expect(failureKey("src/auth.ts:12:  throw new Error('permission denied')")).toBeNull();
+    // grep -n over one file prints no path, only the line number.
+    expect(failureKey("12:    echo 'permission denied'")).toBeNull();
     expect(failureKey("docs/net.md:3: curl: (6) Could not resolve host: example.com")).toBeNull();
   });
 });
