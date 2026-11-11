@@ -20,8 +20,8 @@
  *   node test/scripts/plugin-smoke.mjs
  */
 
-import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,7 +91,14 @@ const localClient = new Client({ name: "plugin-smoke-local", version: "0.0.0" })
 const textOf = (result) => result.content?.[0]?.text ?? "";
 try {
   execFileSync("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: plugin, env, stdio: "ignore" });
-  execFileSync("node", ["start.mjs", "index"], { cwd: plugin, env, stdio: "ignore" });
+  // The first run builds better-sqlite3 under the install lock. A lock left
+  // by a process killed while installing, whose pid no longer runs, is taken
+  // over at once, not after the 5 minutes a lock is otherwise waited for.
+  const lock = join(plugin, ".clens-install.lock");
+  mkdirSync(lock);
+  writeFileSync(join(lock, "pid"), String(spawnSync(process.execPath, ["-e", ""]).pid));
+  const first = spawnSync("node", ["start.mjs", "index"], { cwd: plugin, env, stdio: "ignore", timeout: 150_000 });
+  check("install lock of a dead process", first.status === 0 && !existsSync(lock), `status ${first.status}, signal ${first.signal}, lock left: ${existsSync(lock)}`);
 
   await client.connect(new StdioClientTransport({ command: "node", args: [join(plugin, "start.mjs"), "mcp"], cwd: plugin, env }));
   const { tools } = await client.listTools();

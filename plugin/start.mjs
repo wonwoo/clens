@@ -12,7 +12,7 @@
 // The server runs in this process, not a child: it finds the calling
 // session through its parent process (detectCurrentSessionId).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -46,6 +46,25 @@ function npm(args) {
   execFileSync(file, argv, { cwd: root, stdio: ["ignore", 2, 2], shell: process.platform === "win32" && file === "npm.cmd" });
 }
 
+// Whether the process that took the install lock is gone, killed while
+// installing: its pid, written in the lock, no longer runs. False while the
+// pid is not written yet.
+function holderGone(lock) {
+  let pid;
+  try {
+    pid = Number(readFileSync(join(lock, "pid"), "utf8"));
+  } catch {
+    return false;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (e) {
+    return e?.code === "ESRCH";
+  }
+}
+
 // Sessions that start together must not run npm in the same folder at once:
 // the first takes a lock directory, the others wait for it to go.
 function withInstallLock(fn) {
@@ -57,11 +76,12 @@ function withInstallLock(fn) {
       break;
     } catch {
       const stale = (() => { try { return Date.now() - statSync(lock).mtimeMs > 5 * 60_000; } catch { return false; } })();
-      if (stale || Date.now() > deadline) rmSync(lock, { recursive: true, force: true });
+      if (stale || holderGone(lock) || Date.now() > deadline) rmSync(lock, { recursive: true, force: true });
       else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
     }
   }
   try {
+    writeFileSync(join(lock, "pid"), String(process.pid));
     fn();
   } finally {
     rmSync(lock, { recursive: true, force: true });
