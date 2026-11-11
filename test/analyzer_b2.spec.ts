@@ -60,12 +60,11 @@ describe("Phase B.2 analyzers (D4-D7) on fixture", () => {
     expect(keys).toEqual(expected);
   });
 
-  it("D6 timeline: wall ≥ think ≥ 0, idle ≥ 0, sum ≤ wall", () => {
+  it("D6 timeline: active ≥ think ≥ 0, idle ≥ 0", () => {
     const r = analyzeTimeline(db, SESSION);
-    expect(r.wall_min).toBeGreaterThanOrEqual(0);
     expect(r.think_min).toBeGreaterThanOrEqual(0);
     expect(r.idle_min).toBeGreaterThanOrEqual(0);
-    expect(r.think_min + r.idle_min).toBeLessThanOrEqual(r.wall_min + 0.01);
+    expect(r.think_min).toBeLessThanOrEqual(r.active_min + 0.01);
   });
 
   it("D7 files: top is sorted desc by count and limited to ≤50", () => {

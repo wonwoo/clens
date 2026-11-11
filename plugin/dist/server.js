@@ -30567,6 +30567,9 @@ function workKindClause(alias) {
   const col = (c) => alias ? `${alias}.${c}` : c;
   return `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec' AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`;
 }
+function rootSessionExpr(alias) {
+  return `COALESCE(CASE WHEN ${alias}.kind = 'subagent' THEN ${alias}.parent_id END, ${alias}.id)`;
+}
 function notCopiedClause(eventUuidColumn, sessionIdColumn) {
   return `(IFNULL((SELECT MIN(owner.session_id) FROM event owner WHERE owner.uuid = ${eventUuidColumn}), ${sessionIdColumn}) = ${sessionIdColumn})`;
 }
@@ -32524,7 +32527,7 @@ project_id is a working directory path with every "/" replaced by "-" (/Users/a/
 Not indexed: tool outputs (command results, file contents read) and the code itself.
 
 The response is capped at maxBytes; lower-ranked hits past the cap are reported as "+N more".`;
-var STATS_DESCRIPTION = `Aggregate usage statistics: tool call counts with each tool's failures, skill, slash-command and agent call counts, health signals (errors, compaction, context bloat), timeline (wall/think/idle time), and files touched. Use this for questions about usage patterns or trends ("what tools do I use most", "how much have I used skill X", "what files have I been editing") \u2014 NOT for finding specific messages or conversations, which clens_search/clens_recent handle instead.
+var STATS_DESCRIPTION = `Aggregate usage statistics: tool call counts with each tool's failures, skill, slash-command and agent call counts, health signals (errors, compaction, context bloat), timeline (active time, the gaps between events under 5 minutes, with the think part of it from 5 seconds up, and idle time, the gaps of 5 minutes or more), and files touched. Use this for questions about usage patterns or trends ("what tools do I use most", "how much have I used skill X", "what files have I been editing") \u2014 NOT for finding specific messages or conversations, which clens_search/clens_recent handle instead.
 
 Scope: pass project_id for one project, session_id for one session, or neither for every project. session_id "current" is this conversation (Claude Code and Codex). Session stats count only that session's own calls, not the subagents it started. Project and all-project stats leave out one-shot exec/SDK runs and clens judge transcripts. since bounds by date and is ignored with session_id.
 
@@ -32743,7 +32746,7 @@ function analyzeIdentity(db2, scope) {
       const sinceCond = scope.params.since ? "AND e.ts >= ?" : "";
       const sinceBind = scope.params.since ? [scope.params.since] : [];
       const row = db2.prepare(
-        `SELECT COUNT(DISTINCT s.id) AS sessions,
+        `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions,
                   MIN(e.ts) AS started_at,
                   MAX(e.ts) AS ended_at
            FROM session s LEFT JOIN event e ON e.session_id = s.id
@@ -32772,9 +32775,9 @@ function analyzeIdentity(db2, scope) {
       const tsBind = scope.mode === "since" ? [scope.params.since] : [];
       const tsCond = scope.mode === "since" ? "AND e.ts >= ?" : "";
       const row = db2.prepare(
-        `SELECT COUNT(DISTINCT e.session_id) AS sessions, MIN(e.ts) AS earliest_event, MAX(e.ts) AS latest_event
-           FROM event e
-           WHERE e.session_id IN (SELECT id FROM session WHERE ${workKindClause()}) ${tsCond}`
+        `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions, MIN(e.ts) AS earliest_event, MAX(e.ts) AS latest_event
+           FROM event e JOIN session s ON s.id = e.session_id
+           WHERE ${workKindClause("s")} ${tsCond}`
       ).get(...tsBind);
       return {
         kind: scope.mode === "global" ? "global" : "since",
@@ -32915,29 +32918,32 @@ var THINK_UPPER_MS = 5 * 6e4;
 function analyzeTimeline(db2, scope) {
   const { sql, binds } = eventWhere(scope, "e");
   const rows = db2.prepare(
-    `SELECT ts, session_id FROM event e
+    `SELECT e.ts AS ts, ${rootSessionExpr("s")} AS root
+       FROM event e JOIN session s ON s.id = e.session_id
        WHERE ${sql}
-       ORDER BY session_id, ts`
+       ORDER BY root, e.ts`
   ).all(...binds);
-  let wallMs = 0;
+  let activeMs = 0;
   let thinkMs = 0;
   let idleMs = 0;
   let prev = null;
   for (const r of rows) {
-    if (prev === null || prev.session_id !== r.session_id) {
+    if (prev === null || prev.root !== r.root) {
       prev = r;
       continue;
     }
     const dt = Date.parse(r.ts) - Date.parse(prev.ts);
     if (Number.isFinite(dt) && dt >= 0) {
-      wallMs += dt;
       if (dt >= THINK_UPPER_MS) idleMs += dt;
-      else if (dt >= THINK_LOWER_MS) thinkMs += dt;
+      else {
+        activeMs += dt;
+        if (dt >= THINK_LOWER_MS) thinkMs += dt;
+      }
     }
     prev = r;
   }
   return {
-    wall_min: round(wallMs / 6e4, 2),
+    active_min: round(activeMs / 6e4, 2),
     think_min: round(thinkMs / 6e4, 2),
     idle_min: round(idleMs / 6e4, 2)
   };
@@ -33102,7 +33108,7 @@ function projectStats(db2, params) {
   if (wants("timeline")) {
     const timeline = analyzeTimeline(db2, scope);
     facts.timeline = {
-      wall_min: timeline.wall_min,
+      active_min: timeline.active_min,
       think_min: timeline.think_min,
       idle_min: timeline.idle_min
     };
@@ -33182,7 +33188,7 @@ function formatStats(facts) {
   if (facts.timeline) {
     lines.push(
       "",
-      `Timeline: wall ${facts.timeline.wall_min}min, think ${facts.timeline.think_min}min, idle ${facts.timeline.idle_min}min`
+      `Timeline: active ${facts.timeline.active_min}min (think ${facts.timeline.think_min}min), idle ${facts.timeline.idle_min}min`
     );
   }
   if (facts.files) {

@@ -75,7 +75,7 @@ export interface StatsFacts {
       max_ts: string;
     } | null;
   };
-  timeline?: { wall_min: number; think_min: number; idle_min: number };
+  timeline?: { active_min: number; think_min: number; idle_min: number };
   files?: Array<{ path: string; tool: string; count: number }>;
   hook_blocks?: HookBlocksFacts;
   tool_output?: ToolOutputFacts;
@@ -180,7 +180,7 @@ export function projectStats(db: Database.Database, params: StatsParams): StatsF
   if (wants("timeline")) {
     const timeline = analyzeTimeline(db, scope);
     facts.timeline = {
-      wall_min: timeline.wall_min,
+      active_min: timeline.active_min,
       think_min: timeline.think_min,
       idle_min: timeline.idle_min,
     };
@@ -273,7 +273,7 @@ export function formatStats(facts: StatsFacts): string {
   if (facts.timeline) {
     lines.push(
       "",
-      `Timeline: wall ${facts.timeline.wall_min}min, think ${facts.timeline.think_min}min, idle ${facts.timeline.idle_min}min`,
+      `Timeline: active ${facts.timeline.active_min}min (think ${facts.timeline.think_min}min), idle ${facts.timeline.idle_min}min`,
     );
   }
 

@@ -68,7 +68,7 @@ The response is capped at maxBytes; lower-ranked hits past the cap are reported 
 
 // The clens_stats tool description; Claude Code cuts it at 2,048 characters
 // like every tool description.
-export const STATS_DESCRIPTION = `Aggregate usage statistics: tool call counts with each tool's failures, skill, slash-command and agent call counts, health signals (errors, compaction, context bloat), timeline (wall/think/idle time), and files touched. Use this for questions about usage patterns or trends ("what tools do I use most", "how much have I used skill X", "what files have I been editing") — NOT for finding specific messages or conversations, which clens_search/clens_recent handle instead.
+export const STATS_DESCRIPTION = `Aggregate usage statistics: tool call counts with each tool's failures, skill, slash-command and agent call counts, health signals (errors, compaction, context bloat), timeline (active time, the gaps between events under 5 minutes, with the think part of it from 5 seconds up, and idle time, the gaps of 5 minutes or more), and files touched. Use this for questions about usage patterns or trends ("what tools do I use most", "how much have I used skill X", "what files have I been editing") — NOT for finding specific messages or conversations, which clens_search/clens_recent handle instead.
 
 Scope: pass project_id for one project, session_id for one session, or neither for every project. session_id "current" is this conversation (Claude Code and Codex). Session stats count only that session's own calls, not the subagents it started. Project and all-project stats leave out one-shot exec/SDK runs and clens judge transcripts. since bounds by date and is ignored with session_id.
 

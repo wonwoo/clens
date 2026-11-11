@@ -245,6 +245,45 @@ describe("mcp/stats.ts — scopes, session kinds and sections", () => {
     const stats = projectStats(db, { session_id: "ki" });
     expect(stats.tool_counts).toEqual({ Edit: 1 });
   });
+
+  it("project and all-project stats count a subagent as part of the session that started it", () => {
+    db.exec(`
+      INSERT INTO session (id, project_id, kind, parent_id, started_at) VALUES
+        ('agent-a1', 'proj-k', 'subagent', 'ki', '2026-06-01T10:06:00Z'),
+        ('agent-o1', 'proj-k', 'subagent', 'gone', '2026-06-01T11:00:00Z'),
+        ('agent-o2', 'proj-k', 'subagent', 'gone', '2026-06-01T11:10:00Z');
+      INSERT INTO event (uuid, session_id, ts, role) VALUES
+        ('a1', 'agent-a1', '2026-06-01T10:06:00Z', 'assistant'),
+        ('o1', 'agent-o1', '2026-06-01T11:00:00Z', 'assistant'),
+        ('o2', 'agent-o2', '2026-06-01T11:10:00Z', 'assistant');
+    `);
+    // ki with agent-a1, and the two subagents of the unindexed session "gone".
+    expect(projectStats(db, { project_id: "proj-k" }).sessions).toBe(2);
+    expect(projectStats(db, { project_id: "proj-k", since: "2026-06-01T10:30:00Z" }).sessions).toBe(1);
+    expect(projectStats(db, {}).sessions).toBe(3);
+    expect(projectStats(db, { since: "2026-06-01T10:30:00Z" }).sessions).toBe(2);
+  });
+
+  it("the timeline counts a subagent's time once, within the session that started it", () => {
+    db.exec(`
+      INSERT INTO project (id, cwd) VALUES ('proj-t', '/t');
+      INSERT INTO session (id, project_id, kind, parent_id, started_at) VALUES
+        ('tp', 'proj-t', 'interactive', NULL, '2026-07-01T00:00:00Z'),
+        ('agent-t1', 'proj-t', 'subagent', 'tp', '2026-07-01T00:01:00Z');
+      INSERT INTO event (uuid, session_id, ts, role) VALUES
+        ('t1', 'tp', '2026-07-01T00:00:00Z', 'assistant'),
+        ('t2', 'tp', '2026-07-01T00:10:00Z', 'assistant'),
+        ('t3', 'agent-t1', '2026-07-01T00:01:00Z', 'assistant'),
+        ('t4', 'agent-t1', '2026-07-01T00:05:00Z', 'assistant'),
+        ('t5', 'agent-t1', '2026-07-01T00:09:00Z', 'assistant');
+    `);
+    // The parent waits 10 minutes on the subagent, which works throughout.
+    const project = projectStats(db, { project_id: "proj-t" }).timeline;
+    expect(project).toEqual({ active_min: 10, think_min: 10, idle_min: 0 });
+    expect(formatStats(projectStats(db, { project_id: "proj-t" })).split("\n")).toContain("Timeline: active 10min (think 10min), idle 0min");
+    // One session's stats leave out its subagents.
+    expect(projectStats(db, { session_id: "tp" }).timeline).toEqual({ active_min: 0, think_min: 0, idle_min: 10 });
+  });
 });
 
 describe("mcp/stats.ts — formatStats scope lines and list caps", () => {

@@ -27,6 +27,12 @@ export function workKindClause(alias?: string): string {
   );
 }
 
+/** SQL for the session a session row counts under in project and
+ *  all-project stats: a subagent's parent (indexed or not), else itself. */
+export function rootSessionExpr(alias: string): string {
+  return `COALESCE(CASE WHEN ${alias}.kind = 'subagent' THEN ${alias}.parent_id END, ${alias}.id)`;
+}
+
 /** Parenthesized SQL that is false for a row copied from another session.
  *  A conversation resumed into a new session starts with the earlier
  *  session's lines, copied with their uuids under the new session id and

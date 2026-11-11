@@ -28,7 +28,8 @@ consistently, regardless of which project this session is running in.
 
 Use `clens_stats` for aggregate/quantitative questions: tool usage counts,
 tool failures per tool, skill/slash-command usage, subagent usage, health signals (errors,
-compaction, context bloat), timeline (wall/think/idle time), files touched,
+compaction, context bloat), timeline (active time with its think part, and
+idle time), files touched,
 hook blocks (which hook refused which tool, with the latest reasons) and tool
 output size (characters of text each tool's results added to the
 conversation). The last two cover Claude Code and Codex sessions. Files touched

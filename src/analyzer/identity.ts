@@ -4,10 +4,11 @@
  * In session scope: session id, project_id, model_primary, started/ended_at.
  * In project scope: project id, session count, model_primary mode, date range.
  * In global scope: session count and date range.
+ * A subagent counts as part of the session that started it, not as a session.
  */
 
 import type Database from "better-sqlite3";
-import { notCopiedEventClause, workKindClause, type Scope } from "./scope.js";
+import { notCopiedEventClause, rootSessionExpr, workKindClause, type Scope } from "./scope.js";
 
 export interface IdentitySession {
   session_id: string;
@@ -88,7 +89,7 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
       const sinceBind = scope.params.since ? [scope.params.since] : [];
       const row = db
         .prepare(
-          `SELECT COUNT(DISTINCT s.id) AS sessions,
+          `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions,
                   MIN(e.ts) AS started_at,
                   MAX(e.ts) AS ended_at
            FROM session s LEFT JOIN event e ON e.session_id = s.id
@@ -122,9 +123,9 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
       const tsCond = scope.mode === "since" ? "AND e.ts >= ?" : "";
       const row = db
         .prepare(
-          `SELECT COUNT(DISTINCT e.session_id) AS sessions, MIN(e.ts) AS earliest_event, MAX(e.ts) AS latest_event
-           FROM event e
-           WHERE e.session_id IN (SELECT id FROM session WHERE ${workKindClause()}) ${tsCond}`,
+          `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions, MIN(e.ts) AS earliest_event, MAX(e.ts) AS latest_event
+           FROM event e JOIN session s ON s.id = e.session_id
+           WHERE ${workKindClause("s")} ${tsCond}`,
         )
         .get(...tsBind) as { sessions: number; earliest_event: string | null; latest_event: string | null };
       return {
