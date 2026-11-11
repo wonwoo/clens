@@ -547,8 +547,9 @@ function extractRemindersFromText(
 }
 
 /** A subagent transcript: <session>/subagents/agent-*.jsonl, or one level
- *  deeper for a workflow's agents (subagents/workflows/<run>/agent-*.jsonl). */
-export const SUBAGENT_FILE_RE = /\/subagents\/(?:[^/]+\/)*agent-[^/]+\.jsonl$/;
+ *  deeper for a workflow's agents (subagents/workflows/<run>/agent-*.jsonl).
+ *  Either separator: paths are joined with `\` on Windows. */
+export const SUBAGENT_FILE_RE = /[\\/]subagents[\\/](?:[^\\/]+[\\/])*agent-[^\\/]+\.jsonl$/;
 
 /** The session id a Claude Code subagent's lines are stored under. */
 export function agentSessionId(agentId: string): string {

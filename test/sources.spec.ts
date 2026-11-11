@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
 
 import { SOURCE_ADAPTERS, getSourceAdapter } from "../src/indexer/sources.js";
+import { SUBAGENT_FILE_RE } from "../src/indexer/claude_parser.js";
 import type { AnomalyBatch } from "../src/indexer/types.js";
 
 function freshBatch(): AnomalyBatch {
@@ -83,6 +84,17 @@ describe("adapter deriveProjectId", () => {
     expect(claudeAdapter.deriveProjectId!("/h/.claude/projects/-w-app/s1.jsonl", "/w/app")).toBeNull();
     expect(claudeAdapter.deriveProjectId!("/h/.claude/projects/-w-app/s1/subagents/agent-x.jsonl", "/w/app")).toBe("-w-app");
     expect(claudeAdapter.deriveProjectId!("/h/.claude/projects/-w-app/s1/subagents/workflows/wf_1/agent-y.jsonl", null)).toBe("-w-app");
+  });
+
+  it("a Windows path, separated by backslashes, is told apart the same way", () => {
+    const dir = String.raw`C:\Users\h\.claude\projects\C--w-app`;
+    expect(claudeAdapter.deriveProjectId!(String.raw`${dir}\s1.jsonl`, null)).toBeNull();
+    expect(claudeAdapter.deriveProjectId!(String.raw`${dir}\s1\subagents\agent-x.jsonl`, null)).toBe("C--w-app");
+    expect(claudeAdapter.deriveProjectId!(String.raw`${dir}\s1\subagents\workflows\wf_1\agent-y.jsonl`, null)).toBe("C--w-app");
+    expect(SUBAGENT_FILE_RE.test(String.raw`${dir}\s1\subagents\agent-x.jsonl`)).toBe(true);
+    expect(SUBAGENT_FILE_RE.test(String.raw`${dir}\s1\subagents\workflows\wf_1\agent-y.jsonl`)).toBe(true);
+    expect(SUBAGENT_FILE_RE.test(String.raw`${dir}\s1.jsonl`)).toBe(false);
+    expect(SUBAGENT_FILE_RE.test(String.raw`${dir}\s1\subagents\notes\x.jsonl`)).toBe(false);
   });
 });
 

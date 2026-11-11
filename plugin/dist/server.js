@@ -26450,12 +26450,12 @@ import { existsSync as existsSync4, watch } from "node:fs";
 // src/indexer/driver.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
 import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync2 } from "node:fs";
-import { basename as basename3, dirname as dirname3 } from "node:path";
+import { basename as basename2, dirname as dirname2 } from "node:path";
 import Database from "better-sqlite3";
 
 // src/indexer/append.ts
 import { closeSync, openSync, readSync } from "node:fs";
-import { basename as basename2 } from "node:path";
+import { basename } from "node:path";
 
 // src/indexer/claude_parser.ts
 import { homedir as homedir2 } from "node:os";
@@ -27644,7 +27644,7 @@ function extractRemindersFromText(text, event_uuid, session_id, ts, out) {
     });
   }
 }
-var SUBAGENT_FILE_RE = /\/subagents\/(?:[^/]+\/)*agent-[^/]+\.jsonl$/;
+var SUBAGENT_FILE_RE = /[\\/]subagents[\\/](?:[^\\/]+[\\/])*agent-[^\\/]+\.jsonl$/;
 function agentSessionId(agentId) {
   return `agent-${agentId}`;
 }
@@ -27840,9 +27840,6 @@ function assignTurnNumbers(events) {
 // src/indexer/cursor.ts
 import { readdirSync, statSync } from "node:fs";
 import { join as join2 } from "node:path";
-
-// src/indexer/sources.ts
-import { basename, dirname } from "node:path";
 
 // src/indexer/codex_parser.ts
 import { homedir as homedir3 } from "node:os";
@@ -28933,10 +28930,10 @@ var claudeAdapter = {
   parse: parseFileBody,
   // A subagent transcript sits under its parent's directory
   // (<project>/<session>/subagents/…), so its own parent directory is not
-  // the project.
+  // the project. Either separator: paths are joined with `\` on Windows.
   deriveProjectId: (source_file) => {
-    const at = source_file.indexOf("/subagents/");
-    return at === -1 ? null : basename(dirname(source_file.slice(0, at)));
+    const at = source_file.search(/[\\/]subagents[\\/]/);
+    return at === -1 ? null : source_file.slice(0, at).split(/[\\/]/).at(-2) ?? null;
   }
 };
 var codexAdapter = {
@@ -29313,7 +29310,7 @@ function appendNewLines(db2, stmts, f) {
   const subagentFile = SUBAGENT_FILE_RE.test(f.path);
   const fileSessions = db2.prepare("SELECT DISTINCT session_id FROM event WHERE source_file = ?").all(f.path).map((r) => r.session_id);
   if (fileSessions.length === 0) return full("no_session_row");
-  const own = subagentFile ? fileSessions[0] : basename2(f.path, ".jsonl");
+  const own = subagentFile ? fileSessions[0] : basename(f.path, ".jsonl");
   if (fileSessions.length > 1 || fileSessions[0] !== own) return full("several_sessions");
   if (!subagentFile && db2.prepare("SELECT 1 FROM anomaly WHERE source_file = ? AND kind = 'copied_session_line_skipped' LIMIT 1").get(f.path) !== void 0) {
     return full("copied_lines");
@@ -29927,7 +29924,7 @@ function getSchemaVersion(db2) {
 // src/indexer/lang/init.ts
 import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname2, join as join4, resolve as resolve2 } from "node:path";
+import { dirname, join as join4, resolve as resolve2 } from "node:path";
 
 // src/indexer/lang/ko.ts
 var HANGUL_RE = /[가-힣]/;
@@ -30040,7 +30037,7 @@ async function tryLoadKorean() {
   try {
     const { KiwiBuilder, Match } = await import("kiwi-nlp");
     const kiwiEntry = createRequire(import.meta.url).resolve("kiwi-nlp");
-    const wasmPath = join4(dirname2(kiwiEntry), "kiwi-wasm.wasm");
+    const wasmPath = join4(dirname(kiwiEntry), "kiwi-wasm.wasm");
     const modelFiles = {};
     for (const name of readdirSync2(modelDir)) {
       modelFiles[name] = new Uint8Array(readFileSync(join4(modelDir, name)));
@@ -30089,7 +30086,7 @@ async function tryLoadChinese() {
 var LOCK_RETRY_MS = 100;
 async function acquireLock(path, timeoutMs, onLost = (err) => console.error(`clens: lost lock ${path}:`, err.message)) {
   const start = Date.now();
-  mkdirSync(dirname3(path), { recursive: true });
+  mkdirSync(dirname2(path), { recursive: true });
   if (!existsSync3(path)) {
     const fs = await import("node:fs");
     fs.writeFileSync(path, "");
@@ -30128,7 +30125,7 @@ function deriveSessionKind(args) {
   return "interactive";
 }
 function deriveProjectId(source, filePath, cwd) {
-  return getSourceAdapter(source).deriveProjectId?.(filePath, cwd) ?? basename3(dirname3(filePath));
+  return getSourceAdapter(source).deriveProjectId?.(filePath, cwd) ?? basename2(dirname2(filePath));
 }
 function summarizeFile(events) {
   const out = {
@@ -32546,11 +32543,11 @@ var PENDING_DESCRIPTION = `List clens's ledger: what the user set aside in conve
 // src/mcp/ledger.ts
 import { appendFileSync, closeSync as closeSync2, mkdirSync as mkdirSync2, openSync as openSync2, readFileSync as readFileSync3, readSync as readSync2, statSync as statSync2 } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { dirname as dirname4 } from "node:path";
+import { dirname as dirname3 } from "node:path";
 var HOLD_STATUSES = ["held", "dropped", "done", "removed"];
 var ID = /^[0-9a-f]{8}$/;
 function appendLedgerEvent(path, event) {
-  mkdirSync2(dirname4(path), { recursive: true });
+  mkdirSync2(dirname3(path), { recursive: true });
   const prefix = endsWithoutNewline(path) ? "\n" : "";
   appendFileSync(path, prefix + JSON.stringify(event) + "\n");
 }

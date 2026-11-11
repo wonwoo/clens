@@ -10,8 +10,6 @@
  * it handles itself.
  */
 
-import { basename, dirname } from "node:path";
-
 import { projectsDir, codexSessionsDir } from "../util/paths.js";
 import { projectIdOf } from "../util/project_id.js";
 import { parseFileBody } from "./claude_parser.js";
@@ -38,10 +36,10 @@ const claudeAdapter: SourceAdapter = {
   parse: parseFileBody,
   // A subagent transcript sits under its parent's directory
   // (<project>/<session>/subagents/…), so its own parent directory is not
-  // the project.
+  // the project. Either separator: paths are joined with `\` on Windows.
   deriveProjectId: (source_file) => {
-    const at = source_file.indexOf("/subagents/");
-    return at === -1 ? null : basename(dirname(source_file.slice(0, at)));
+    const at = source_file.search(/[\\/]subagents[\\/]/);
+    return at === -1 ? null : (source_file.slice(0, at).split(/[\\/]/).at(-2) ?? null);
   },
 };
 
