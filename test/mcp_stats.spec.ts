@@ -251,13 +251,18 @@ describe("mcp/stats.ts — scopes, session kinds and sections", () => {
       INSERT INTO session (id, project_id, kind, parent_id, started_at) VALUES
         ('agent-a1', 'proj-k', 'subagent', 'ki', '2026-06-01T10:06:00Z'),
         ('agent-o1', 'proj-k', 'subagent', 'gone', '2026-06-01T11:00:00Z'),
-        ('agent-o2', 'proj-k', 'subagent', 'gone', '2026-06-01T11:10:00Z');
+        ('agent-o2', 'proj-k', 'subagent', 'gone', '2026-06-01T11:10:00Z'),
+        ('agent-a2', 'proj-k', 'subagent', 'agent-a1', '2026-06-01T10:07:00Z'),
+        ('agent-o3', 'proj-k', 'subagent', 'agent-o1', '2026-06-01T11:20:00Z');
       INSERT INTO event (uuid, session_id, ts, role) VALUES
         ('a1', 'agent-a1', '2026-06-01T10:06:00Z', 'assistant'),
         ('o1', 'agent-o1', '2026-06-01T11:00:00Z', 'assistant'),
-        ('o2', 'agent-o2', '2026-06-01T11:10:00Z', 'assistant');
+        ('o2', 'agent-o2', '2026-06-01T11:10:00Z', 'assistant'),
+        ('a2', 'agent-a2', '2026-06-01T10:07:00Z', 'assistant'),
+        ('o3', 'agent-o3', '2026-06-01T11:20:00Z', 'assistant');
     `);
-    // ki with agent-a1, and the two subagents of the unindexed session "gone".
+    // ki with agent-a1 and the subagent agent-a1 started, and the subagents
+    // of the unindexed session "gone", one started by another.
     expect(projectStats(db, { project_id: "proj-k" }).sessions).toBe(2);
     expect(projectStats(db, { project_id: "proj-k", since: "2026-06-01T10:30:00Z" }).sessions).toBe(1);
     expect(projectStats(db, {}).sessions).toBe(3);
@@ -269,15 +274,19 @@ describe("mcp/stats.ts — scopes, session kinds and sections", () => {
       INSERT INTO project (id, cwd) VALUES ('proj-t', '/t');
       INSERT INTO session (id, project_id, kind, parent_id, started_at) VALUES
         ('tp', 'proj-t', 'interactive', NULL, '2026-07-01T00:00:00Z'),
-        ('agent-t1', 'proj-t', 'subagent', 'tp', '2026-07-01T00:01:00Z');
+        ('agent-t1', 'proj-t', 'subagent', 'tp', '2026-07-01T00:01:00Z'),
+        ('agent-t2', 'proj-t', 'subagent', 'agent-t1', '2026-07-01T00:02:00Z');
       INSERT INTO event (uuid, session_id, ts, role) VALUES
         ('t1', 'tp', '2026-07-01T00:00:00Z', 'assistant'),
         ('t2', 'tp', '2026-07-01T00:10:00Z', 'assistant'),
         ('t3', 'agent-t1', '2026-07-01T00:01:00Z', 'assistant'),
         ('t4', 'agent-t1', '2026-07-01T00:05:00Z', 'assistant'),
-        ('t5', 'agent-t1', '2026-07-01T00:09:00Z', 'assistant');
+        ('t5', 'agent-t1', '2026-07-01T00:09:00Z', 'assistant'),
+        ('t6', 'agent-t2', '2026-07-01T00:02:00Z', 'assistant'),
+        ('t7', 'agent-t2', '2026-07-01T00:08:00Z', 'assistant');
     `);
-    // The parent waits 10 minutes on the subagent, which works throughout.
+    // The parent waits 10 minutes on the subagent, which works throughout,
+    // part of it waiting on a subagent of its own.
     const project = projectStats(db, { project_id: "proj-t" }).timeline;
     expect(project).toEqual({ active_min: 10, think_min: 10, idle_min: 0 });
     expect(formatStats(projectStats(db, { project_id: "proj-t" })).split("\n")).toContain("Timeline: active 10min (think 10min), idle 0min");

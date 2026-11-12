@@ -28,9 +28,19 @@ export function workKindClause(alias?: string): string {
 }
 
 /** SQL for the session a session row counts under in project and
- *  all-project stats: a subagent's parent (indexed or not), else itself. */
+ *  all-project stats: for a subagent, the first session up its parent chain
+ *  that is not a subagent, or the last parent there when that one is not
+ *  indexed (a Codex subagent can start its own); else the row itself. */
 export function rootSessionExpr(alias: string): string {
-  return `COALESCE(CASE WHEN ${alias}.kind = 'subagent' THEN ${alias}.parent_id END, ${alias}.id)`;
+  return (
+    `CASE WHEN ${alias}.kind = 'subagent' THEN (` +
+    `WITH RECURSIVE up(id, kind, parent_id, depth) AS (` +
+    `SELECT ${alias}.id, ${alias}.kind, ${alias}.parent_id, 0` +
+    ` UNION ALL SELECT up.parent_id, p.kind, p.parent_id, up.depth + 1` +
+    ` FROM up LEFT JOIN session p ON p.id = up.parent_id` +
+    ` WHERE up.kind = 'subagent' AND up.parent_id IS NOT NULL AND up.depth < 16)` +
+    ` SELECT id FROM up ORDER BY depth DESC LIMIT 1) ELSE ${alias}.id END`
+  );
 }
 
 /** Parenthesized SQL that is false for a row copied from another session.

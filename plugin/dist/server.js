@@ -30565,7 +30565,7 @@ function workKindClause(alias) {
   return `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec' AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`;
 }
 function rootSessionExpr(alias) {
-  return `COALESCE(CASE WHEN ${alias}.kind = 'subagent' THEN ${alias}.parent_id END, ${alias}.id)`;
+  return `CASE WHEN ${alias}.kind = 'subagent' THEN (WITH RECURSIVE up(id, kind, parent_id, depth) AS (SELECT ${alias}.id, ${alias}.kind, ${alias}.parent_id, 0 UNION ALL SELECT up.parent_id, p.kind, p.parent_id, up.depth + 1 FROM up LEFT JOIN session p ON p.id = up.parent_id WHERE up.kind = 'subagent' AND up.parent_id IS NOT NULL AND up.depth < 16) SELECT id FROM up ORDER BY depth DESC LIMIT 1) ELSE ${alias}.id END`;
 }
 function notCopiedClause(eventUuidColumn, sessionIdColumn) {
   return `(IFNULL((SELECT MIN(owner.session_id) FROM event owner WHERE owner.uuid = ${eventUuidColumn}), ${sessionIdColumn}) = ${sessionIdColumn})`;
