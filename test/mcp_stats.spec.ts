@@ -199,17 +199,20 @@ describe("mcp/stats.ts — scopes, session kinds and sections", () => {
     expect(text).not.toContain("Files touched");
   });
 
-  it("project and all-project stats also leave out the subagents of exec and pipeline sessions", () => {
+  it("project and all-project stats also leave out the subagents of exec and pipeline sessions, and theirs", () => {
     db.exec(`
       INSERT INTO session (id, project_id, kind, parent_id, started_at) VALUES
         ('agent-x', 'proj-k', 'subagent', 'ke', '2026-06-02T10:06:00Z'),
-        ('agent-y', 'proj-k', 'subagent', 'kp', '2026-06-03T10:06:00Z');
+        ('agent-y', 'proj-k', 'subagent', 'kp', '2026-06-03T10:06:00Z'),
+        ('agent-x2', 'proj-k', 'subagent', 'agent-x', '2026-06-02T10:07:00Z');
       INSERT INTO event (uuid, session_id, ts, role) VALUES
         ('x1', 'agent-x', '2026-06-02T10:06:00Z', 'assistant'),
-        ('y1', 'agent-y', '2026-06-03T10:06:00Z', 'assistant');
+        ('y1', 'agent-y', '2026-06-03T10:06:00Z', 'assistant'),
+        ('x2', 'agent-x2', '2026-06-02T10:07:00Z', 'assistant');
       INSERT INTO tool_call (event_uuid, session_id, ts, name, is_error) VALUES
         ('x1', 'agent-x', '2026-06-02T10:06:00Z', 'Grep', 0),
-        ('y1', 'agent-y', '2026-06-03T10:06:00Z', 'Glob', 0);
+        ('y1', 'agent-y', '2026-06-03T10:06:00Z', 'Glob', 0),
+        ('x2', 'agent-x2', '2026-06-02T10:07:00Z', 'Read', 0);
     `);
     const all = projectStats(db, {});
     expect(all.sessions).toBe(2);

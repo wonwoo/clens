@@ -3,10 +3,9 @@ import { createRequire as __clensRequire } from 'node:module'; const require = _
 
 // src/analyzer/scope.ts
 function workKindClause(alias) {
-  const col = (c) => alias ? `${alias}.${c}` : c;
-  return `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec' AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`;
+  return `(${alias}.id NOT IN (WITH RECURSIVE program(id) AS (SELECT id FROM session WHERE kind IN ('pipeline', 'exec') UNION SELECT c.id FROM session c JOIN program ON c.parent_id = program.id) SELECT id FROM program))`;
 }
-var WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
+var WORK_SESSIONS = `SELECT w.id FROM session w WHERE ${workKindClause("w")}`;
 
 // src/util/temp_dirs.ts
 var TEMP_ROOTS = ["/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/var/folders/", "/private/var/folders/"];

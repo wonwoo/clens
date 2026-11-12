@@ -29687,6 +29687,9 @@ var SCHEMA_STATEMENTS = [
      source        TEXT NOT NULL DEFAULT 'claude',
      FOREIGN KEY (project_id) REFERENCES project(id)
    )`,
+  // workKindClause walks down from exec and pipeline sessions to the
+  // sessions they started.
+  `CREATE INDEX IF NOT EXISTS session_parent_idx ON session(parent_id)`,
   // ----- Event (one row per JSONL line and session, multi-block messages stay as one) -----
   eventTableStatement("event"),
   `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
@@ -30561,8 +30564,7 @@ function neighborsOf(db2, session_id, ts, n) {
 
 // src/analyzer/scope.ts
 function workKindClause(alias) {
-  const col = (c) => alias ? `${alias}.${c}` : c;
-  return `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec' AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`;
+  return `(${alias}.id NOT IN (WITH RECURSIVE program(id) AS (SELECT id FROM session WHERE kind IN ('pipeline', 'exec') UNION SELECT c.id FROM session c JOIN program ON c.parent_id = program.id) SELECT id FROM program))`;
 }
 function rootSessionExpr(alias) {
   return `CASE WHEN ${alias}.kind = 'subagent' THEN (WITH RECURSIVE up(id, kind, parent_id, depth) AS (SELECT ${alias}.id, ${alias}.kind, ${alias}.parent_id, 0 UNION ALL SELECT up.parent_id, p.kind, p.parent_id, up.depth + 1 FROM up LEFT JOIN session p ON p.id = up.parent_id WHERE up.kind = 'subagent' AND up.parent_id IS NOT NULL AND up.depth < 16) SELECT id FROM up ORDER BY depth DESC LIMIT 1) ELSE ${alias}.id END`;
@@ -30576,7 +30578,7 @@ function notCopiedEventClause(eventAlias) {
 function notForkCopyClause(eventUuidColumn) {
   return `(${eventUuidColumn} NOT IN (SELECT copy.event_uuid FROM tool_call copy JOIN tool_call kept ON kept.call_id = copy.call_id AND kept.event_uuid < copy.event_uuid WHERE copy.name = 'Agent'))`;
 }
-var WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
+var WORK_SESSIONS = `SELECT w.id FROM session w WHERE ${workKindClause("w")}`;
 function eventWhere(scope, eventAlias = "e") {
   const notCopied = notCopiedEventClause(eventAlias);
   switch (scope.mode) {
@@ -30586,7 +30588,7 @@ function eventWhere(scope, eventAlias = "e") {
       return { sql: `${eventAlias}.session_id = ?`, binds: [scope.params.session_id] };
     case "project": {
       const parts = [
-        `${eventAlias}.session_id IN (SELECT id FROM session WHERE project_id = ? AND ${workKindClause()})`,
+        `${eventAlias}.session_id IN (SELECT w.id FROM session w WHERE w.project_id = ? AND ${workKindClause("w")})`,
         notCopied
       ];
       const binds = [scope.params.project_id];
@@ -30612,7 +30614,7 @@ function sessionScopedWhere(scope, sessionIdColumn, tsColumn, eventUuidColumn) {
       return { sql: `${sessionIdColumn} = ?`, binds: [scope.params.session_id] };
     case "project": {
       const parts = [
-        `${sessionIdColumn} IN (SELECT id FROM session WHERE project_id = ? AND ${workKindClause()})`,
+        `${sessionIdColumn} IN (SELECT w.id FROM session w WHERE w.project_id = ? AND ${workKindClause("w")})`,
         notCopied
       ];
       const binds = [scope.params.project_id];

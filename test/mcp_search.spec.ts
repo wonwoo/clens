@@ -1176,14 +1176,18 @@ describe("mcp/search.ts — rows that are not conversation", () => {
     expect(searchUserText(db, { query: "rotate" }).map((r) => r.session_id)).not.toContain("run");
   });
 
-  it("leaves out the subagents of exec runs too", () => {
+  it("leaves out the subagents of exec runs too, and theirs", () => {
     db.exec(`
       INSERT INTO session (id, project_id, kind) VALUES ('run', 'proj-a', 'exec');
-      INSERT INTO session (id, project_id, kind, parent_id) VALUES ('agent-r', 'proj-a', 'subagent', 'run');
-      INSERT INTO event (uuid, session_id, ts, role) VALUES ('x2', 'agent-r', '2026-06-01T10:00:09Z', 'assistant');
-      INSERT INTO user_text (event_uuid, session_id, ts, text, role) VALUES ('x2', 'agent-r', '2026-06-01T10:00:09Z', 'rotate the signing key for the benchmark', 'assistant');
+      INSERT INTO session (id, project_id, kind, parent_id) VALUES ('agent-r', 'proj-a', 'subagent', 'run'), ('agent-r2', 'proj-a', 'subagent', 'agent-r');
+      INSERT INTO event (uuid, session_id, ts, role) VALUES ('x2', 'agent-r', '2026-06-01T10:00:09Z', 'assistant'), ('x3', 'agent-r2', '2026-06-01T10:00:10Z', 'assistant');
+      INSERT INTO user_text (event_uuid, session_id, ts, text, role) VALUES
+        ('x2', 'agent-r', '2026-06-01T10:00:09Z', 'rotate the signing key for the benchmark', 'assistant'),
+        ('x3', 'agent-r2', '2026-06-01T10:00:10Z', 'rotate the signing key once more', 'assistant');
     `);
-    expect(searchUserText(db, { query: "rotate" }).map((r) => r.session_id)).not.toContain("agent-r");
+    const sessions = searchUserText(db, { query: "rotate" }).map((r) => r.session_id);
+    expect(sessions).not.toContain("agent-r");
+    expect(sessions, "a subagent another subagent of the run started").not.toContain("agent-r2");
   });
 
   it("notNoise matches only the known non-conversation rows", () => {

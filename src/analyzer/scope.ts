@@ -12,18 +12,19 @@
  */
 
 /** Parenthesized SQL that keeps a session row unless it is a judge
- *  transcript or a one-shot exec/SDK run, or a subagent one of those
- *  started. A subagent's file is always stored as kind `subagent`, so its
- *  parent's kind is checked here, at query time: deriving it at index time
- *  would make one file's rows depend on another file (Gate 2). NULL kind is
- *  kept: `IS NOT`, not `NOT IN`, which is NULL for a NULL kind and would
- *  drop kind-less rows. */
-export function workKindClause(alias?: string): string {
-  const col = (c: string) => (alias ? `${alias}.${c}` : c);
+ *  transcript or a one-shot exec/SDK run, or a session one of those started,
+ *  directly or through subagents (a Codex subagent can start its own). A
+ *  subagent's file is always stored as kind `subagent`, so where it started
+ *  is found here, at query time: deriving it at index time would make one
+ *  file's rows depend on another file (Gate 2). The sessions left out are
+ *  listed once, not walked up from each row: per event row, that took an
+ *  all-project clens_stats from 3.2 s to 5.8 s. UNION ends a cycle. */
+export function workKindClause(alias: string): string {
   return (
-    `(${col("kind")} IS NOT 'pipeline' AND ${col("kind")} IS NOT 'exec'` +
-    ` AND (${col("parent_id")} IS NULL OR ${col("parent_id")} NOT IN` +
-    ` (SELECT id FROM session WHERE kind IN ('pipeline', 'exec'))))`
+    `(${alias}.id NOT IN (WITH RECURSIVE program(id) AS (` +
+    `SELECT id FROM session WHERE kind IN ('pipeline', 'exec')` +
+    ` UNION SELECT c.id FROM session c JOIN program ON c.parent_id = program.id)` +
+    ` SELECT id FROM program))`
   );
 }
 
@@ -91,7 +92,7 @@ export function notForkCopyClause(eventUuidColumn: string): string {
   );
 }
 
-const WORK_SESSIONS = `SELECT id FROM session WHERE ${workKindClause()}`;
+const WORK_SESSIONS = `SELECT w.id FROM session w WHERE ${workKindClause("w")}`;
 
 export type Scope =
   | { mode: "global"; params: Record<string, never> }
@@ -112,7 +113,7 @@ export function eventWhere(scope: Scope, eventAlias = "e"): { sql: string; binds
       return { sql: `${eventAlias}.session_id = ?`, binds: [scope.params.session_id] };
     case "project": {
       const parts = [
-        `${eventAlias}.session_id IN (SELECT id FROM session WHERE project_id = ? AND ${workKindClause()})`,
+        `${eventAlias}.session_id IN (SELECT w.id FROM session w WHERE w.project_id = ? AND ${workKindClause("w")})`,
         notCopied,
       ];
       const binds: unknown[] = [scope.params.project_id];
@@ -149,7 +150,7 @@ export function sessionScopedWhere(
       return { sql: `${sessionIdColumn} = ?`, binds: [scope.params.session_id] };
     case "project": {
       const parts = [
-        `${sessionIdColumn} IN (SELECT id FROM session WHERE project_id = ? AND ${workKindClause()})`,
+        `${sessionIdColumn} IN (SELECT w.id FROM session w WHERE w.project_id = ? AND ${workKindClause("w")})`,
         notCopied,
       ];
       const binds: unknown[] = [scope.params.project_id];

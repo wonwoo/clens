@@ -4897,6 +4897,9 @@ var SCHEMA_STATEMENTS = [
      source        TEXT NOT NULL DEFAULT 'claude',
      FOREIGN KEY (project_id) REFERENCES project(id)
    )`,
+  // workKindClause walks down from exec and pipeline sessions to the
+  // sessions they started.
+  `CREATE INDEX IF NOT EXISTS session_parent_idx ON session(parent_id)`,
   // ----- Event (one row per JSONL line and session, multi-block messages stay as one) -----
   eventTableStatement("event"),
   `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
