@@ -114,7 +114,7 @@ describe("parseFileBody on canonical fixture", () => {
   });
 });
 
-describe("assignTurnNumbers reproduces measured {3,4,6} from expected.json", () => {
+describe("assignTurnNumbers reproduces the measured turns {3,4,6}", () => {
   it("user_turn_no for the 3 Korean scope-change messages equals {3,4,6}", () => {
     const body = readFileSync(FIXTURE, "utf8");
     const result = parseFileBody({ body, source_file: FIXTURE, batch: freshBatch() });
@@ -140,7 +140,7 @@ describe("assignTurnNumbers reproduces measured {3,4,6} from expected.json", () 
     expect(skillCaller?.turn).toBe(6);
   });
 
-  it("total user turns is 61 per expected.json", () => {
+  it("total user turns is 61", () => {
     const body = readFileSync(FIXTURE, "utf8");
     const result = parseFileBody({ body, source_file: FIXTURE, batch: freshBatch() });
     const { userTurns } = assignTurnNumbers(result.events);
