@@ -55,7 +55,8 @@ const BROWSER_TOOL = /(?:^|__)(?:browser_navigate|navigate_page|navigate)$/;
 const URL_IN_TEXT = /https?:\/\/[^\s'"\\)]+/;
 const HTTP_CLIENTS = new Set(["curl", "wget", "http", "https", "xh"]);
 
-const base = (word: string): string => word.slice(word.lastIndexOf("/") + 1);
+/** A program word's last segment, after a `/` or, in a Windows path, a `\`. */
+const base = (word: string): string => word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
 const TEST_PROGRAMS = new Set(["vitest", "jest", "mocha", "pytest", "py.test", "tox", "nox", "rspec", "phpunit"]);
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 const JS_RUNNERS = new Set(["vitest", "jest", "mocha"]);

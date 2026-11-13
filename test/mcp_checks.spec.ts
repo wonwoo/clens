@@ -40,6 +40,9 @@ describe("checksOfCall — test runs", () => {
   it("reads the command a whole-command sh -c runs", () => {
     expect(bash("/bin/zsh -lc 'npm test'")).toEqual([{ kind: "test", where: "local", host: null, target: "npm test" }]);
     expect(bash('bash -lc "cd app && pytest -q"')).toEqual([{ kind: "test", where: "local", host: null, target: "pytest -q" }]);
+    // A quoted Windows path keeps its backslashes.
+    expect(bash(String.raw`"C:\Program Files\Git\bin\bash" -lc 'npm test'`))
+      .toEqual([{ kind: "test", where: "local", host: null, target: "npm test" }]);
     // A backslash ending a line continues the command on the next.
     expect(bash('bash -lc "npm \\\ntest"')).toEqual([{ kind: "test", where: "local", host: null, target: "npm test" }]);
     // '\'' closes the quote, adds a quote and opens it again: one shell word.
@@ -106,6 +109,9 @@ describe("checksOfCall — git push and merge", () => {
   it("is one git check per push or merge command, the command alone", () => {
     expect(bash("git push origin dev-deploy")).toEqual([
       { kind: "git", where: "", host: null, target: "git push origin dev-deploy" },
+    ]);
+    expect(bash(String.raw`"C:\Program Files\Git\cmd\git" push origin main`)).toEqual([
+      { kind: "git", where: "", host: null, target: String.raw`"C:\Program Files\Git\cmd\git" push origin main` },
     ]);
     expect(bash("git checkout sandbox-deploy && git merge --ff-only feature/x")).toEqual([
       { kind: "git", where: "", host: null, target: "git merge --ff-only feature/x" },

@@ -380,7 +380,8 @@ const RESERVED = new Set(["!", "{", "if", "then", "else", "elif", "do", "while",
 const CLOSING = new Set(["fi", "done", "esac", "}"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-const base = (word: string): string => word.slice(word.lastIndexOf("/") + 1);
+/** A program word's last segment, after a `/` or, in a Windows path, a `\`. */
+const base = (word: string): string => word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
 
 /** The command a shell's -c runs: the first word after its options, or
  *  null without -c. -o and -O (alone or ending a group, as in -eo) and

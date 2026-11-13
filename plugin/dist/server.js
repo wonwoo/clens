@@ -31217,6 +31217,9 @@ Assistant: ${r.assistant_response}`;
   return out;
 }
 
+// src/mcp/left_off.ts
+import { win32 } from "node:path";
+
 // src/util/temp_dirs.ts
 var TEMP_ROOTS = ["/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/var/folders/", "/private/var/folders/"];
 
@@ -31528,7 +31531,7 @@ var RESERVED = /* @__PURE__ */ new Set(["!", "{", "if", "then", "else", "elif", 
 var CLOSING = /* @__PURE__ */ new Set(["fi", "done", "esac", "}"]);
 var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-var base = (word) => word.slice(word.lastIndexOf("/") + 1);
+var base = (word) => word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
 function shellScript(argv) {
   let c = false;
   for (let j = 1; j < argv.length; j++) {
@@ -31622,7 +31625,7 @@ var SHELL_TOOLS2 = /* @__PURE__ */ new Set(["Bash", "exec_command", "exec"]);
 var BROWSER_TOOL = /(?:^|__)(?:browser_navigate|navigate_page|navigate)$/;
 var URL_IN_TEXT = /https?:\/\/[^\s'"\\)]+/;
 var HTTP_CLIENTS = /* @__PURE__ */ new Set(["curl", "wget", "http", "https", "xh"]);
-var base2 = (word) => word.slice(word.lastIndexOf("/") + 1);
+var base2 = (word) => word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
 var TEST_PROGRAMS = /* @__PURE__ */ new Set(["vitest", "jest", "mocha", "pytest", "py.test", "tox", "nox", "rspec", "phpunit"]);
 var PACKAGE_MANAGERS = /* @__PURE__ */ new Set(["npm", "pnpm", "yarn", "bun"]);
 var JS_RUNNERS2 = /* @__PURE__ */ new Set(["vitest", "jest", "mocha"]);
@@ -31952,9 +31955,11 @@ function leftOffWithMore(db2, params, opts = {}) {
 }
 function shortPath(path, cwd) {
   if (!cwd) return path;
-  const base3 = cwd.replace(/\/+$/, "") + "/";
-  return path.startsWith(base3) ? path.slice(base3.length) : path;
+  const dir = cwd.replace(/[\\/]+$/, "");
+  const sep = path[dir.length];
+  return path.startsWith(dir) && (sep === "/" || sep === "\\") ? path.slice(dir.length + 1) : path;
 }
+var isAbsolute2 = (path) => win32.isAbsolute(path);
 function formatLeftOff(sessions, more) {
   if (sessions.length === 0) return "No sessions found.";
   const footer = more && more.count > 0 ? `
@@ -31968,7 +31973,7 @@ function formatLeftOff(sessions, more) {
     if (s.last_reply) lines.push(`Last reply: ${cutChars(s.last_reply, REPLY_CHARS)}`);
     if (s.files.length > 0) {
       const paths = s.files.map((p) => shortPath(p, s.cwd));
-      const ordered = [...paths.filter((p) => !p.startsWith("/")), ...paths.filter((p) => p.startsWith("/"))];
+      const ordered = [...paths.filter((p) => !isAbsolute2(p)), ...paths.filter(isAbsolute2)];
       const shown = ordered.slice(0, FILES_SHOWN);
       const more2 = s.files.length - shown.length;
       lines.push(`Edited: ${shown.join(", ")}${more2 > 0 ? ` (+${more2} more)` : ""}`);
@@ -32172,7 +32177,7 @@ function sessionRecord(db2, sessionId) {
     // NULL when the block carried no message; the prefix repeats hook_event and tool.
     reason: firstLine(r.reason ?? "").replace(/^\w+:\S+ hook error: /, "")
   }));
-  const tempRoot = (path) => shortPath(path, s.cwd).startsWith("/") ? TEMP_ROOTS.find((root) => path.startsWith(root))?.slice(0, -1) : void 0;
+  const tempRoot = (path) => isAbsolute2(shortPath(path, s.cwd)) ? TEMP_ROOTS.find((root) => path.startsWith(root))?.slice(0, -1) : void 0;
   const kept2 = edits.filter((e) => tempRoot(e.path) === void 0);
   const temp = /* @__PURE__ */ new Map();
   for (const e of edits) {
@@ -32217,7 +32222,7 @@ function sessionRecord(db2, sessionId) {
 function byFolder(paths) {
   const folders = /* @__PURE__ */ new Map();
   for (const p of paths) {
-    const slash = p.lastIndexOf("/");
+    const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
     const dir = slash === -1 ? "." : p.slice(0, slash) || "/";
     folders.set(dir, [...folders.get(dir) ?? [], p.slice(slash + 1)]);
   }

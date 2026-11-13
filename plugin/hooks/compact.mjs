@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { createRequire as __clensRequire } from 'node:module'; const require = __clensRequire(import.meta.url);
 
+// src/mcp/left_off.ts
+import { win32 } from "node:path";
+
 // src/analyzer/scope.ts
 function workKindClause(alias) {
   return `(${alias}.id NOT IN (WITH RECURSIVE program(id) AS (SELECT id FROM session WHERE kind IN ('pipeline', 'exec') UNION SELECT c.id FROM session c JOIN program ON c.parent_id = program.id) SELECT id FROM program))`;
@@ -555,7 +558,7 @@ var RESERVED = /* @__PURE__ */ new Set(["!", "{", "if", "then", "else", "elif", 
 var CLOSING = /* @__PURE__ */ new Set(["fi", "done", "esac", "}"]);
 var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-var base = (word) => word.slice(word.lastIndexOf("/") + 1);
+var base = (word) => word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
 function shellScript(argv) {
   let c = false;
   for (let j = 1; j < argv.length; j++) {
@@ -649,7 +652,7 @@ var SHELL_TOOLS = /* @__PURE__ */ new Set(["Bash", "exec_command", "exec"]);
 var BROWSER_TOOL = /(?:^|__)(?:browser_navigate|navigate_page|navigate)$/;
 var URL_IN_TEXT = /https?:\/\/[^\s'"\\)]+/;
 var HTTP_CLIENTS = /* @__PURE__ */ new Set(["curl", "wget", "http", "https", "xh"]);
-var base2 = (word) => word.slice(word.lastIndexOf("/") + 1);
+var base2 = (word) => word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
 var TEST_PROGRAMS = /* @__PURE__ */ new Set(["vitest", "jest", "mocha", "pytest", "py.test", "tox", "nox", "rspec", "phpunit"]);
 var PACKAGE_MANAGERS = /* @__PURE__ */ new Set(["npm", "pnpm", "yarn", "bun"]);
 var JS_RUNNERS = /* @__PURE__ */ new Set(["vitest", "jest", "mocha"]);
@@ -759,9 +762,11 @@ var TREE = `WITH RECURSIVE tree(id) AS (
 var REAL_MESSAGE = (alias) => `${alias}.type IN ('user_message', 'assistant_message') AND ${notNoise(alias)} AND NOT ${BARE_COMMAND(alias)}`;
 function shortPath(path, cwd) {
   if (!cwd) return path;
-  const base3 = cwd.replace(/\/+$/, "") + "/";
-  return path.startsWith(base3) ? path.slice(base3.length) : path;
+  const dir = cwd.replace(/[\\/]+$/, "");
+  const sep = path[dir.length];
+  return path.startsWith(dir) && (sep === "/" || sep === "\\") ? path.slice(dir.length + 1) : path;
 }
+var isAbsolute = (path) => win32.isAbsolute(path);
 var RECORD_LIST_CAP = 10;
 var RECORD_LINE_CHARS = 120;
 var FAILED_INPUT_CHARS = 100;
@@ -958,7 +963,7 @@ function sessionRecord(db, sessionId2) {
     // NULL when the block carried no message; the prefix repeats hook_event and tool.
     reason: firstLine(r.reason ?? "").replace(/^\w+:\S+ hook error: /, "")
   }));
-  const tempRoot = (path) => shortPath(path, s.cwd).startsWith("/") ? TEMP_ROOTS.find((root) => path.startsWith(root))?.slice(0, -1) : void 0;
+  const tempRoot = (path) => isAbsolute(shortPath(path, s.cwd)) ? TEMP_ROOTS.find((root) => path.startsWith(root))?.slice(0, -1) : void 0;
   const kept = edits.filter((e) => tempRoot(e.path) === void 0);
   const temp = /* @__PURE__ */ new Map();
   for (const e of edits) {
@@ -1003,7 +1008,7 @@ function sessionRecord(db, sessionId2) {
 function byFolder(paths) {
   const folders = /* @__PURE__ */ new Map();
   for (const p of paths) {
-    const slash = p.lastIndexOf("/");
+    const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
     const dir = slash === -1 ? "." : p.slice(0, slash) || "/";
     folders.set(dir, [...folders.get(dir) ?? [], p.slice(slash + 1)]);
   }

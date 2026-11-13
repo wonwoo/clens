@@ -182,6 +182,16 @@ describe("clens_left_off", () => {
     expect(formatLeftOff([mid!]).split("\n").at(-1)).toBe("Edited: src/cache.ts, src/login.ts, /tmp/scratch/probe.js");
   });
 
+  it("formats a Windows session's files relative to its working directory, its own first", () => {
+    db.exec(String.raw`INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('win', 'C--w-app', 'interactive', 'C:\w\app\', 'claude')`);
+    msg("w1", "win", "2026-09-04T10:00:00Z", "user", "fix the login bug");
+    edit("w2", "win", "2026-09-04T10:01:00Z", "Edit", String.raw`C:\tmp\probe.js`);
+    edit("w3", "win", "2026-09-04T10:02:00Z", "Edit", String.raw`C:\w\app\src\login.ts`);
+    edit("w4", "win", "2026-09-04T10:03:00Z", "Edit", String.raw`C:\w\apps\x.ts`);
+    expect(formatLeftOff(leftOff(db, { project_id: "C--w-app" })).split("\n").at(-1))
+      .toBe(String.raw`Edited: src\login.ts, C:\w\apps\x.ts, C:\tmp\probe.js`);
+  });
+
   it("prints the list's times and the more footer in the server's zone", () => {
     db.exec("INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('par', '-w-app', 'interactive', '/w/app', 'claude')");
     msg("p1", "par", "2026-09-02T09:00:00Z", "user", "update the docs");
@@ -292,6 +302,20 @@ describe("clens_left_off session record", () => {
       "    src: b.ts, a.ts",
       "    /home/u/.codex: hooks.json",
       "  Temporary: 12 files (/private/tmp 11, /tmp 1)",
+    ]);
+  });
+
+  it("groups a Windows session's other files by folder", () => {
+    db.exec(String.raw`INSERT INTO session (id, project_id, kind, cwd, source) VALUES ('win', 'C--w-app', 'interactive', 'C:\w\app', 'claude')`);
+    const files = ["src\\a.ts", "src\\b.ts", "README.md", "test\\a.spec.ts", "src\\c.ts", "src\\d.ts"];
+    files.forEach((f, k) => edit(`w${k}`, "win", `2026-09-03T09:0${k}:00Z`, "Edit", `C:\\w\\app\\${f}`));
+    edit("w9", "win", "2026-09-03T08:00:00Z", "Edit", String.raw`C:\Users\u\.codex\hooks.json`);
+    const lines = formatSessionRecord(sessionRecord(db, "win")!).split("\n");
+    const at = lines.indexOf("  Also edited, by folder:");
+    expect(lines.slice(at, at + 3)).toEqual([
+      "  Also edited, by folder:",
+      "    src: a.ts",
+      String.raw`    C:\Users\u\.codex: hooks.json`,
     ]);
   });
 

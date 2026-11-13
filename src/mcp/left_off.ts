@@ -7,6 +7,8 @@
  * (sessionRecord), for picking up after the conversation was compacted.
  */
 
+import { win32 } from "node:path";
+
 import type Database from "better-sqlite3";
 
 import { TOP } from "../analyzer/scope.js";
@@ -185,12 +187,17 @@ export function leftOffWithMore(
   return { sessions: listed, more };
 }
 
-/** A path under the session's working directory is shown relative to it. */
+/** A path under the session's working directory is shown relative to it.
+ *  A Windows session's paths are separated by `\`. */
 function shortPath(path: string, cwd: string | null): string {
   if (!cwd) return path;
-  const base = cwd.replace(/\/+$/, "") + "/";
-  return path.startsWith(base) ? path.slice(base.length) : path;
+  const dir = cwd.replace(/[\\/]+$/, "");
+  const sep = path[dir.length];
+  return path.startsWith(dir) && (sep === "/" || sep === "\\") ? path.slice(dir.length + 1) : path;
 }
+
+/** Whether a path is absolute: `/…`, or on Windows `C:\…` or `\\server\…`. */
+const isAbsolute = (path: string): boolean => win32.isAbsolute(path);
 
 export function formatLeftOff(sessions: LeftOffSession[], more?: LeftOffMore): string {
   if (sessions.length === 0) return "No sessions found.";
@@ -208,7 +215,7 @@ export function formatLeftOff(sessions: LeftOffSession[], more?: LeftOffMore): s
         // The project's own files first: scratch files outside it otherwise
         // filled the list.
         const paths = s.files.map((p) => shortPath(p, s.cwd));
-        const ordered = [...paths.filter((p) => !p.startsWith("/")), ...paths.filter((p) => p.startsWith("/"))];
+        const ordered = [...paths.filter((p) => !isAbsolute(p)), ...paths.filter(isAbsolute)];
         const shown = ordered.slice(0, FILES_SHOWN);
         const more = s.files.length - shown.length;
         lines.push(`Edited: ${shown.join(", ")}${more > 0 ? ` (+${more} more)` : ""}`);
@@ -583,7 +590,7 @@ export function sessionRecord(db: Database.Database, sessionId: string): Session
   // Listed, scratch files took the places of the files that matter, such as
   // a settings file outside the project that the session changed.
   const tempRoot = (path: string): string | undefined =>
-    shortPath(path, s.cwd).startsWith("/") ? TEMP_ROOTS.find((root) => path.startsWith(root))?.slice(0, -1) : undefined;
+    isAbsolute(shortPath(path, s.cwd)) ? TEMP_ROOTS.find((root) => path.startsWith(root))?.slice(0, -1) : undefined;
   const kept = edits.filter((e) => tempRoot(e.path) === undefined);
   const temp = new Map<string, number>();
   for (const e of edits) {
@@ -635,7 +642,7 @@ export function sessionRecord(db: Database.Database, sessionId: string): Session
 function byFolder(paths: string[]): string[] {
   const folders = new Map<string, string[]>();
   for (const p of paths) {
-    const slash = p.lastIndexOf("/");
+    const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
     const dir = slash === -1 ? "." : p.slice(0, slash) || "/";
     folders.set(dir, [...(folders.get(dir) ?? []), p.slice(slash + 1)]);
   }
