@@ -132,7 +132,8 @@ const pkColumns = (db: Database.Database, table: string) =>
     .filter((c) => c.pk > 0)
     .sort((x, y) => x.pk - y.pk)
     .map((c) => c.name);
-const all = (db: Database.Database, sql: string) => db.prepare(sql).all();
+const all = (db: Database.Database, sql: string) => db.prepare(sql).all() as Record<string, unknown>[];
+const pathless = (rows: Record<string, unknown>[]) => rows.map((r) => ({ ...r, source_file: null }));
 const master = (db: Database.Database) => all(db, "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name");
 const rowCounts = (db: Database.Database) =>
   (all(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '%fts%' ORDER BY name") as { name: string }[])
@@ -147,7 +148,12 @@ describe("migration to per-session event keys (v19)", () => {
     applySchema(db);
     expect(pkColumns(db, "event")).toEqual(["uuid", "session_id"]);
     expect(pkColumns(db, "event_unknown_block")).toEqual(["event_uuid", "session_id", "block_index"]);
-    expect(all(db, "SELECT * FROM event ORDER BY uuid")).toEqual(events);
+    // v23 then moves each event's path into session_file.
+    expect(all(db, "SELECT * FROM event ORDER BY uuid")).toEqual(pathless(events));
+    expect(all(db, "SELECT session_id, source_file FROM session_file ORDER BY session_id")).toEqual([
+      { session_id: KEPT, source_file: GONE_FILE },
+      { session_id: ON_DISK, source_file: "/repo/s-b.jsonl" },
+    ]);
     expect(all(db, "SELECT * FROM tool_call ORDER BY event_uuid, session_id")).toEqual(calls);
     expect(all(db, "SELECT * FROM event_unknown_block")).toEqual([
       { event_uuid: "u1", block_index: 1, raw_json: '{"type":"mystery_block"}', session_id: ON_DISK },
@@ -155,7 +161,6 @@ describe("migration to per-session event keys (v19)", () => {
     const indexes = all(db, "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'event' AND sql IS NOT NULL ORDER BY name");
     expect(indexes).toEqual([
       { name: "event_session_idx" },
-      { name: "event_source_file_idx" },
       { name: "event_ts_idx" },
       { name: "event_user_turn_idx" },
     ]);
@@ -210,7 +215,7 @@ describe("migration to per-session event keys (v19)", () => {
       tool_call: all(db, `SELECT * FROM tool_call WHERE session_id = '${KEPT}' ORDER BY event_uuid`),
     });
     const db = createV18(join(indexDir, "index.db"), onDisk);
-    const before = kept(db);
+    const before = { ...kept(db), event: pathless(kept(db).event) };
     expect(before.event).toHaveLength(1);
     expect(before.tool_call).toHaveLength(2);
     db.close();

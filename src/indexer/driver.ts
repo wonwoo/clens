@@ -37,7 +37,7 @@ import {
   knownTokens,
   prepareStatements,
   wipeSessions,
-  writeParsedEvent,
+  writeEvents,
   type WriterStatements,
 } from "./writer.js";
 import { clensHome, indexDbPath, indexLockPath, judgeCwdDir } from "../util/paths.js";
@@ -243,6 +243,7 @@ function commitFile(args: {
   const gitBranch = session_meta.git_branch;
   const version = session_meta.version;
 
+  let inserted = 0;
   const tx = db.transaction(() => {
     // 1) Project upsert (one row per project dir; derived from path or cwd).
     const project_id = deriveProjectId(source, source_file, cwd);
@@ -284,15 +285,18 @@ function commitFile(args: {
     //    are kept first, so re-inserting them does not run the analyzer again.
     const known = knownTokens(stmts, summary.affected_sessions);
     wipeSessions(stmts, summary.affected_sessions);
-    // A session only this file held rows for, which the file no longer
-    // yields (its lines are now skipped, e.g. a Codex subagent's copy of its
-    // parent's history), kept those rows, and a rebuild does not re-create
-    // them. Drop it.
+    // A session only this file wrote, which the file no longer yields (its
+    // lines are now skipped, e.g. a Codex subagent's copy of its parent's
+    // history), kept its rows, and a rebuild does not re-create them. Drop it.
     const dropped = (stmts.sessionsOnlyInFile.all(source_file) as { session_id: string }[])
       .map((r) => r.session_id)
       .filter((sid) => !summary.affected_sessions.has(sid));
     wipeSessions(stmts, dropped);
     for (const sid of dropped) stmts.deleteSession.run(sid);
+    // The wipe above removed the affected sessions' pairs; this file is now
+    // the one that wrote them, even a session whose lines here were all bare
+    // attachments and so has no event row.
+    for (const sid of summary.affected_sessions) stmts.insertSessionFile.run(sid, source_file);
 
     // 4) Insert all events (turn numbers will be assigned below over the union
     //    of newly-parsed events grouped by session_id).
@@ -306,7 +310,7 @@ function commitFile(args: {
     }
     for (const [, list] of bySession) {
       assignTurnNumbers(list);
-      for (const p of list) writeParsedEvent(stmts, p, known);
+      inserted += writeEvents(stmts, list, batch, known);
     }
 
     // 5) Cross-event tool_result → tool_call.duration_ms, is_error,
@@ -326,7 +330,7 @@ function commitFile(args: {
     });
   });
   tx();
-  return { eventsInserted: summary.events.length };
+  return { eventsInserted: inserted };
 }
 
 /** The events a Claude transcript may write. commitFile wipes and refills
@@ -366,7 +370,10 @@ function writableEvents(
     return own;
   }
   const own = events[events.length - 1]!.event.session_id;
-  const hasRows = db.prepare("SELECT 1 FROM event WHERE session_id = ? LIMIT 1");
+  // A file wrote the session, even when every line it had of it was a bare
+  // attachment and left no event row: which copies get written must not
+  // depend on whether the session's own lines so far were bare.
+  const hasRows = db.prepare("SELECT 1 FROM session_file WHERE session_id = ? LIMIT 1");
   const indexed = new Map<string, boolean>();
   const kept = events.filter((p) => {
     const sid = p.event.session_id;
@@ -475,18 +482,20 @@ export async function runIndex(opts: IndexOptions = {}): Promise<IndexResult> {
         // A rebuild re-derives what the transcripts on disk still hold. Claude
         // Code deletes old transcripts, which leaves the index as the only copy
         // of those sessions, so a session any of whose source files is gone is
-        // kept as it is. Emptying every table here deleted them for good.
+        // kept as it is. Emptying every table here deleted them for good. A
+        // session with no file in session_file is kept too, as a session
+        // whose event rows had no path was before v23.
         const sources = new Map<string, string[]>();
-        for (const r of db.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate() as Iterable<{
+        for (const r of db.prepare("SELECT session_id, source_file FROM session_file").iterate() as Iterable<{
           session_id: string;
-          source_file: string | null;
+          source_file: string;
         }>) {
           const list = sources.get(r.session_id) ?? [];
-          list.push(r.source_file ?? "");
+          list.push(r.source_file);
           sources.set(r.session_id, list);
         }
         const rederivable = [...sources]
-          .filter(([, files]) => files.every((f) => f !== "" && existsSync(f)))
+          .filter(([, files]) => files.every((f) => existsSync(f)))
           .map(([sid]) => sid);
         const anomalyFiles = db.prepare("SELECT DISTINCT source_file FROM anomaly").all() as { source_file: string | null }[];
         const cursorPaths = db.prepare("SELECT path FROM file_cursor").all() as { path: string }[];

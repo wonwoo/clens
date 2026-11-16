@@ -11,6 +11,8 @@
  * session asked for, whatever its kind.
  */
 
+import type Database from "better-sqlite3";
+
 /** Parenthesized SQL that keeps a session row unless it is a judge
  *  transcript or a one-shot exec/SDK run, or a session one of those started,
  *  directly or through subagents (a Codex subagent can start its own). A
@@ -63,16 +65,30 @@ export function notCopiedClause(eventUuidColumn: string, sessionIdColumn: string
   );
 }
 
-/** Parenthesized SQL that is false for an event row copied from another
- *  session: one whose uuid a smaller session id also has an event row for.
- *  The same rule as notCopiedClause, for rows that have their own event.
- *  Listing the copies once took 524 ms on an all-project timeline against
- *  2,041 ms for a MIN subquery per row (388 ms with no rule). */
-export function notCopiedEventClause(eventAlias: string): string {
+/** Rowids of the event rows copied from a smaller session id (the rows
+ *  notCopiedEventClause leaves out); none in session scope, which keeps a
+ *  session whole. Read once per clens_stats call: as a subquery in each
+ *  statement that applies the rule, a project-scope call read the copies
+ *  three times, 186 ms each on a 954k-event index. */
+export function copiedEventRowids(db: Database.Database, scope: Scope): number[] {
+  if (scope.mode === "session") return [];
   return (
-    `(${eventAlias}.rowid NOT IN (SELECT c.rowid FROM event c` +
-    ` JOIN event o ON o.uuid = c.uuid AND o.session_id < c.session_id))`
-  );
+    db.prepare("SELECT c.rowid AS rowid FROM event c JOIN event o ON o.uuid = c.uuid AND o.session_id < c.session_id").all() as {
+      rowid: number;
+    }[]
+  ).map((r) => r.rowid);
+}
+
+/** Parenthesized SQL that is false for an event row copied from another
+ *  session: one whose uuid a smaller session id also has an event row for,
+ *  listed in `copied` (copiedEventRowids). The same rule as notCopiedClause,
+ *  for rows that have their own event. Listing the copies once took 524 ms
+ *  on an all-project timeline against 2,041 ms for a MIN subquery per row
+ *  (388 ms with no rule). The rowids are integers SQLite returned, so the
+ *  text holds no outside input. */
+export function notCopiedEventClause(eventAlias: string, copied: readonly number[]): string {
+  if (copied.length === 0) return "(1)";
+  return `(${eventAlias}.rowid NOT IN (${copied.join(",")}))`;
 }
 
 /** Parenthesized SQL that is false for the event of an `Agent` call a fork
@@ -102,10 +118,10 @@ export type Scope =
 
 /** Returns a SQL fragment (without the WHERE keyword) and bind values.
  *  Scopes over more than one session count an event copied into a resumed
- *  session once (notCopiedEventClause); session scope keeps the session
- *  whole. */
-export function eventWhere(scope: Scope, eventAlias = "e"): { sql: string; binds: unknown[] } {
-  const notCopied = notCopiedEventClause(eventAlias);
+ *  session once (notCopiedEventClause over `copied`, from
+ *  copiedEventRowids); session scope keeps the session whole. */
+export function eventWhere(scope: Scope, eventAlias: string, copied: readonly number[]): { sql: string; binds: unknown[] } {
+  const notCopied = notCopiedEventClause(eventAlias, copied);
   switch (scope.mode) {
     case "global":
       return { sql: `${eventAlias}.session_id IN (${WORK_SESSIONS}) AND ${notCopied}`, binds: [] };

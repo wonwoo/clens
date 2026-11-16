@@ -127,8 +127,8 @@ describe("gate 2 — incremental == rebuild digest", () => {
 
       // Step 4: compare digests across the two indexes.
       // Two indexes built over byte-identical inputs but at different
-      // absolute paths → file_cursor.path AND event.source_file differ
-      // across A/B. Those columns are excluded from cross-env comparison.
+      // absolute paths → file_cursor.path AND session_file.source_file
+      // differ across A/B. Those are excluded from cross-env comparison.
       // Tables whose row state is independent of paths must match exactly.
       const dbA = new Database(join(env.clens, "index.db"), { readonly: true });
       const dbB = new Database(join(envB.clens, "index.db"), { readonly: true });

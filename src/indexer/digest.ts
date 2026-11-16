@@ -23,6 +23,7 @@ const TABLE_ORDER: ReadonlyMap<string, string> = new Map([
   ["file_cursor", "path"],
   ["project", "id"],
   ["session", "id"],
+  ["session_file", "session_id, source_file"],
   // A line copied into a resumed session has rows under the same uuid in
   // each session that holds it, so session_id follows the uuid; without it
   // those rows tie and hash in whatever order they were written.

@@ -15,7 +15,7 @@
  */
 
 import type Database from "better-sqlite3";
-import { eventWhere, sessionScopedWhere, type Scope } from "./scope.js";
+import { copiedEventRowids, eventWhere, sessionScopedWhere, type Scope } from "./scope.js";
 
 export interface HealthFacts {
   tool_errors: number;
@@ -30,9 +30,14 @@ export interface HealthFacts {
   } | null;
 }
 
-export function analyzeHealth(db: Database.Database, scope: Scope): HealthFacts {
+/** `copied`: the rows copiedEventRowids returns, when the caller has them. */
+export function analyzeHealth(
+  db: Database.Database,
+  scope: Scope,
+  copied: readonly number[] = copiedEventRowids(db, scope),
+): HealthFacts {
   const toolScope = sessionScopedWhere(scope, "tc.session_id", "tc.ts", "tc.event_uuid");
-  const eventScope = eventWhere(scope, "e");
+  const eventScope = eventWhere(scope, "e", copied);
 
   const toolErrors = (
     db

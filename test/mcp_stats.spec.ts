@@ -530,6 +530,9 @@ describe("mcp/stats.ts — hook blocks and tool output", () => {
       INSERT INTO event (uuid, session_id, ts, role, in_tok) VALUES
         ('eh3', 'h1', '2026-06-01T10:30:00Z', 'assistant', 300),
         ('eh4', 'h2', '2026-06-02T11:00:00Z', 'assistant', 1000);
+      -- The span the indexer gives each session; the project's comes from it.
+      UPDATE session SET ended_at = '2026-06-01T10:30:00Z' WHERE id = 'h1';
+      UPDATE session SET ended_at = '2026-06-02T11:00:00Z' WHERE id = 'h2';
     `);
     const out = withTz("Asia/Seoul", () => formatStats(projectStats(db, { project_id: "proj-h" })));
     const lines = out.split("\n");

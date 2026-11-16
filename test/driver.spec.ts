@@ -40,7 +40,8 @@ describe("indexer driver — full build", () => {
   it("creates index.db and populates event rows", () => {
     const db = new Database(join(env.clens, "index.db"));
     const ev = db.prepare("SELECT COUNT(*) AS c FROM event").get() as { c: number };
-    expect(ev.c).toBeGreaterThan(700);
+    // 741 lines with a uuid, less the 239 bare attachment lines, which get no row.
+    expect(ev.c).toBe(502);
     db.close();
   });
 
@@ -67,10 +68,11 @@ describe("indexer driver — full build", () => {
       lines: number;
     };
     const events = db
-      .prepare("SELECT COUNT(*) AS c FROM event WHERE source_file = ?")
+      .prepare("SELECT COUNT(*) AS c FROM event e JOIN session_file sf ON sf.session_id = e.session_id WHERE sf.source_file = ?")
       .get(cursor.path) as { c: number };
-    // Anomalies that map to skipped lines (non_event_line, json_parse_error, non_object_line).
-    const skipKinds = ["non_event_line", "json_parse_error", "non_object_line"];
+    // Anomalies that map to skipped lines (non_event_line, json_parse_error,
+    // non_object_line, and bare attachment lines, which get no event row).
+    const skipKinds = ["non_event_line", "json_parse_error", "non_object_line", "attachment_line_skipped"];
     const placeholders = skipKinds.map(() => "?").join(",");
     const skipped = db
       .prepare(`SELECT COALESCE(SUM(count), 0) AS c FROM anomaly WHERE kind IN (${placeholders})`)
@@ -168,9 +170,9 @@ describe("indexer driver — incremental after file change", () => {
       lines: number;
     };
     const events = db
-      .prepare("SELECT COUNT(*) AS c FROM event WHERE source_file = ?")
+      .prepare("SELECT COUNT(*) AS c FROM event e JOIN session_file sf ON sf.session_id = e.session_id WHERE sf.source_file = ?")
       .get(cursor.path) as { c: number };
-    const skipKinds = ["non_event_line", "json_parse_error", "non_object_line"];
+    const skipKinds = ["non_event_line", "json_parse_error", "non_object_line", "attachment_line_skipped"];
     const placeholders = skipKinds.map(() => "?").join(",");
     const skipped = db
       .prepare(`SELECT COALESCE(SUM(count), 0) AS c FROM anomaly WHERE kind IN (${placeholders})`)

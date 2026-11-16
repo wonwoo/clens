@@ -2862,8 +2862,7 @@ function parseEventLine(line, source_file, seq, batch, toolResults) {
     has_text: 0,
     has_tool_res: 0,
     user_turn_no: null,
-    assistant_turn_no: null,
-    source_file
+    assistant_turn_no: null
   };
   const parsed = {
     event,
@@ -3560,7 +3559,7 @@ function inParentTurn(cl, state) {
   if (turn !== null) state.inParentTurn = turn < state.createdMs;
   return state.inParentTurn;
 }
-function makeBlankEvent(uuid, session_id, ts, source_file) {
+function makeBlankEvent(uuid, session_id, ts) {
   return {
     uuid,
     session_id,
@@ -3580,8 +3579,7 @@ function makeBlankEvent(uuid, session_id, ts, source_file) {
     has_text: 0,
     has_tool_res: 0,
     user_turn_no: null,
-    assistant_turn_no: null,
-    source_file
+    assistant_turn_no: null
   };
 }
 function makeBlankParsed(event) {
@@ -3719,7 +3717,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
     return;
   }
   if (type === "compacted") {
-    const ev = makeBlankEvent(syntheticUuid(source_file, seq), session_id, timestamp, source_file);
+    const ev = makeBlankEvent(syntheticUuid(source_file, seq), session_id, timestamp);
     ev.role = "system";
     const parsed = makeBlankParsed(ev);
     parsed.system_reminders.push({ event_uuid: ev.uuid, session_id, ts: timestamp, category: "compaction", text_excerpt: null });
@@ -3736,7 +3734,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
       const rawArgs = typeof args === "string" ? args : args !== void 0 ? JSON.stringify(args) : null;
       const cap = SHELL_TOOLS.has(name) ? SHELL_TOOL_INPUT_BYTE_CAP : TOOL_INPUT_BYTE_CAP2;
       const input_json = rawArgs !== null ? truncateToolInput(rawArgs, batch, cap) : null;
-      const ev = makeBlankEvent(uuid2, session_id, timestamp, source_file);
+      const ev = makeBlankEvent(uuid2, session_id, timestamp);
       ev.role = "assistant";
       ev.model = state.model;
       ev.has_tool_use = 1;
@@ -3868,18 +3866,18 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
   if (msgType === null) return;
   const uuid = syntheticUuid(source_file, seq);
   if (msgType === "task_started" || msgType === "turn_started") {
-    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
+    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, state);
     state.pendingInTok = 0;
     state.pendingCachedTok = 0;
     state.pendingOutTok = 0;
     return;
   }
   if (msgType === "task_complete" || msgType === "turn_complete") {
-    pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
+    pushTurnTokens(events, uuid, session_id, timestamp, state);
     return;
   }
   if (msgType === "turn_aborted") {
-    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
+    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, state);
     return;
   }
   if (msgType === "token_count") {
@@ -3897,18 +3895,18 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
   }
   if (msgType === "user_message" || msgType === "agent_message") {
     const text = typeof payload.message === "string" ? payload.message : null;
-    if (msgType === "user_message") pushUserMessage(events, uuid, session_id, timestamp, source_file, text);
-    else pushAgentMessage(events, uuid, session_id, timestamp, source_file, state.model, text);
+    if (msgType === "user_message") pushUserMessage(events, uuid, session_id, timestamp, text);
+    else pushAgentMessage(events, uuid, session_id, timestamp, state.model, text);
     return;
   }
   if (msgType === "item_completed") {
     const item = payload.item;
     const text = item ? itemText(item) : null;
-    if (item?.type === "UserMessage") pushUserMessage(events, uuid, session_id, timestamp, source_file, text);
-    else if (item?.type === "AgentMessage") pushAgentMessage(events, uuid, session_id, timestamp, source_file, state.model, text);
-    else if (item?.type === "HookPrompt") pushHookPrompt(events, uuid, session_id, timestamp, source_file, item);
+    if (item?.type === "UserMessage") pushUserMessage(events, uuid, session_id, timestamp, text);
+    else if (item?.type === "AgentMessage") pushAgentMessage(events, uuid, session_id, timestamp, state.model, text);
+    else if (item?.type === "HookPrompt") pushHookPrompt(events, uuid, session_id, timestamp, item);
     else if (item?.type === "CommandExecution") readCommandExecution(item, state, batch);
-    else if (item?.type === "McpToolCall") pushExecMcpCall(events, uuid, session_id, timestamp, source_file, item, state, batch);
+    else if (item?.type === "McpToolCall") pushExecMcpCall(events, uuid, session_id, timestamp, item, state, batch);
     return;
   }
   if (msgType === "mcp_tool_call_begin") {
@@ -3917,7 +3915,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
     const toolName = invocation && typeof invocation.tool === "string" ? invocation.tool : "<unknown>";
     const inputRaw = invocation?.arguments !== void 0 ? JSON.stringify(invocation.arguments) : null;
     const input_json = inputRaw !== null ? truncateToolInput(inputRaw, batch) : null;
-    const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+    const ev = makeBlankEvent(uuid, session_id, timestamp);
     ev.role = "assistant";
     ev.has_tool_use = 1;
     const parsed = makeBlankParsed(ev);
@@ -3948,7 +3946,7 @@ function processLine(cl, seq, source_file, state, events, toolResults, batch) {
   if (msgType === "exec_command_begin") {
     const callId = typeof payload.call_id === "string" ? payload.call_id : null;
     const cmd = Array.isArray(payload.command) ? payload.command.join(" ") : typeof payload.command === "string" ? payload.command : null;
-    const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+    const ev = makeBlankEvent(uuid, session_id, timestamp);
     ev.role = "assistant";
     ev.has_tool_use = 1;
     const parsed = makeBlankParsed(ev);
@@ -3988,8 +3986,8 @@ function itemText(item) {
   }
   return parts.length > 0 ? parts.join("\n") : null;
 }
-function pushTurnTokens(events, uuid, session_id, timestamp, source_file, state) {
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+function pushTurnTokens(events, uuid, session_id, timestamp, state) {
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "assistant";
   ev.model = state.model;
   ev.in_tok = state.pendingInTok;
@@ -4001,9 +3999,9 @@ function pushTurnTokens(events, uuid, session_id, timestamp, source_file, state)
   state.pendingTok = false;
   events.push(makeBlankParsed(ev));
 }
-function pushUserMessage(events, uuid, session_id, timestamp, source_file, text) {
+function pushUserMessage(events, uuid, session_id, timestamp, text) {
   if (text === null || text.trim().length === 0) return;
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "user";
   ev.has_text = 1;
   ev.text_len = [...text].length;
@@ -4053,7 +4051,7 @@ function addExecFailure(state, callId, failure) {
   if (failures === void 0) state.failedExec.set(callId, [failure]);
   else failures.push(failure);
 }
-function pushExecMcpCall(events, uuid, session_id, timestamp, source_file, item, state, batch) {
+function pushExecMcpCall(events, uuid, session_id, timestamp, item, state, batch) {
   const id = item.id;
   if (typeof id !== "string" || !id.startsWith("exec-")) return;
   if (typeof item.server !== "string" || typeof item.tool !== "string") return;
@@ -4062,7 +4060,7 @@ function pushExecMcpCall(events, uuid, session_id, timestamp, source_file, item,
   const failed = item.status === "failed" || result !== null && typeof result === "object" && result.isError === true;
   const d = item.duration;
   const raw = item.arguments !== void 0 ? JSON.stringify(item.arguments) : null;
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "assistant";
   ev.model = state.model;
   ev.has_tool_use = 1;
@@ -4092,9 +4090,9 @@ function cwdOf(value) {
   }
   return isAbsolute(value) ? value : null;
 }
-function pushHookPrompt(events, uuid, session_id, timestamp, source_file, item) {
+function pushHookPrompt(events, uuid, session_id, timestamp, item) {
   if (!Array.isArray(item.fragments)) return;
-  const parsed = makeBlankParsed(makeBlankEvent(uuid, session_id, timestamp, source_file));
+  const parsed = makeBlankParsed(makeBlankEvent(uuid, session_id, timestamp));
   for (const fragment of item.fragments) {
     if (fragment === null || typeof fragment !== "object") continue;
     const { text, hookRunId } = fragment;
@@ -4114,9 +4112,9 @@ function pushHookPrompt(events, uuid, session_id, timestamp, source_file, item) 
   }
   if (parsed.hook_blocks.length > 0) events.push(parsed);
 }
-function pushAgentMessage(events, uuid, session_id, timestamp, source_file, model, text) {
+function pushAgentMessage(events, uuid, session_id, timestamp, model, text) {
   if (text === null || text.trim().length === 0) return;
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "assistant";
   ev.model = model;
   ev.has_text = 1;
@@ -4265,12 +4263,12 @@ function prepareStatements(db) {
        (uuid, session_id, parent_uuid, prompt_id, agent_id, is_sidechain, ts, role, model,
         in_tok, out_tok, cache_r, cache_w, text_len,
         has_tool_use, has_text, has_tool_res,
-        user_turn_no, assistant_turn_no, source_file)
+        user_turn_no, assistant_turn_no)
        VALUES
        (@uuid, @session_id, @parent_uuid, @prompt_id, @agent_id, @is_sidechain, @ts, @role, @model,
         @in_tok, @out_tok, @cache_r, @cache_w, @text_len,
         @has_tool_use, @has_text, @has_tool_res,
-        @user_turn_no, @assistant_turn_no, @source_file)`
+        @user_turn_no, @assistant_turn_no)`
     ),
     insertToolCall: db.prepare(
       `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars, git_branch)
@@ -4355,10 +4353,12 @@ function prepareStatements(db) {
          display = COALESCE(excluded.display, project.display)`
     ),
     wipeEventsForSession: db.prepare(`DELETE FROM event WHERE session_id = ?`),
-    // Sessions all of whose event rows came from one file.
+    insertSessionFile: db.prepare(`INSERT OR IGNORE INTO session_file (session_id, source_file) VALUES (?, ?)`),
+    wipeSessionFilesForSession: db.prepare(`DELETE FROM session_file WHERE session_id = ?`),
+    // Sessions that only this file wrote.
     sessionsOnlyInFile: db.prepare(
-      `SELECT DISTINCT e.session_id FROM event e WHERE e.source_file = ?
-         AND NOT EXISTS (SELECT 1 FROM event o WHERE o.session_id = e.session_id AND o.source_file IS NOT e.source_file)`
+      `SELECT sf.session_id FROM session_file sf WHERE sf.source_file = ?
+         AND NOT EXISTS (SELECT 1 FROM session_file o WHERE o.session_id = sf.session_id AND o.source_file <> sf.source_file)`
     ),
     deleteSession: db.prepare(`DELETE FROM session WHERE id = ?`),
     wipeToolCallsForSession: db.prepare(`DELETE FROM tool_call WHERE session_id = ?`),
@@ -4384,6 +4384,7 @@ function wipeSessions(stmts, sessionIds) {
     stmts.wipeSystemRemindersForSession.run(sid);
     stmts.wipeHookBlocksForSession.run(sid);
     stmts.wipeEventsForSession.run(sid);
+    stmts.wipeSessionFilesForSession.run(sid);
   }
 }
 function knownTokens(stmts, sessionIds) {
@@ -4413,6 +4414,21 @@ function writeParsedEvent(stmts, p, known) {
   for (const r of p.system_reminders) stmts.insertSystemReminder.run(toSqlBindable(r));
   for (const r of p.hook_blocks) stmts.insertHookBlock.run(toSqlBindable(r));
   for (const r of p.unknown_blocks) stmts.insertEventUnknownBlock.run(toSqlBindable(r));
+}
+function isBareAttachment(p) {
+  return p.event.role === "attachment" && p.tool_calls.length === 0 && p.file_ops.length === 0 && p.user_texts.length === 0 && p.skill_calls.length === 0 && p.agent_calls.length === 0 && p.slash_commands.length === 0 && p.system_reminders.length === 0 && p.hook_blocks.length === 0 && p.unknown_blocks.length === 0;
+}
+function writeEvents(stmts, events, batch, known) {
+  let written = 0;
+  for (const p of events) {
+    if (isBareAttachment(p)) {
+      bumpAnomaly(batch, "attachment_line_skipped");
+      continue;
+    }
+    writeParsedEvent(stmts, p, known);
+    written += 1;
+  }
+  return written;
 }
 function insertLanguageLayers(stmts, rowid, r, known) {
   for (const code of listKnownLanguageCodes()) {
@@ -4518,7 +4534,7 @@ function appendNewLines(db, stmts, f) {
     lineStart = i + 1;
   }
   const subagentFile = SUBAGENT_FILE_RE.test(f.path);
-  const fileSessions = db.prepare("SELECT DISTINCT session_id FROM event WHERE source_file = ?").all(f.path).map((r) => r.session_id);
+  const fileSessions = db.prepare("SELECT session_id FROM session_file WHERE source_file = ?").all(f.path).map((r) => r.session_id);
   if (fileSessions.length === 0) return full("no_session_row");
   const own = subagentFile ? fileSessions[0] : basename(f.path, ".jsonl");
   if (fileSessions.length > 1 || fileSessions[0] !== own) return full("several_sessions");
@@ -4538,7 +4554,7 @@ function appendNewLines(db, stmts, f) {
   const session = db.prepare("SELECT kind, parent_id, started_at, ended_at, cwd, git_branch, version, model_primary FROM session WHERE id = ?").get(own);
   if (session === void 0) return full("no_session_row");
   if (events.some((p) => p.event.session_id !== own)) return full("other_session");
-  if (db.prepare("SELECT 1 FROM event WHERE session_id = ? AND source_file IS NOT ? LIMIT 1").get(own, f.path) !== void 0) {
+  if (db.prepare("SELECT 1 FROM session_file WHERE session_id = ? AND source_file <> ? LIMIT 1").get(own, f.path) !== void 0) {
     return full("several_files");
   }
   if (session.cwd === null && meta.cwd || session.git_branch === null && meta.gitBranch || session.version === null && meta.version || subagentFile && session.parent_id === null && events.length > 0) {
@@ -4585,12 +4601,13 @@ function finishAppend(db, stmts, args) {
     if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return full("model_tie");
     primaryModel = ranked[0][0];
   }
+  let written = 0;
   db.transaction(() => {
     for (const p of events) {
       if (p.event.user_turn_no !== null) p.event.user_turn_no += last.user_turn_no ?? 0;
       if (p.event.assistant_turn_no !== null) p.event.assistant_turn_no += last.assistant_turn_no ?? 0;
-      writeParsedEvent(stmts, p);
     }
+    written = writeEvents(stmts, events, batch);
     writeExtra();
     let startedAt = session.started_at;
     let endedAt = session.ended_at;
@@ -4627,7 +4644,7 @@ function finishAppend(db, stmts, args) {
       last_ok
     });
   })();
-  return { kind: "appended", events: events.length, parse_errors: batch.counters.get("json_parse_error")?.count ?? 0 };
+  return { kind: "appended", events: written, parse_errors: batch.counters.get("json_parse_error")?.count ?? 0 };
 }
 
 // src/indexer/codex_skills.ts
@@ -4733,11 +4750,11 @@ function appendCodexLines(db, stmts, f) {
   if (own === null) return full("no_session_row");
   const session = db.prepare("SELECT kind, parent_id, started_at, ended_at, cwd, git_branch, version, model_primary FROM session WHERE id = ?").get(own);
   if (session === void 0) return full("no_session_row");
-  if (db.prepare("SELECT 1 FROM event WHERE source_file = ? AND session_id IS NOT ? LIMIT 1").get(f.path, own) !== void 0) {
+  if (db.prepare("SELECT 1 FROM session_file WHERE source_file = ? AND session_id <> ? LIMIT 1").get(f.path, own) !== void 0) {
     return full("several_sessions");
   }
   if (events.some((p) => p.event.session_id !== own)) return full("other_session");
-  if (db.prepare("SELECT 1 FROM event WHERE session_id = ? AND source_file IS NOT ? LIMIT 1").get(own, f.path) !== void 0) {
+  if (db.prepare("SELECT 1 FROM session_file WHERE session_id = ? AND source_file <> ? LIMIT 1").get(own, f.path) !== void 0) {
     return full("several_files");
   }
   const grown = [];
@@ -4805,7 +4822,7 @@ function appendCodexLines(db, stmts, f) {
 }
 
 // src/indexer/schema.ts
-var SCHEMA_VERSION = 22;
+var SCHEMA_VERSION = 23;
 function languageTableStatements(code) {
   const table = languageFtsTable(code);
   return [
@@ -4858,6 +4875,25 @@ function unknownBlockTableStatement(name) {
      FOREIGN KEY (event_uuid) REFERENCES event(uuid)
    )`;
 }
+var SESSION_FILE_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS session_file (
+     session_id  TEXT NOT NULL,
+     source_file TEXT NOT NULL,
+     PRIMARY KEY (session_id, source_file)
+   )`,
+  `CREATE INDEX IF NOT EXISTS session_file_source_idx ON session_file(source_file)`
+];
+var EVENT_CHILD_TABLES = [
+  "tool_call",
+  "file_op",
+  "user_text",
+  "skill_call",
+  "agent_call",
+  "slash_command",
+  "system_reminder",
+  "hook_block",
+  "event_unknown_block"
+];
 var SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)`,
   // ----- File cursor (incremental indexing state) -----
@@ -4905,7 +4941,7 @@ var SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
   `CREATE INDEX IF NOT EXISTS event_session_idx ON event(session_id, ts)`,
   `CREATE INDEX IF NOT EXISTS event_ts_idx ON event(ts)`,
-  `CREATE INDEX IF NOT EXISTS event_source_file_idx ON event(source_file)`,
+  ...SESSION_FILE_STATEMENTS,
   // ----- Event-unknown-block (forensic store for unrecognized block types) -----
   unknownBlockTableStatement("event_unknown_block"),
   // ----- Tool calls -----
@@ -5080,7 +5116,7 @@ function applySchema(db) {
   db.pragma("busy_timeout = 30000");
   db.pragma("foreign_keys = OFF");
   db.pragma("synchronous = NORMAL");
-  migrateToSessionKeys(db);
+  migrateIndex(db);
   const initTx = db.transaction(() => {
     for (const stmt of SCHEMA_STATEMENTS) db.exec(stmt);
     const toolCallColumns = db.prepare("PRAGMA table_info(tool_call)").all();
@@ -5099,6 +5135,33 @@ function applySchema(db) {
     }
   });
   initTx();
+}
+function migrateIndex(db) {
+  db.transaction(() => {
+    const beforeV23 = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'event_source_file_idx'").get() !== void 0;
+    migrateToSessionKeys(db);
+    if (!beforeV23) return;
+    for (const stmt of SESSION_FILE_STATEMENTS) db.exec(stmt);
+    db.exec(
+      `INSERT OR IGNORE INTO session_file (session_id, source_file)
+       SELECT DISTINCT session_id, source_file FROM event WHERE source_file IS NOT NULL`
+    );
+    db.exec("DROP INDEX IF EXISTS event_source_file_idx");
+    db.exec("UPDATE event SET source_file = NULL WHERE source_file IS NOT NULL");
+    const tables = new Set(
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name)
+    );
+    const owners = EVENT_CHILD_TABLES.filter((t) => tables.has(t)).map((t) => `SELECT event_uuid, session_id FROM ${t}`);
+    db.exec(
+      `CREATE TEMP TABLE owned (event_uuid TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY (event_uuid, session_id)) WITHOUT ROWID`
+    );
+    if (owners.length > 0) db.exec(`INSERT OR IGNORE INTO temp.owned (event_uuid, session_id) ${owners.join(" UNION ALL ")}`);
+    db.exec(
+      `DELETE FROM event WHERE role = 'attachment'
+         AND NOT EXISTS (SELECT 1 FROM temp.owned o WHERE o.event_uuid = event.uuid AND o.session_id = event.session_id)`
+    );
+    db.exec("DROP TABLE temp.owned");
+  })();
 }
 function migrateToSessionKeys(db) {
   const columns = (table) => db.prepare(`PRAGMA table_info(${table})`).all();
@@ -5384,6 +5447,7 @@ function commitFile(args) {
   const cwd = session_meta.cwd;
   const gitBranch = session_meta.git_branch;
   const version = session_meta.version;
+  let inserted = 0;
   const tx = db.transaction(() => {
     const project_id = deriveProjectId(source, source_file, cwd);
     stmts.upsertProject.run({
@@ -5420,6 +5484,7 @@ function commitFile(args) {
     const dropped = stmts.sessionsOnlyInFile.all(source_file).map((r) => r.session_id).filter((sid) => !summary.affected_sessions.has(sid));
     wipeSessions(stmts, dropped);
     for (const sid of dropped) stmts.deleteSession.run(sid);
+    for (const sid of summary.affected_sessions) stmts.insertSessionFile.run(sid, source_file);
     const bySession = /* @__PURE__ */ new Map();
     for (const p of summary.events) {
       const arr = bySession.get(p.event.session_id) ?? [];
@@ -5428,7 +5493,7 @@ function commitFile(args) {
     }
     for (const [, list] of bySession) {
       assignTurnNumbers(list);
-      for (const p of list) writeParsedEvent(stmts, p, known);
+      inserted += writeEvents(stmts, list, batch, known);
     }
     applyToolResults(stmts, tool_results, [...summary.affected_sessions]);
     flushAnomalyBatch(stmts, batch);
@@ -5441,7 +5506,7 @@ function commitFile(args) {
     });
   });
   tx();
-  return { eventsInserted: summary.events.length };
+  return { eventsInserted: inserted };
 }
 function writableEvents(db, source, source_file, events, batch) {
   if (source !== "claude" || events.length === 0) return events;
@@ -5457,7 +5522,7 @@ function writableEvents(db, source, source_file, events, batch) {
     return own2;
   }
   const own = events[events.length - 1].event.session_id;
-  const hasRows = db.prepare("SELECT 1 FROM event WHERE session_id = ? LIMIT 1");
+  const hasRows = db.prepare("SELECT 1 FROM session_file WHERE session_id = ? LIMIT 1");
   const indexed = /* @__PURE__ */ new Map();
   const kept2 = events.filter((p) => {
     const sid = p.event.session_id;
@@ -5517,12 +5582,12 @@ async function runIndex(opts = {}) {
       const stmts = prepareStatements(db);
       if (needsRebuild) {
         const sources = /* @__PURE__ */ new Map();
-        for (const r of db.prepare("SELECT DISTINCT session_id, source_file FROM event").iterate()) {
+        for (const r of db.prepare("SELECT session_id, source_file FROM session_file").iterate()) {
           const list = sources.get(r.session_id) ?? [];
-          list.push(r.source_file ?? "");
+          list.push(r.source_file);
           sources.set(r.session_id, list);
         }
-        const rederivable = [...sources].filter(([, files]) => files.every((f) => f !== "" && existsSync3(f))).map(([sid]) => sid);
+        const rederivable = [...sources].filter(([, files]) => files.every((f) => existsSync3(f))).map(([sid]) => sid);
         const anomalyFiles = db.prepare("SELECT DISTINCT source_file FROM anomaly").all();
         const cursorPaths = db.prepare("SELECT path FROM file_cursor").all();
         const dropTx = db.transaction(() => {
@@ -5779,6 +5844,7 @@ var TABLE_ORDER = /* @__PURE__ */ new Map([
   ["file_cursor", "path"],
   ["project", "id"],
   ["session", "id"],
+  ["session_file", "session_id, source_file"],
   // A line copied into a resumed session has rows under the same uuid in
   // each session that holds it, so session_id follows the uuid; without it
   // those rows tie and hash in whatever order they were written.

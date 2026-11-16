@@ -167,11 +167,11 @@ export function appendCodexLines(db: Database.Database, stmts: WriterStatements,
   if (session === undefined) return full("no_session_row");
   // Lines before the rollout's session_meta go to a session of their own,
   // whose span and primary model a re-derivation sets from the whole file.
-  if (db.prepare("SELECT 1 FROM event WHERE source_file = ? AND session_id IS NOT ? LIMIT 1").get(f.path, own) !== undefined) {
+  if (db.prepare("SELECT 1 FROM session_file WHERE source_file = ? AND session_id <> ? LIMIT 1").get(f.path, own) !== undefined) {
     return full("several_sessions");
   }
   if (events.some((p) => p.event.session_id !== own)) return full("other_session");
-  if (db.prepare("SELECT 1 FROM event WHERE session_id = ? AND source_file IS NOT ? LIMIT 1").get(own, f.path) !== undefined) {
+  if (db.prepare("SELECT 1 FROM session_file WHERE session_id = ? AND source_file <> ? LIMIT 1").get(own, f.path) !== undefined) {
     return full("several_files");
   }
 

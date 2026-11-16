@@ -29,6 +29,7 @@ import type {
   ToolResultInfo,
   UserTextRow,
 } from "./types.js";
+import { bumpAnomaly } from "./claude_parser.js";
 import { getLanguageAdapter, languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 
 export interface WriterStatements {
@@ -52,6 +53,8 @@ export interface WriterStatements {
   upsertSession: Database.Statement;
   upsertProject: Database.Statement;
   wipeEventsForSession: Database.Statement;
+  insertSessionFile: Database.Statement;
+  wipeSessionFilesForSession: Database.Statement;
   sessionsOnlyInFile: Database.Statement;
   deleteSession: Database.Statement;
   wipeToolCallsForSession: Database.Statement;
@@ -102,12 +105,12 @@ export function prepareStatements(db: Database.Database): WriterStatements {
        (uuid, session_id, parent_uuid, prompt_id, agent_id, is_sidechain, ts, role, model,
         in_tok, out_tok, cache_r, cache_w, text_len,
         has_tool_use, has_text, has_tool_res,
-        user_turn_no, assistant_turn_no, source_file)
+        user_turn_no, assistant_turn_no)
        VALUES
        (@uuid, @session_id, @parent_uuid, @prompt_id, @agent_id, @is_sidechain, @ts, @role, @model,
         @in_tok, @out_tok, @cache_r, @cache_w, @text_len,
         @has_tool_use, @has_text, @has_tool_res,
-        @user_turn_no, @assistant_turn_no, @source_file)`,
+        @user_turn_no, @assistant_turn_no)`,
     ),
     insertToolCall: db.prepare(
       `INSERT INTO tool_call (event_uuid, session_id, ts, call_id, name, input_json, duration_ms, is_error, result_chars, git_branch)
@@ -192,10 +195,12 @@ export function prepareStatements(db: Database.Database): WriterStatements {
          display = COALESCE(excluded.display, project.display)`,
     ),
     wipeEventsForSession: db.prepare(`DELETE FROM event WHERE session_id = ?`),
-    // Sessions all of whose event rows came from one file.
+    insertSessionFile: db.prepare(`INSERT OR IGNORE INTO session_file (session_id, source_file) VALUES (?, ?)`),
+    wipeSessionFilesForSession: db.prepare(`DELETE FROM session_file WHERE session_id = ?`),
+    // Sessions that only this file wrote.
     sessionsOnlyInFile: db.prepare(
-      `SELECT DISTINCT e.session_id FROM event e WHERE e.source_file = ?
-         AND NOT EXISTS (SELECT 1 FROM event o WHERE o.session_id = e.session_id AND o.source_file IS NOT e.source_file)`,
+      `SELECT sf.session_id FROM session_file sf WHERE sf.source_file = ?
+         AND NOT EXISTS (SELECT 1 FROM session_file o WHERE o.session_id = sf.session_id AND o.source_file <> sf.source_file)`,
     ),
     deleteSession: db.prepare(`DELETE FROM session WHERE id = ?`),
     wipeToolCallsForSession: db.prepare(`DELETE FROM tool_call WHERE session_id = ?`),
@@ -225,6 +230,7 @@ export function wipeSessions(stmts: WriterStatements, sessionIds: Iterable<strin
     stmts.wipeSystemRemindersForSession.run(sid);
     stmts.wipeHookBlocksForSession.run(sid);
     stmts.wipeEventsForSession.run(sid);
+    stmts.wipeSessionFilesForSession.run(sid);
   }
 }
 
@@ -262,6 +268,47 @@ export function writeParsedEvent(stmts: WriterStatements, p: ParsedEvent, known?
   for (const r of p.system_reminders) stmts.insertSystemReminder.run(toSqlBindable(r));
   for (const r of p.hook_blocks) stmts.insertHookBlock.run(toSqlBindable(r));
   for (const r of p.unknown_blocks) stmts.insertEventUnknownBlock.run(toSqlBindable(r));
+}
+
+/** A Claude Code attachment line that yields no row besides its event: the
+ *  index stores nothing of it (docs/2026-11-16-index-slim-design.md). Hook
+ *  output, environment notes and reminders come this way; a Stop hook's
+ *  refusal and a message the user queued mid-turn own a row and are kept. */
+export function isBareAttachment(p: ParsedEvent): boolean {
+  return (
+    p.event.role === "attachment" &&
+    p.tool_calls.length === 0 &&
+    p.file_ops.length === 0 &&
+    p.user_texts.length === 0 &&
+    p.skill_calls.length === 0 &&
+    p.agent_calls.length === 0 &&
+    p.slash_commands.length === 0 &&
+    p.system_reminders.length === 0 &&
+    p.hook_blocks.length === 0 &&
+    p.unknown_blocks.length === 0
+  );
+}
+
+/** Write the events that hold a row; count each bare attachment skipped as
+ *  "attachment_line_skipped" in `batch`, so line accounting still adds up.
+ *  Returns the number written. Callers take session spans from every parsed
+ *  line before this, bare attachments included. */
+export function writeEvents(
+  stmts: WriterStatements,
+  events: readonly ParsedEvent[],
+  batch: AnomalyBatch,
+  known?: KnownTokens,
+): number {
+  let written = 0;
+  for (const p of events) {
+    if (isBareAttachment(p)) {
+      bumpAnomaly(batch, "attachment_line_skipped");
+      continue;
+    }
+    writeParsedEvent(stmts, p, known);
+    written += 1;
+  }
+  return written;
 }
 
 /** For each known language code with a registered adapter (i.e. actually

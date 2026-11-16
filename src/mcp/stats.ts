@@ -12,7 +12,7 @@
 
 import type Database from "better-sqlite3";
 
-import type { Scope } from "../analyzer/scope.js";
+import { copiedEventRowids, type Scope } from "../analyzer/scope.js";
 import { analyzeIdentity } from "../analyzer/identity.js";
 import { analyzeTools } from "../analyzer/tools.js";
 import { analyzeSkills } from "../analyzer/skills.js";
@@ -114,11 +114,21 @@ function buildScope(params: StatsParams): Scope {
 }
 
 export function projectStats(db: Database.Database, params: StatsParams): StatsFacts {
+  // One read transaction, so every query of the call sees the same snapshot
+  // and the copied rowids read once stay valid while the watcher writes.
+  return db.transaction(() => statsOf(db, params))();
+}
+
+function statsOf(db: Database.Database, params: StatsParams): StatsFacts {
   const scope = buildScope(params);
   const sections = params.sections ?? [...STATS_SECTIONS];
   const wants = (s: StatsSection): boolean => sections.includes(s);
+  // The copied event rows, read once for the queries that leave them out:
+  // the project's primary model, and the health and timeline sections.
+  const copied =
+    scope.mode === "project" || wants("health") || wants("timeline") ? copiedEventRowids(db, scope) : [];
 
-  const identity = analyzeIdentity(db, scope);
+  const identity = analyzeIdentity(db, scope, copied);
   const facts: StatsFacts = {
     scope: scope.mode === "session" ? "session" : scope.mode === "project" ? "project" : "all",
     project_id: params.project_id ?? null,
@@ -169,7 +179,7 @@ export function projectStats(db: Database.Database, params: StatsParams): StatsF
     facts.agent_default_rate = agents.default_rate;
   }
   if (wants("health")) {
-    const health = analyzeHealth(db, scope);
+    const health = analyzeHealth(db, scope, copied);
     facts.health = {
       tool_errors: health.tool_errors,
       compaction_events: health.compaction_events,
@@ -178,7 +188,7 @@ export function projectStats(db: Database.Database, params: StatsParams): StatsF
     };
   }
   if (wants("timeline")) {
-    const timeline = analyzeTimeline(db, scope);
+    const timeline = analyzeTimeline(db, scope, copied);
     facts.timeline = {
       active_min: timeline.active_min,
       think_min: timeline.think_min,

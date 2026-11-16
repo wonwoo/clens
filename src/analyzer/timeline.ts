@@ -8,7 +8,7 @@
  */
 
 import type Database from "better-sqlite3";
-import { eventWhere, rootSessionExpr, type Scope } from "./scope.js";
+import { copiedEventRowids, eventWhere, rootSessionExpr, type Scope } from "./scope.js";
 
 const THINK_LOWER_MS = 5_000;
 const THINK_UPPER_MS = 5 * 60_000;
@@ -24,8 +24,13 @@ interface EventRow {
   root: string;
 }
 
-export function analyzeTimeline(db: Database.Database, scope: Scope): TimelineFacts {
-  const { sql, binds } = eventWhere(scope, "e");
+/** `copied`: the rows copiedEventRowids returns, when the caller has them. */
+export function analyzeTimeline(
+  db: Database.Database,
+  scope: Scope,
+  copied: readonly number[] = copiedEventRowids(db, scope),
+): TimelineFacts {
+  const { sql, binds } = eventWhere(scope, "e", copied);
   const rows = db
     .prepare(
       `SELECT e.ts AS ts, ${rootSessionExpr("s")} AS root

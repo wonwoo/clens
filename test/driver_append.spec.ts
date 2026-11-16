@@ -134,6 +134,15 @@ function cursor(path: string): { mtime: number; size: number; lines: number; las
   return row;
 }
 
+function eventRows(): number {
+  const db = openIndex();
+  try {
+    return (db.prepare("SELECT COUNT(*) AS n FROM event").get() as { n: number }).n;
+  } finally {
+    db.close();
+  }
+}
+
 describe("append path — T1 growth", () => {
   it("indexes the fixture grown in 30 parts by appending, and matches a rebuild after every run", async () => {
     const dir = join(env.root, ".claude", "projects", "fixture-project");
@@ -147,11 +156,12 @@ describe("append path — T1 growth", () => {
       const chunk = lines.slice(start, end);
       if (start === 0) write(file, chunk.join(""));
       else add(file, chunk.join(""));
+      const before = eventRows();
       const r = await runIndex({});
       expect(r.files_parsed).toBe(1);
       expect(r.files_appended).toBe(start === 0 ? 0 : 1);
-      // Only the new lines' events are reported: every line with a uuid is one.
-      expect(r.events_inserted).toBe(chunk.filter((l) => typeof JSON.parse(l).uuid === "string").length);
+      // Only the rows the run added are reported, not its bare attachments.
+      expect(r.events_inserted).toBe(eventRows() - before);
       await expectDigestEqualsRebuild();
       start = end;
     }
@@ -306,12 +316,12 @@ describe("append path — T3 changes that re-derive the session", () => {
   it("several_files: the session also has rows from a second main file", async () => {
     // Every run re-derives a session from one file, so the index holds a
     // session's rows from two files only when something else wrote them;
-    // the test moves one row to a second main file by hand.
+    // the test records a second main file for the session by hand.
     const other = join(env.proj, "bbbbbbbb-0000-0000-0000-000000000002.jsonl");
     write(other, user("b1", 5, "second file", { sessionId: "bbbbbbbb-0000-0000-0000-000000000002" }));
     await expectFallback("several_files", (f) => {
       const db = new Database(join(env.a, "index.db"));
-      db.prepare("UPDATE event SET source_file = ? WHERE uuid = 'u1'").run(other);
+      db.prepare("INSERT INTO session_file (session_id, source_file) VALUES (?, ?)").run(S, other);
       db.close();
       add(f, user("u2", 3, "more"));
     });

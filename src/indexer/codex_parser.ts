@@ -545,7 +545,7 @@ export interface SessionState {
   parentId: string | null;
 }
 
-function makeBlankEvent(uuid: string, session_id: string, ts: string, source_file: string): EventRow {
+function makeBlankEvent(uuid: string, session_id: string, ts: string): EventRow {
   return {
     uuid,
     session_id,
@@ -566,7 +566,6 @@ function makeBlankEvent(uuid: string, session_id: string, ts: string, source_fil
     has_tool_res: 0,
     user_turn_no: null,
     assistant_turn_no: null,
-    source_file,
   };
 }
 
@@ -772,7 +771,7 @@ function processLine(
   // ── compacted — one per compaction (payload.replacement_history is the
   //    history the thread goes on with) ─────────────────────────────────────
   if (type === "compacted") {
-    const ev = makeBlankEvent(syntheticUuid(source_file, seq), session_id, timestamp, source_file);
+    const ev = makeBlankEvent(syntheticUuid(source_file, seq), session_id, timestamp);
     ev.role = "system";
     const parsed = makeBlankParsed(ev);
     parsed.system_reminders.push({ event_uuid: ev.uuid, session_id, ts: timestamp, category: "compaction", text_excerpt: null });
@@ -799,7 +798,7 @@ function processLine(
       const cap = SHELL_TOOLS.has(name) ? SHELL_TOOL_INPUT_BYTE_CAP : TOOL_INPUT_BYTE_CAP;
       const input_json = rawArgs !== null ? truncateToolInput(rawArgs, batch, cap) : null;
 
-      const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+      const ev = makeBlankEvent(uuid, session_id, timestamp);
       ev.role = "assistant";
       ev.model = state.model;
       ev.has_tool_use = 1;
@@ -955,7 +954,7 @@ function processLine(
   // task_started / turn_started — a turn that started before this one and
   // has counts not yet written was cut off: write them on this line.
   if (msgType === "task_started" || msgType === "turn_started") {
-    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
+    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, state);
     state.pendingInTok = 0;
     state.pendingCachedTok = 0;
     state.pendingOutTok = 0;
@@ -966,14 +965,14 @@ function processLine(
   // tokens, also when the turn had no token_count line (a row with 0 counts,
   // as before).
   if (msgType === "task_complete" || msgType === "turn_complete") {
-    pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
+    pushTurnTokens(events, uuid, session_id, timestamp, state);
     return;
   }
 
   // turn_aborted — an interrupted turn keeps its counts; one interrupted
   // before any token_count line writes nothing.
   if (msgType === "turn_aborted") {
-    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, source_file, state);
+    if (state.pendingTok) pushTurnTokens(events, uuid, session_id, timestamp, state);
     return;
   }
 
@@ -1000,8 +999,8 @@ function processLine(
   // user_message / agent_message — the older chat encoding
   if (msgType === "user_message" || msgType === "agent_message") {
     const text = typeof payload.message === "string" ? payload.message : null;
-    if (msgType === "user_message") pushUserMessage(events, uuid, session_id, timestamp, source_file, text);
-    else pushAgentMessage(events, uuid, session_id, timestamp, source_file, state.model, text);
+    if (msgType === "user_message") pushUserMessage(events, uuid, session_id, timestamp, text);
+    else pushAgentMessage(events, uuid, session_id, timestamp, state.model, text);
     return;
   }
 
@@ -1014,11 +1013,11 @@ function processLine(
   if (msgType === "item_completed") {
     const item = payload.item as Record<string, unknown> | undefined;
     const text = item ? itemText(item) : null;
-    if (item?.type === "UserMessage") pushUserMessage(events, uuid, session_id, timestamp, source_file, text);
-    else if (item?.type === "AgentMessage") pushAgentMessage(events, uuid, session_id, timestamp, source_file, state.model, text);
-    else if (item?.type === "HookPrompt") pushHookPrompt(events, uuid, session_id, timestamp, source_file, item);
+    if (item?.type === "UserMessage") pushUserMessage(events, uuid, session_id, timestamp, text);
+    else if (item?.type === "AgentMessage") pushAgentMessage(events, uuid, session_id, timestamp, state.model, text);
+    else if (item?.type === "HookPrompt") pushHookPrompt(events, uuid, session_id, timestamp, item);
     else if (item?.type === "CommandExecution") readCommandExecution(item, state, batch);
-    else if (item?.type === "McpToolCall") pushExecMcpCall(events, uuid, session_id, timestamp, source_file, item, state, batch);
+    else if (item?.type === "McpToolCall") pushExecMcpCall(events, uuid, session_id, timestamp, item, state, batch);
     return;
   }
 
@@ -1034,7 +1033,7 @@ function processLine(
       : null;
     const input_json = inputRaw !== null ? truncateToolInput(inputRaw, batch) : null;
 
-    const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+    const ev = makeBlankEvent(uuid, session_id, timestamp);
     ev.role = "assistant";
     ev.has_tool_use = 1;
     const parsed = makeBlankParsed(ev);
@@ -1074,7 +1073,7 @@ function processLine(
         ? payload.command
         : null;
 
-    const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+    const ev = makeBlankEvent(uuid, session_id, timestamp);
     ev.role = "assistant";
     ev.has_tool_use = 1;
     const parsed = makeBlankParsed(ev);
@@ -1127,10 +1126,9 @@ function pushTurnTokens(
   uuid: string,
   session_id: string,
   timestamp: string,
-  source_file: string,
   state: SessionState,
 ): void {
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "assistant";
   ev.model = state.model;
   ev.in_tok = state.pendingInTok;
@@ -1148,11 +1146,10 @@ function pushUserMessage(
   uuid: string,
   session_id: string,
   timestamp: string,
-  source_file: string,
   text: string | null,
 ): void {
   if (text === null || text.trim().length === 0) return;
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "user";
   ev.has_text = 1;
   ev.text_len = [...text].length;
@@ -1231,7 +1228,6 @@ function pushExecMcpCall(
   uuid: string,
   session_id: string,
   timestamp: string,
-  source_file: string,
   item: Record<string, unknown>,
   state: SessionState,
   batch: AnomalyBatch,
@@ -1245,7 +1241,7 @@ function pushExecMcpCall(
     (result !== null && typeof result === "object" && (result as Record<string, unknown>).isError === true);
   const d = item.duration as { secs?: unknown; nanos?: unknown } | null | undefined;
   const raw = item.arguments !== undefined ? JSON.stringify(item.arguments) : null;
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "assistant";
   ev.model = state.model;
   ev.has_tool_use = 1;
@@ -1286,11 +1282,10 @@ function pushHookPrompt(
   uuid: string,
   session_id: string,
   timestamp: string,
-  source_file: string,
   item: Record<string, unknown>,
 ): void {
   if (!Array.isArray(item.fragments)) return;
-  const parsed = makeBlankParsed(makeBlankEvent(uuid, session_id, timestamp, source_file));
+  const parsed = makeBlankParsed(makeBlankEvent(uuid, session_id, timestamp));
   for (const fragment of item.fragments as unknown[]) {
     if (fragment === null || typeof fragment !== "object") continue;
     const { text, hookRunId } = fragment as { text?: unknown; hookRunId?: unknown };
@@ -1316,12 +1311,11 @@ function pushAgentMessage(
   uuid: string,
   session_id: string,
   timestamp: string,
-  source_file: string,
   model: string | null,
   text: string | null,
 ): void {
   if (text === null || text.trim().length === 0) return;
-  const ev = makeBlankEvent(uuid, session_id, timestamp, source_file);
+  const ev = makeBlankEvent(uuid, session_id, timestamp);
   ev.role = "assistant";
   ev.model = model;
   ev.has_text = 1;

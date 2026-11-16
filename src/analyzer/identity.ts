@@ -5,10 +5,13 @@
  * In project scope: project id, session count, model_primary mode, date range.
  * In global scope: session count and date range.
  * A subagent counts as part of the session that started it, not as a session.
+ * Without `since`, the date range is the sessions' own span, which covers
+ * every line the indexer parsed, a bare attachment line included, though
+ * that line has no event row; with `since` it comes from the event rows.
  */
 
 import type Database from "better-sqlite3";
-import { notCopiedEventClause, rootSessionExpr, workKindClause, type Scope } from "./scope.js";
+import { copiedEventRowids, notCopiedEventClause, rootSessionExpr, workKindClause, type Scope } from "./scope.js";
 
 export interface IdentitySession {
   session_id: string;
@@ -38,7 +41,9 @@ export type IdentityFacts =
   | { kind: "global"; global: IdentityGlobal }
   | { kind: "since"; global: IdentityGlobal };
 
-export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFacts {
+/** `copied`: the rows copiedEventRowids returns, when the caller has them;
+ *  read only in project scope, for the primary model. */
+export function analyzeIdentity(db: Database.Database, scope: Scope, copied?: readonly number[]): IdentityFacts {
   switch (scope.mode) {
     case "session": {
       const row = db
@@ -89,11 +94,17 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
       const sinceBind = scope.params.since ? [scope.params.since] : [];
       const row = db
         .prepare(
-          `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions,
-                  MIN(e.ts) AS started_at,
-                  MAX(e.ts) AS ended_at
-           FROM session s LEFT JOIN event e ON e.session_id = s.id
-           WHERE s.project_id = ? AND ${workKindClause("s")} ${sinceCond}`,
+          scope.params.since
+            ? `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions,
+                      MIN(e.ts) AS started_at,
+                      MAX(e.ts) AS ended_at
+               FROM session s LEFT JOIN event e ON e.session_id = s.id
+               WHERE s.project_id = ? AND ${workKindClause("s")} ${sinceCond}`
+            : `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions,
+                      MIN(s.started_at) AS started_at,
+                      MAX(s.ended_at) AS ended_at
+               FROM session s
+               WHERE s.project_id = ? AND ${workKindClause("s")}`,
         )
         .get(scope.params.project_id, ...sinceBind) as { sessions: number; started_at: string | null; ended_at: string | null };
       const modelRow = db
@@ -101,7 +112,7 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
           `SELECT e.model AS model, COUNT(*) AS c
            FROM event e JOIN session s ON e.session_id = s.id
            WHERE e.role = 'assistant' AND e.model IS NOT NULL AND s.project_id = ? AND ${workKindClause("s")}
-             AND ${notCopiedEventClause("e")} ${sinceCond}
+             AND ${notCopiedEventClause("e", copied ?? copiedEventRowids(db, scope))} ${sinceCond}
            GROUP BY e.model ORDER BY c DESC LIMIT 1`,
         )
         .get(scope.params.project_id, ...sinceBind) as { model: string; c: number } | undefined;
@@ -119,15 +130,21 @@ export function analyzeIdentity(db: Database.Database, scope: Scope): IdentityFa
 
     case "global":
     case "since": {
-      const tsBind: unknown[] = scope.mode === "since" ? [scope.params.since] : [];
-      const tsCond = scope.mode === "since" ? "AND e.ts >= ?" : "";
       const row = db
         .prepare(
-          `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions, MIN(e.ts) AS earliest_event, MAX(e.ts) AS latest_event
-           FROM event e JOIN session s ON s.id = e.session_id
-           WHERE ${workKindClause("s")} ${tsCond}`,
+          scope.mode === "since"
+            ? `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions, MIN(e.ts) AS earliest_event, MAX(e.ts) AS latest_event
+               FROM event e JOIN session s ON s.id = e.session_id
+               WHERE ${workKindClause("s")} AND e.ts >= ?`
+            : `SELECT COUNT(DISTINCT ${rootSessionExpr("s")}) AS sessions, MIN(s.started_at) AS earliest_event, MAX(s.ended_at) AS latest_event
+               FROM session s
+               WHERE ${workKindClause("s")}`,
         )
-        .get(...tsBind) as { sessions: number; earliest_event: string | null; latest_event: string | null };
+        .get(...(scope.mode === "since" ? [scope.params.since] : [])) as {
+        sessions: number;
+        earliest_event: string | null;
+        latest_event: string | null;
+      };
       return {
         kind: scope.mode === "global" ? "global" : "since",
         global: {

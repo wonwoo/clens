@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { analyzeIdentity } from "../src/analyzer/identity.js";
-import { eventWhere, type Scope } from "../src/analyzer/scope.js";
+import { copiedEventRowids, eventWhere, type Scope } from "../src/analyzer/scope.js";
 import { digestAllTables } from "../src/indexer/digest.js";
 import { runIndex } from "../src/indexer/driver.js";
 import { sessionRecord } from "../src/mcp/left_off.js";
@@ -205,7 +205,7 @@ describe("a line copied into a resumed session", () => {
     const db = open(env.a);
     try {
       const count = (scope: Scope) => {
-        const { sql, binds } = eventWhere(scope, "e");
+        const { sql, binds } = eventWhere(scope, "e", copiedEventRowids(db, scope));
         return (db.prepare(`SELECT COUNT(*) AS n FROM event e WHERE ${sql}`).get(...binds) as { n: number }).n;
       };
       // a1, a2 and b1, the copies counted in aa-resumed, the smaller session id.
@@ -214,7 +214,8 @@ describe("a line copied into a resumed session", () => {
       expect(count({ mode: "since", params: { since: "2026-06-01T00:00:00Z" } })).toBe(3);
       expect(count({ mode: "session", params: { session_id: RESUMED } })).toBe(3);
       expect(count({ mode: "session", params: { session_id: FIRST } })).toBe(2);
-      const { sql, binds } = eventWhere({ mode: "project", params: { project_id: "-repo" } }, "e");
+      const project: Scope = { mode: "project", params: { project_id: "-repo" } };
+      const { sql, binds } = eventWhere(project, "e", copiedEventRowids(db, project));
       expect(db.prepare(`SELECT uuid, session_id FROM event e WHERE ${sql} ORDER BY uuid`).all(...binds)).toEqual([
         { uuid: "a1", session_id: RESUMED },
         { uuid: "a2", session_id: RESUMED },

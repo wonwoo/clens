@@ -7,9 +7,9 @@
  * seeded with the current SCHEMA_VERSION constant on init only.
  *
  * Upgrades: a column added to an existing table is added with ALTER TABLE
- * in applySchema(), a changed key is migrated by copying the table
- * (migrateToSessionKeys); anything else bumps SCHEMA_VERSION, and runIndex()
- * rebuilds on the mismatch. Down-migration is not supported.
+ * in applySchema(), a changed key is migrated by copying the table and moved
+ * data in place (migrateIndex); anything else bumps SCHEMA_VERSION, and
+ * runIndex() rebuilds on the mismatch. Down-migration is not supported.
  */
 
 import type Database from "better-sqlite3";
@@ -105,7 +105,11 @@ import { languageFtsTable, listKnownLanguageCodes } from "./lang/registry.js";
 // v22: a Codex session's project id is the one Claude Code gives its cwd
 // (projectIdOf); the version-mismatch rebuild re-reads every rollout still
 // on disk and gives a session whose rollout is gone the id of its stored cwd.
-export const SCHEMA_VERSION = 22;
+// v23: event rows no longer store their transcript's path (session_file
+// holds the (session, file) pairs) and a Claude Code attachment line that
+// yields no other row gets no event row; an index made before is migrated in
+// place (docs/2026-11-16-index-slim-design.md).
+export const SCHEMA_VERSION = 23;
 
 /** One FTS5 table + delete trigger for a known language code. There is no
  *  AFTER INSERT trigger (unlike the trigram layer) because population
@@ -136,7 +140,10 @@ function languageTableStatements(code: string): string[] {
  *  holding the line has its own row. The child tables still declare
  *  `REFERENCES event(uuid)`, which no longer names a unique key; that is
  *  harmless while foreign keys are off (applySchema), and a connection with
- *  them on gets "foreign key mismatch" when it writes a child row. */
+ *  them on gets "foreign key mismatch" when it writes a child row.
+ *  source_file is always NULL since v23 (session_file holds the paths); the
+ *  column stays so that an older clens, whose applySchema indexes it, still
+ *  opens the index and can rebuild it after a downgrade. */
 function eventTableStatement(name: string): string {
   return `CREATE TABLE IF NOT EXISTS ${name} (
      uuid              TEXT NOT NULL,
@@ -184,6 +191,34 @@ function unknownBlockTableStatement(name: string): string {
      FOREIGN KEY (event_uuid) REFERENCES event(uuid)
    )`;
 }
+
+/** The files that wrote each session: one row per (session, transcript)
+ *  pair, written when a file's commit writes the session and wiped with the
+ *  session's other rows. The indexer reads it to tell which sessions a file
+ *  holds and which files a session came from. Used by SCHEMA_STATEMENTS and
+ *  by the v23 migration, which fills it from event.source_file. */
+const SESSION_FILE_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS session_file (
+     session_id  TEXT NOT NULL,
+     source_file TEXT NOT NULL,
+     PRIMARY KEY (session_id, source_file)
+   )`,
+  `CREATE INDEX IF NOT EXISTS session_file_source_idx ON session_file(source_file)`,
+];
+
+/** The tables whose rows belong to one event row, keyed by its
+ *  (event_uuid, session_id). */
+const EVENT_CHILD_TABLES: readonly string[] = [
+  "tool_call",
+  "file_op",
+  "user_text",
+  "skill_call",
+  "agent_call",
+  "slash_command",
+  "system_reminder",
+  "hook_block",
+  "event_unknown_block",
+];
 
 /** Statement list in declaration order; applySchema() runs each on its own. */
 const SCHEMA_STATEMENTS: readonly string[] = [
@@ -238,7 +273,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS event_user_turn_idx ON event(session_id, user_turn_no)`,
   `CREATE INDEX IF NOT EXISTS event_session_idx ON event(session_id, ts)`,
   `CREATE INDEX IF NOT EXISTS event_ts_idx ON event(ts)`,
-  `CREATE INDEX IF NOT EXISTS event_source_file_idx ON event(source_file)`,
+  ...SESSION_FILE_STATEMENTS,
 
   // ----- Event-unknown-block (forensic store for unrecognized block types) -----
   unknownBlockTableStatement("event_unknown_block"),
@@ -434,7 +469,7 @@ export function applySchema(db: Database.Database): void {
   db.pragma("foreign_keys = OFF"); // we manage FK integrity at parse time; OFF avoids reorder constraints
   db.pragma("synchronous = NORMAL");
 
-  migrateToSessionKeys(db);
+  migrateIndex(db);
 
   const initTx = db.transaction(() => {
     for (const stmt of SCHEMA_STATEMENTS) db.exec(stmt);
@@ -461,6 +496,53 @@ export function applySchema(db: Database.Database): void {
     }
   });
   initTx();
+}
+
+/** Every in-place migration of an index made by an older clens, in one
+ *  transaction: v19 (migrateToSessionKeys), then v23: event.source_file
+ *  moves into session_file and the bare attachment rows go. A failure rolls
+ *  back both, and the next run tries again; the stored version is left to
+ *  the rebuild runIndex starts on the mismatch. */
+function migrateIndex(db: Database.Database): void {
+  db.transaction(() => {
+    // Every index made before v23 has this index, and an older clens creates
+    // it again whenever it opens the file; this version never creates it.
+    // Read before the v19 step, which drops a v18 event table with its
+    // indexes.
+    const beforeV23 =
+      db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'event_source_file_idx'").get() !== undefined;
+    // Its own transaction runs nested, as a savepoint of this one.
+    migrateToSessionKeys(db);
+    if (!beforeV23) return;
+
+    for (const stmt of SESSION_FILE_STATEMENTS) db.exec(stmt);
+    db.exec(
+      `INSERT OR IGNORE INTO session_file (session_id, source_file)
+       SELECT DISTINCT session_id, source_file FROM event WHERE source_file IS NOT NULL`,
+    );
+    db.exec("DROP INDEX IF EXISTS event_source_file_idx");
+    db.exec("UPDATE event SET source_file = NULL WHERE source_file IS NOT NULL");
+
+    // The bare attachment rows of every session, kept ones included: those
+    // a rebuild re-derives would go anyway. A correlated EXISTS per child
+    // table took 57 s on 954k events, a row-value NOT IN over their UNION
+    // over 10 minutes; the owners listed once in a keyed temp table, 5 s.
+    // This runs before SCHEMA_STATEMENTS, so an index made by an older clens
+    // can lack some child tables, which own no row.
+    const tables = new Set(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name),
+    );
+    const owners = EVENT_CHILD_TABLES.filter((t) => tables.has(t)).map((t) => `SELECT event_uuid, session_id FROM ${t}`);
+    db.exec(
+      `CREATE TEMP TABLE owned (event_uuid TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY (event_uuid, session_id)) WITHOUT ROWID`,
+    );
+    if (owners.length > 0) db.exec(`INSERT OR IGNORE INTO temp.owned (event_uuid, session_id) ${owners.join(" UNION ALL ")}`);
+    db.exec(
+      `DELETE FROM event WHERE role = 'attachment'
+         AND NOT EXISTS (SELECT 1 FROM temp.owned o WHERE o.event_uuid = event.uuid AND o.session_id = event.session_id)`,
+    );
+    db.exec("DROP TABLE temp.owned");
+  })();
 }
 
 /** v19: re-key event and event_unknown_block per session in an index made

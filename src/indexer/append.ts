@@ -19,7 +19,7 @@ import type Database from "better-sqlite3";
 
 import { agentSessionId, assignTurnNumbers, parseEventLine, SUBAGENT_FILE_RE } from "./claude_parser.js";
 import { upsertCursor, type DiscoveredFile, type FileCursorRow } from "./cursor.js";
-import { applyToolResults, writeParsedEvent, type WriterStatements } from "./writer.js";
+import { applyToolResults, writeEvents, type WriterStatements } from "./writer.js";
 import type { AnomalyBatch, ParsedEvent, ToolResultInfo } from "./types.js";
 
 /** Why a file goes the full way, one value per guard, in the order checked. */
@@ -145,7 +145,7 @@ export function appendNewLines(
 
   // 5: the session this file belongs to.
   const subagentFile = SUBAGENT_FILE_RE.test(f.path);
-  const fileSessions = (db.prepare("SELECT DISTINCT session_id FROM event WHERE source_file = ?").all(f.path) as {
+  const fileSessions = (db.prepare("SELECT session_id FROM session_file WHERE source_file = ?").all(f.path) as {
     session_id: string;
   }[]).map((r) => r.session_id);
   if (fileSessions.length === 0) return full("no_session_row");
@@ -182,7 +182,7 @@ export function appendNewLines(
   // 6-7: re-deriving writes every session of the file and wipes every row of
   // them, so the new lines and the stored rows must all be this file's own.
   if (events.some((p) => p.event.session_id !== own)) return full("other_session");
-  if (db.prepare("SELECT 1 FROM event WHERE session_id = ? AND source_file IS NOT ? LIMIT 1").get(own, f.path) !== undefined) {
+  if (db.prepare("SELECT 1 FROM session_file WHERE session_id = ? AND source_file <> ? LIMIT 1").get(own, f.path) !== undefined) {
     return full("several_files");
   }
 
@@ -283,13 +283,15 @@ export function finishAppend(
     primaryModel = ranked[0]![0];
   }
 
+  let written = 0;
   db.transaction(() => {
     for (const p of events) {
       if (p.event.user_turn_no !== null) p.event.user_turn_no += last.user_turn_no ?? 0;
       if (p.event.assistant_turn_no !== null) p.event.assistant_turn_no += last.assistant_turn_no ?? 0;
-      // No known tokens: these messages are new to the analyzer.
-      writeParsedEvent(stmts, p);
     }
+    // No known tokens: these messages are new to the analyzer. A bare
+    // attachment is counted in `batch` before the anomaly merge below.
+    written = writeEvents(stmts, events, batch);
     writeExtra();
 
     let startedAt = session.started_at;
@@ -340,5 +342,5 @@ export function finishAppend(
     });
   })();
 
-  return { kind: "appended", events: events.length, parse_errors: batch.counters.get("json_parse_error")?.count ?? 0 };
+  return { kind: "appended", events: written, parse_errors: batch.counters.get("json_parse_error")?.count ?? 0 };
 }

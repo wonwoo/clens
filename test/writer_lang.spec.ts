@@ -34,7 +34,6 @@ function userTextEvent(uuid: string, text: string): ParsedEvent {
       has_tool_res: 0,
       user_turn_no: null,
       assistant_turn_no: null,
-      source_file: "test.jsonl",
     },
     tool_calls: [],
     file_ops: [],

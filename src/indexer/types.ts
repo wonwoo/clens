@@ -26,7 +26,6 @@ export interface EventRow {
   user_turn_no: number | null;
   /** Set per session by assignTurnNumbers before the rows are written. */
   assistant_turn_no: number | null;
-  source_file: string;
 }
 
 export interface ToolCallRow {

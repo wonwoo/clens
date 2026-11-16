@@ -161,7 +161,7 @@ export function utf8SafeHeadTailTruncate(s: string, cap: number): { out: string;
   return { out: head + TRUNCATE_MARKER + tail, truncated: true };
 }
 
-function bumpAnomaly(batch: AnomalyBatch, kind: string, detail: string | null = null): void {
+export function bumpAnomaly(batch: AnomalyBatch, kind: string, detail: string | null = null): void {
   const cur = batch.counters.get(kind);
   if (cur) {
     cur.count += 1;
@@ -637,7 +637,6 @@ export function parseEventLine(
     has_tool_res: 0,
     user_turn_no: null,
     assistant_turn_no: null,
-    source_file,
   };
 
   const parsed: ParsedEvent = {

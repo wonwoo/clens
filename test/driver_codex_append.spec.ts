@@ -391,12 +391,12 @@ describe("Codex append path — X4 changes that re-derive the session", () => {
   it("several_files: the session also has rows from a second rollout", async () => {
     // Every run re-derives a session from one file, so the index holds a
     // session's rows from two files only when something else wrote them;
-    // the test moves one row to a second rollout by hand.
+    // the test records a second rollout for the session by hand.
     const other = rollout("s-other");
     write(other, meta(0, "s-other") + userMsg(1, "second rollout"));
     await expectFallback("several_files", (f) => {
       const db = new Database(join(env.a, "index.db"));
-      db.prepare("UPDATE event SET source_file = ? WHERE uuid = ?").run(other, `codex:${f}:3`);
+      db.prepare("INSERT INTO session_file (session_id, source_file) VALUES ('s-x4', ?)").run(other);
       db.close();
       add(f, userMsg(4, "more"));
     });
